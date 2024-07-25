@@ -1,3 +1,6 @@
+// AD7734 register macros used here
+
+
 #pragma once
 
 #include <Arduino.h>
