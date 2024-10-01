@@ -8,11 +8,13 @@ The firmware is designed to be easily extensible, as new peripherals can simply 
 
 **If you have any questions**, feel free to email (or slack) [markzakharyan@ucsb.edu](mailto:markzakharyan@ucsb.edu)
 
+<!--
 ## Table of Contents
 
 - [Installation](#installation)
 - [Usage](#usage)
 - [License](#license)
+-->
 
 ## Installation
 
