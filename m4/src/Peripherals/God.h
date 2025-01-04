@@ -46,10 +46,10 @@ class God {
     }
 
     // Allocate memory for DAC and ADC channel information
-    int* dacChannels = new int[numDacChannels];
-    float* dacV0s = new float[numDacChannels];
-    float* dacVfs = new float[numDacChannels];
-    int* adcChannels = new int[numAdcChannels];
+    int dacChannels[numDacChannels];
+    float dacV0s[numDacChannels];
+    float dacVfs[numDacChannels];
+    int adcChannels[numAdcChannels];
 
     // Parse DAC channel information
     for (int i = 0; i < numDacChannels; ++i) {
@@ -98,23 +98,13 @@ class God {
 
     const int saved_data_size = numSteps * dac_interval_us / adc_interval_us;
 
-    // float** voltSetpoints = new float*[numDacChannels];
-
-    // for (int i = 0; i < numDacChannels; i++) {
-    //   voltSetpoints[i] = new float[numSteps];
-    //   for (int j = 0; j < numSteps; j++) {
-    //     voltSetpoints[i][j] =
-    //         dacV0s[i] + (dacVfs[i] - dacV0s[i]) * j / (numSteps - 1);
-    //   }
-    // }
-
-    float* voltageStepSize = new float[numDacChannels];
+    float voltageStepSize[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] = (dacVfs[i] - dacV0s[i]) / (numSteps - 1);
     }
 
-    float* previousVoltageSet = new float[numDacChannels];
+    float previousVoltageSet[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       previousVoltageSet[i] = dacV0s[i];
@@ -137,14 +127,13 @@ class God {
             ADCController::getVoltageDataNoTransaction(adcChannels[i]);
           }
         } else {
-          float* packets = new float[numAdcChannels];
+          float packets[numAdcChannels];
           for (int i = 0; i < numAdcChannels; i++) {
             float v =
                 ADCController::getVoltageDataNoTransaction(adcChannels[i]);
             packets[i] = v;
           }
           m4SendVoltage(packets, numAdcChannels);
-          delete[] packets;
           x++;
         }
         ADCBoard::commsController.endTransaction();
@@ -180,9 +169,6 @@ class God {
 
     PeripheralCommsController::dataLedOff();
 
-    delete[] voltageStepSize;
-    delete[] previousVoltageSet;
-
     if (getStopFlag()) {
       setStopFlag(false);
       return OperationResult::Failure("RAMPING_STOPPED");
@@ -215,10 +201,10 @@ class God {
     }
 
     // Allocate memory for DAC and ADC channel information
-    int* dacChannels = new int[numDacChannels];
-    float* dacV0s = new float[numDacChannels];
-    float* dacVfs = new float[numDacChannels];
-    int* adcChannels = new int[numAdcChannels];
+    int dacChannels[numDacChannels];
+    float dacV0s[numDacChannels];
+    float dacVfs[numDacChannels];
+    int adcChannels[numAdcChannels];
 
     // Parse DAC channel information
     for (int i = 0; i < numDacChannels; ++i) {
@@ -256,13 +242,13 @@ class God {
     if (numDacChannels < 1 || numAdcChannels < 1) {
       return OperationResult::Failure("Invalid number of channels");
     }
-    for (int i = 0; i < numAdcChannels; i++) {
-      if (dac_settling_time_us <
-          ADCController::getConversionTimeFloat(adcChannels[i])) {
-        return OperationResult::Failure(
-            "DAC settling time too short for ADC conversion time");
-      }
-    }
+    // for (int i = 0; i < numAdcChannels; i++) {
+    //   if (dac_settling_time_us <
+    //       ADCController::getConversionTimeFloat(adcChannels[i])) {
+    //     return OperationResult::Failure(
+    //         "DAC settling time too short for ADC conversion time");
+    //   }
+    // }
     // uint32_t adc_comms_period_us = (1.0/SPI_SPEED)*1e6*8*4; // 8 bits per
     // byte, 4 bytes per ADC conversion if
     // (numAdcChannels*numAdcAverages*adc_comms_period_us > dac_interval_us -
@@ -274,23 +260,13 @@ class God {
     int steps = 0;
     int x = 0;
 
-    // float** voltSetpoints = new float*[numDacChannels];
-
-    // for (int i = 0; i < numDacChannels; i++) {
-    //   voltSetpoints[i] = new float[numSteps];
-    //   for (int j = 0; j < numSteps; j++) {
-    //     voltSetpoints[i][j] =
-    //         dacV0s[i] + (dacVfs[i] - dacV0s[i]) * j / (numSteps - 1);
-    //   }
-    // }
-
-    float* voltageStepSize = new float[numDacChannels];
+    float voltageStepSize[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] = (dacVfs[i] - dacV0s[i]) / (numSteps - 1);
     }
 
-    float* previousVoltageSet = new float[numDacChannels];
+    float previousVoltageSet[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       previousVoltageSet[i] = dacV0s[i];
@@ -317,7 +293,7 @@ class God {
             }
           }
         } else {
-          float* packets = new float[numAdcChannels];
+          float packets[numAdcChannels];
           for (int i = 0; i < numAdcChannels; i++) {
             float total = 0.0;
             for (int j = 0; j < numAdcAverages; j++) {
@@ -327,8 +303,8 @@ class God {
             float v = total * numAdcAveragesInv;
             packets[i] = v;
           }
-          m4SendFloat(packets, numAdcChannels);
-          delete[] packets;
+          // m4SendFloat(packets, numAdcChannels);
+          m4SendVoltage(packets, numAdcChannels);
           x++;
         }
         ADCBoard::commsController.endTransaction();
@@ -363,9 +339,6 @@ class God {
     }
 
     PeripheralCommsController::dataLedOff();
-
-    delete[] voltageStepSize;
-    delete[] previousVoltageSet;
 
     if (getStopFlag()) {
       setStopFlag(false);
@@ -409,11 +382,11 @@ class God {
     int numAdcConversionSkips = static_cast<int>(args[currentIndex++]);
     uint32_t adcConversionTime_us = static_cast<uint32_t>(args[currentIndex++]);
 
-    int* dacChannels = new int[numDacChannels];
-    float* dacV0_1 = new float[numDacChannels];
-    float* dacVf_1 = new float[numDacChannels];
-    float* dacV0_2 = new float[numDacChannels];
-    float* dacVf_2 = new float[numDacChannels];
+    int dacChannels[numDacChannels];
+    float dacV0_1[numDacChannels];
+    float dacVf_1[numDacChannels];
+    float dacV0_2[numDacChannels];
+    float dacVf_2[numDacChannels];
 
     for (int i = 0; i < numDacChannels; ++i) {
       dacChannels[i] = static_cast<int>(args[currentIndex++]);
@@ -423,7 +396,7 @@ class God {
       dacVf_2[i] = args[currentIndex++];
     }
 
-    int* adcChannels = new int[numAdcChannels];
+    int adcChannels[numAdcChannels];
 
     for (int i = 0; i < numAdcChannels; ++i) {
       adcChannels[i] = static_cast<int>(args[currentIndex++]);
@@ -442,8 +415,8 @@ class God {
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
-    float* voltageStepSizeLow = new float[numDacChannels];
-    float* voltageStepSizeHigh = new float[numDacChannels];
+    float voltageStepSizeLow[numDacChannels];
+    float voltageStepSizeHigh[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSizeLow[i] =
@@ -452,8 +425,8 @@ class God {
           (dacVf_2[i] - dacV0_2[i]) / static_cast<float>(numDacSteps - 1);
     }
 
-    float* previousVoltageSetLow = new float[numDacChannels];
-    float* previousVoltageSetHigh = new float[numDacChannels];
+    float previousVoltageSetLow[numDacChannels];
+    float previousVoltageSetHigh[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       previousVoltageSetLow[i] = dacV0_1[i];
@@ -490,14 +463,13 @@ class God {
           }
         } else {
           if (adcGetsSinceLastDacSet >= numAdcConversionSkips) {
-            float* packets = new float[numAdcChannels];
+            float packets[numAdcChannels];
             for (int i = 0; i < numAdcChannels; i++) {
               float v =
                   ADCController::getVoltageDataNoTransaction(adcChannels[i]);
               packets[i] = v;
             }
             m4SendVoltage(packets, numAdcChannels);
-            delete[] packets;
             x++;
           }
         }
@@ -551,17 +523,6 @@ class God {
     }
 
     PeripheralCommsController::dataLedOff();
-
-    delete[] dacChannels;
-    delete[] dacV0_1;
-    delete[] dacVf_1;
-    delete[] dacV0_2;
-    delete[] dacVf_2;
-    delete[] adcChannels;
-    delete[] voltageStepSizeLow;
-    delete[] previousVoltageSetLow;
-    delete[] voltageStepSizeHigh;
-    delete[] previousVoltageSetHigh;
 
     if (getStopFlag()) {
       setStopFlag(false);

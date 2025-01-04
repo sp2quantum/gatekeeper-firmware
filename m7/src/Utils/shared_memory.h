@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 
-#define CHAR_BUFFER_SIZE 1024
+#define CHAR_BUFFER_SIZE 256
 #define FLOAT_BUFFER_SIZE 256
 #define VOLTAGE_BUFFER_SIZE 1024
 #define MAX_MESSAGE_SIZE 256
@@ -28,9 +28,7 @@ struct SharedMemory {
   CharCircularBuffer m4_to_m7_char_buffer;
   CharCircularBuffer m7_to_m4_char_buffer;
   FloatCircularBuffer m4_to_m7_float_buffer;
-  FloatCircularBuffer m7_to_m4_float_buffer;
   VoltageCircularBuffer m4_to_m7_voltage_buffer;
-  VoltageCircularBuffer m7_to_m4_voltage_buffer;
 
   volatile bool stop_flag;
 };

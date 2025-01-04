@@ -77,46 +77,63 @@ void setup()
   }
 }
 
+float voltageResponse[VOLTAGE_BUFFER_SIZE];
+char charResponse[CHAR_BUFFER_SIZE];
+float floatResponse[FLOAT_BUFFER_SIZE];
+binaryFloat send;
+
+char command[200];
+size_t commandIndex = 0;
+
 void loop()
 {
   if (Serial.available())
   {
-    String command = Serial.readStringUntil('\n');
-    command.trim();
-    String command_lower = command;
-    command_lower.toLowerCase();
-    if (command_lower == "stop")
+    while (Serial.available())
+    {
+      char c = Serial.read();
+      if (c == '\n')
+      {
+        command[commandIndex] = '\0'; // Null-terminate the command
+        break;
+      }
+      if (commandIndex < sizeof(command) - 1)
+      {
+        command[commandIndex++] = c;
+      }
+    }
+
+    if (strcmp(command, "STOP") == 0 || strcmp(command, "stop") == 0)
     {
       setStopFlag(true);
     }
     else
     {
-      m7SendChar(command.c_str(), command.length());
+      m7SendChar(command, commandIndex);
     }
+    commandIndex = 0; // Reset the command index
   }
   if (m7HasCharMessage())
   {
-    char response[CHAR_BUFFER_SIZE];
     size_t size;
-    if (m7ReceiveChar(response, size))
+    if (m7ReceiveChar(charResponse, size))
     {
       if (size > 0)
       {
         size--; // Decrease size to exclude the last character
       }
-      Serial.write(response, size);
+      Serial.write(charResponse, size);
       Serial.println();
     }
   }
   if (m7HasFloatMessage())
   {
-    float response[FLOAT_BUFFER_SIZE];
     size_t size;
-    if (m7ReceiveFloat(response, size))
+    if (m7ReceiveFloat(floatResponse, size))
     {
       for (size_t i = 0; i < size; ++i)
       {
-        Serial.print(response[i], 8);
+        Serial.print(floatResponse[i], 8);
         Serial.print(" ");
       }
       Serial.println();
@@ -124,22 +141,13 @@ void loop()
   }
   if (m7HasVoltageMessage())
   {
-    float response[VOLTAGE_BUFFER_SIZE];
     size_t size;
-    if (m7ReceiveVoltage(response, size))
+    if (m7ReceiveVoltage(voltageResponse, size))
     {
       for (size_t i = 0; i < size; ++i)
       {
-        // Serial.print("ADC ID: ");
-        // Serial.print(response[i].adc_id);
-        // Serial.print(", Setnum: ");
-        // Serial.print(response[i].setnum);
-        // Serial.print(", ");
-        // Serial.print(response[i].voltage, 8);
-        binaryFloat send;
-        send.floatingPoint = response[i];
+        send.floatingPoint = voltageResponse[i];
         Serial.write(send.binary, 4);
-        // Serial.println("V");
       }
     }
   }
