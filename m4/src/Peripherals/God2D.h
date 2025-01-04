@@ -249,7 +249,6 @@ class God2D {
     TimingUtil::disableDacInterrupt();
     TimingUtil::disableAdcInterrupt();
 
-
     if (getStopFlag()) {
       setStopFlag(false);
       return OperationResult::Failure("RAMPING_STOPPED");

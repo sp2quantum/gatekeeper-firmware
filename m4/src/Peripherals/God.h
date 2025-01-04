@@ -19,8 +19,7 @@ class God {
     registerMemberFunctionVector(dacLedBufferRampWrapper,
                                  "DAC_LED_BUFFER_RAMP");
     registerMemberFunction(dacChannelCalibration, "DAC_CH_CAL");
-    registerMemberFunctionVector(boxcarAverageRamp,
-                                 "BOXCAR_BUFFER_RAMP");
+    registerMemberFunctionVector(boxcarAverageRamp, "BOXCAR_BUFFER_RAMP");
   }
 
   // args:
@@ -33,15 +32,17 @@ class God {
       return OperationResult::Failure("Not enough arguments provided");
     }
 
-    int numDacChannels = static_cast<int>(args[0]);
-    int numAdcChannels = static_cast<int>(args[1]);
-    int numSteps = static_cast<int>(args[2]);
-    uint32_t dac_interval_us = static_cast<uint32_t>(args[3]);
-    uint32_t adc_interval_us = static_cast<uint32_t>(args[4]);
+    int index = 0;
+
+    int numDacChannels = static_cast<int>(args[index++]);
+    int numAdcChannels = static_cast<int>(args[index++]);
+    int numSteps = static_cast<int>(args[index++]);
+    uint32_t dac_interval_us = static_cast<uint32_t>(args[index++]);
+    uint32_t adc_interval_us = static_cast<uint32_t>(args[index++]);
 
     // Check if we have enough arguments for all DAC and ADC channels
     if (args.size() !=
-        static_cast<size_t>(5 + numDacChannels * 3 + numAdcChannels)) {
+        static_cast<size_t>(index + numDacChannels * 3 + numAdcChannels)) {
       return OperationResult::Failure("Incorrect number of arguments");
     }
 
@@ -53,15 +54,14 @@ class God {
 
     // Parse DAC channel information
     for (int i = 0; i < numDacChannels; ++i) {
-      int baseIndex = 5 + i * 3;
-      dacChannels[i] = static_cast<int>(args[baseIndex]);
-      dacV0s[i] = static_cast<float>(args[baseIndex + 1]);
-      dacVfs[i] = static_cast<float>(args[baseIndex + 2]);
+      dacChannels[i] = static_cast<int>(args[index++]);
+      dacV0s[i] = static_cast<float>(args[index++]);
+      dacVfs[i] = static_cast<float>(args[index++]);
     }
 
     // Parse ADC channel information
     for (int i = 0; i < numAdcChannels; ++i) {
-      adcChannels[i] = static_cast<int>(args[5 + numDacChannels * 3 + i]);
+      adcChannels[i] = static_cast<int>(args[index++]);
     }
 
     return timeSeriesBufferRampBase(numDacChannels, numAdcChannels, numSteps,
@@ -82,16 +82,6 @@ class God {
     if (numDacChannels < 1 || numAdcChannels < 1) {
       return OperationResult::Failure("Invalid number of channels");
     }
-    // uint32_t adc_comms_period_us = (1.0/SPI_SPEED)*1e6*8*4; // 8 bits per
-    // byte, 4 bytes per ADC conversion if (adc_interval_us <
-    // adc_comms_period_us*numAdcChannels) {
-    //   return OperationResult::Failure("ADC interval too short");
-    // }
-    // uint32_t dac_comms_period_us = (1.0/SPI_SPEED)*1e6*8*3; // 8 bits per
-    // byte, 3 bytes per DAC update if (dac_interval_us <
-    // dac_comms_period_us*numDacChannels) {
-    //   return OperationResult::Failure("DAC interval too short");
-    // }
 
     int steps = 0;
     int x = 0;
@@ -187,16 +177,18 @@ class God {
       return OperationResult::Failure("Not enough arguments provided");
     }
 
-    int numDacChannels = static_cast<int>(args[0]);
-    int numAdcChannels = static_cast<int>(args[1]);
-    int numSteps = static_cast<int>(args[2]);
-    int numAdcAverages = static_cast<int>(args[3]);
-    uint32_t dac_interval_us = static_cast<uint32_t>(args[4]);
-    uint32_t dac_settling_time_us = static_cast<uint32_t>(args[5]);
+    int index = 0;
+
+    int numDacChannels = static_cast<int>(args[index++]);
+    int numAdcChannels = static_cast<int>(args[index++]);
+    int numSteps = static_cast<int>(args[index++]);
+    int numAdcAverages = static_cast<int>(args[index++]);
+    uint32_t dac_interval_us = static_cast<uint32_t>(args[index++]);
+    uint32_t dac_settling_time_us = static_cast<uint32_t>(args[index++]);
 
     // Check if we have enough arguments for all DAC and ADC channels
     if (args.size() !=
-        static_cast<size_t>(6 + numDacChannels * 3 + numAdcChannels)) {
+        static_cast<size_t>(index + numDacChannels * 3 + numAdcChannels)) {
       return OperationResult::Failure("Incorrect number of arguments");
     }
 
@@ -208,15 +200,14 @@ class God {
 
     // Parse DAC channel information
     for (int i = 0; i < numDacChannels; ++i) {
-      int baseIndex = 6 + i * 3;
-      dacChannels[i] = static_cast<int>(args[baseIndex]);
-      dacV0s[i] = static_cast<float>(args[baseIndex + 1]);
-      dacVfs[i] = static_cast<float>(args[baseIndex + 2]);
+      dacChannels[i] = static_cast<int>(args[index++]);
+      dacV0s[i] = static_cast<float>(args[index++]);
+      dacVfs[i] = static_cast<float>(args[index++]);
     }
 
     // Parse ADC channel information
     for (int i = 0; i < numAdcChannels; ++i) {
-      adcChannels[i] = static_cast<int>(args[6 + numDacChannels * 3 + i]);
+      adcChannels[i] = static_cast<int>(args[index++]);
     }
 
     return dacLedBufferRampBase(numDacChannels, numAdcChannels, numSteps,
@@ -242,21 +233,7 @@ class God {
     if (numDacChannels < 1 || numAdcChannels < 1) {
       return OperationResult::Failure("Invalid number of channels");
     }
-    // for (int i = 0; i < numAdcChannels; i++) {
-    //   if (dac_settling_time_us <
-    //       ADCController::getConversionTimeFloat(adcChannels[i])) {
-    //     return OperationResult::Failure(
-    //         "DAC settling time too short for ADC conversion time");
-    //   }
-    // }
-    // uint32_t adc_comms_period_us = (1.0/SPI_SPEED)*1e6*8*4; // 8 bits per
-    // byte, 4 bytes per ADC conversion if
-    // (numAdcChannels*numAdcAverages*adc_comms_period_us > dac_interval_us -
-    // dac_settling_time_us) {
-    //   return OperationResult::Failure("Buffer Ramp limited by ADC SPI
-    //   comms");
-    // }
-
+    
     int steps = 0;
     int x = 0;
 
@@ -320,7 +297,7 @@ class God {
         } else {
           for (int i = 0; i < numDacChannels; i++) {
             DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                          previousVoltageSet[i]);
+                                                         previousVoltageSet[i]);
             previousVoltageSet[i] += voltageStepSize[i];
           }
         }
@@ -369,8 +346,7 @@ class God {
   // numAdcMeasuresPerDacStep, numAdcAverages, numAdcConversionSkips,
   // adcConversionTime_us, {for each dac channel: dac channel, v0_1, vf_1, v0_2,
   // vf_2}, {for each adc channel: adc channel}
-  static OperationResult boxcarAverageRamp(
-      const std::vector<float>& args) {
+  static OperationResult boxcarAverageRamp(const std::vector<float>& args) {
     size_t currentIndex = 0;
 
     // Parse initial parameters
@@ -409,8 +385,8 @@ class God {
                                           numAdcChannels > 1);
     }
 
-    uint32_t dacPeriod_us =
-        (numAdcMeasuresPerDacStep + numAdcConversionSkips) * (actualConversionTime_us + 5) * numAdcChannels;
+    uint32_t dacPeriod_us = (numAdcMeasuresPerDacStep + numAdcConversionSkips) *
+                            (actualConversionTime_us + 5) * numAdcChannels;
 
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
@@ -436,17 +412,8 @@ class God {
     int steps = 0;
     int totalSteps = 2 * numDacSteps * numAdcAverages + 1;
     int x = 0;
-    int total_data_size = (totalSteps-1) * numAdcMeasuresPerDacStep;
+    int total_data_size = (totalSteps - 1) * numAdcMeasuresPerDacStep;
     int adcGetsSinceLastDacSet = 0;
-
-    // float thing = static_cast<float>(total_data_size * numAdcChannels * 4);
-    // m4SendFloat(&thing, 1);
-
-    // for debugging:
-    // float dacPeriodFloat = static_cast<float>(dacPeriod_us);
-    // m4SendFloat(&dacPeriodFloat, 1);
-    // float adcPeriodFloat = static_cast<float>(actualConversionTime_us);
-    // m4SendFloat(&adcPeriodFloat, 1);
 
     for (int i = 0; i < numAdcChannels; ++i) {
       ADCController::startContinuousConversion(adcChannels[i]);
@@ -455,7 +422,7 @@ class God {
     TimingUtil::setupTimersTimeSeries(dacPeriod_us, actualConversionTime_us);
 
     while (x < total_data_size && !getStopFlag()) {
-      if (TimingUtil::adcFlag && x < (steps-1) * numAdcMeasuresPerDacStep) {
+      if (TimingUtil::adcFlag && x < (steps - 1) * numAdcMeasuresPerDacStep) {
         ADCBoard::commsController.beginTransaction();
         if (steps <= 1) {
           for (int i = 0; i < numAdcChannels; i++) {
