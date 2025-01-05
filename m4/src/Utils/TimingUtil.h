@@ -161,13 +161,13 @@ extern "C" void TIM1_UP_IRQHandler(void) {
 extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
-    ADCController::toggleSync();
+    TimingUtil::adcFlag = true;
   }
 }
 
 extern "C" void TIM8_CC_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_CC1IF) {
     TIM8->SR &= ~TIM_SR_CC1IF;
-    ADCController::toggleSync();
+    TimingUtil::adcFlag = true;
   }
 }

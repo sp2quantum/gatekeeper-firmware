@@ -13,7 +13,7 @@ class PeripheralCommsController1 {
   static void setup() {
     if (!spiInitialized) {
       SPI1.begin();
-      SPI1.beginTransaction(ADC_SPI_SETTINGS);
+      // SPI1.beginTransaction(ADC_SPI_SETTINGS);
       spiInitialized = true;
     }
   }
