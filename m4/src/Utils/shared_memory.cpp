@@ -16,12 +16,8 @@ bool initSharedMemory() {
   shared_memory->m7_to_m4_char_buffer.write_index = 0;
   shared_memory->m4_to_m7_float_buffer.read_index = 0;
   shared_memory->m4_to_m7_float_buffer.write_index = 0;
-  shared_memory->m7_to_m4_float_buffer.read_index = 0;
-  shared_memory->m7_to_m4_float_buffer.write_index = 0;
   shared_memory->m4_to_m7_voltage_buffer.read_index = 0;
   shared_memory->m4_to_m7_voltage_buffer.write_index = 0;
-  shared_memory->m7_to_m4_voltage_buffer.read_index = 0;
-  shared_memory->m7_to_m4_voltage_buffer.write_index = 0;
 
   shared_memory->stop_flag = false;
 
@@ -200,28 +196,11 @@ bool m4SendFloat(const float* data, size_t length) {
   return floatBufferSend(&shared_memory->m4_to_m7_float_buffer, data, length);
 }
 
-bool m4ReceiveFloat(float* data, size_t& length) {
-  return floatBufferReceive(&shared_memory->m7_to_m4_float_buffer, data,
-                            length);
-}
-
-bool m4HasFloatMessage() {
-  return floatBufferHasMessage(&shared_memory->m7_to_m4_float_buffer);
-}
 
 // M4 voltage functions
 bool m4SendVoltage(const float* data, size_t length) {
   return voltageBufferSend(&shared_memory->m4_to_m7_voltage_buffer, data,
                            length);
-}
-
-bool m4ReceiveVoltage(float* data, size_t& length) {
-  return voltageBufferReceive(&shared_memory->m7_to_m4_voltage_buffer, data,
-                              length);
-}
-
-bool m4HasVoltageMessage() {
-  return voltageBufferHasMessage(&shared_memory->m7_to_m4_voltage_buffer);
 }
 
 // M7 char functions
@@ -238,10 +217,6 @@ bool m7HasCharMessage() {
 }
 
 // M7 float functions
-bool m7SendFloat(const float* data, size_t length) {
-  return floatBufferSend(&shared_memory->m7_to_m4_float_buffer, data, length);
-}
-
 bool m7ReceiveFloat(float* data, size_t& length) {
   return floatBufferReceive(&shared_memory->m4_to_m7_float_buffer, data,
                             length);
@@ -252,11 +227,6 @@ bool m7HasFloatMessage() {
 }
 
 // M7 voltage functions
-bool m7SendVoltage(const float* data, size_t length) {
-  return voltageBufferSend(&shared_memory->m7_to_m4_voltage_buffer, data,
-                           length);
-}
-
 bool m7ReceiveVoltage(float* data, size_t& length) {
   return voltageBufferReceive(&shared_memory->m4_to_m7_voltage_buffer, data,
                               length);

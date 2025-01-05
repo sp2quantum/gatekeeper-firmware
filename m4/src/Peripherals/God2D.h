@@ -38,6 +38,7 @@ class God2D {
 
     size_t currentIndex = 0;
 
+    // Parse initial parameters
     int numDacChannels = static_cast<int>(args[currentIndex++]);
     int numAdcChannels = static_cast<int>(args[currentIndex++]);
     int numStepsFast = static_cast<int>(args[currentIndex++]);
@@ -47,6 +48,7 @@ class God2D {
     bool retrace =
         static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
 
+    // Parse Fast DAC Channels
     if (currentIndex >= args.size()) {
       return OperationResult::Failure(
           "Unexpected end of arguments while parsing fast DAC channels");
@@ -57,9 +59,9 @@ class God2D {
           "Not enough arguments for fast DAC channels");
     }
 
-    int *fastDacChannels = new int[numFastDacChannels];
-    float *fastDacV0s = new float[numFastDacChannels];
-    float *fastDacVfs = new float[numFastDacChannels];
+    int fastDacChannels[numFastDacChannels];
+    float fastDacV0s[numFastDacChannels];
+    float fastDacVfs[numFastDacChannels];
 
     for (int i = 0; i < numFastDacChannels; ++i) {
       fastDacChannels[i] = static_cast<int>(args[currentIndex++]);
@@ -67,25 +69,20 @@ class God2D {
       fastDacVfs[i] = args[currentIndex++];
     }
 
+    // Parse Slow DAC Channels
     if (currentIndex >= args.size()) {
-      delete[] fastDacChannels;
-      delete[] fastDacV0s;
-      delete[] fastDacVfs;
       return OperationResult::Failure(
           "Unexpected end of arguments while parsing slow DAC channels");
     }
     int numSlowDacChannels = static_cast<int>(args[currentIndex++]);
     if (args.size() < currentIndex + numSlowDacChannels * 3) {
-      delete[] fastDacChannels;
-      delete[] fastDacV0s;
-      delete[] fastDacVfs;
       return OperationResult::Failure(
           "Not enough arguments for slow DAC channels");
     }
 
-    int *slowDacChannels = new int[numSlowDacChannels];
-    float *slowDacV0s = new float[numSlowDacChannels];
-    float *slowDacVfs = new float[numSlowDacChannels];
+    int slowDacChannels[numSlowDacChannels];
+    float slowDacV0s[numSlowDacChannels];
+    float slowDacVfs[numSlowDacChannels];
 
     for (int i = 0; i < numSlowDacChannels; ++i) {
       slowDacChannels[i] = static_cast<int>(args[currentIndex++]);
@@ -93,40 +90,29 @@ class God2D {
       slowDacVfs[i] = args[currentIndex++];
     }
 
+    // Parse ADC Channels
     if (args.size() < currentIndex + numAdcChannels) {
-      delete[] fastDacChannels;
-      delete[] fastDacV0s;
-      delete[] fastDacVfs;
-      delete[] slowDacChannels;
-      delete[] slowDacV0s;
-      delete[] slowDacVfs;
       return OperationResult::Failure("Not enough arguments for ADC channels");
     }
 
-    int *adcChannels = new int[numAdcChannels];
+    int adcChannels[numAdcChannels];
     for (int i = 0; i < numAdcChannels; ++i) {
       adcChannels[i] = static_cast<int>(args[currentIndex++]);
     }
 
+    // Validate total number of DAC channels
     if (numFastDacChannels + numSlowDacChannels != numDacChannels) {
-      delete[] fastDacChannels;
-      delete[] fastDacV0s;
-      delete[] fastDacVfs;
-      delete[] slowDacChannels;
-      delete[] slowDacV0s;
-      delete[] slowDacVfs;
-      delete[] adcChannels;
       return OperationResult::Failure(
           "Sum of fast and slow DAC channels does not match numDacChannels");
     }
 
-    float *voltageStepSize = new float[numDacChannels];
+    float voltageStepSize[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] = (slowDacVfs[i] - slowDacV0s[i]) / (numStepsSlow - 1);
     }
 
-    float *previousVoltageSet = new float[numDacChannels];
+    float previousVoltageSet[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       previousVoltageSet[i] = slowDacV0s[i];
@@ -135,75 +121,58 @@ class God2D {
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
+    // Start continuous ADC conversions
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
     }
 
+    // Iterate over slow steps with optional retrace
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
          ++slowStep) {
+      // Set slow DAC channels to the current slow step voltages
+      DACChannel::commsController.beginTransaction();
       for (int i = 0; i < numSlowDacChannels; ++i) {
         DACController::setVoltageNoTransactionNoLdac(slowDacChannels[i],
                                                      previousVoltageSet[i]);
         previousVoltageSet[i] += voltageStepSize[i];
       }
       DACController::toggleLdac();
+      DACChannel::commsController.endTransaction();
 
+      // Determine ramp direction based on retrace flag
       bool isReverse = false;
       if (retrace) {
-        isReverse = (slowStep % 2 != 0);
+        isReverse = (slowStep % 2 != 0);  // Reverse on odd slow steps
       }
 
-      float *currentV0s = fastDacV0s;
-      float *currentVfs = fastDacVfs;
+      // Prepare ramp voltages
+      float currentV0s[numFastDacChannels];
+      float currentVfs[numFastDacChannels];
       if (isReverse) {
-        currentV0s = new float[numFastDacChannels];
-        currentVfs = new float[numFastDacChannels];
+        // Swap V0 and Vf for reverse ramp
         for (int i = 0; i < numFastDacChannels; ++i) {
           currentV0s[i] = fastDacVfs[i];
           currentVfs[i] = fastDacV0s[i];
         }
       }
 
+      // Call the base ramp function for fast channels
       OperationResult rampResult = timeSeriesBufferRampBaseNoConversionSetup(
           numFastDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
           adc_interval_us, fastDacChannels, currentV0s, currentVfs,
           adcChannels);
 
-      if (isReverse) {
-        delete[] currentV0s;
-        delete[] currentVfs;
-      }
-
       if (!rampResult.isSuccess()) {
-        delete[] fastDacChannels;
-        delete[] fastDacV0s;
-        delete[] fastDacVfs;
-        delete[] slowDacChannels;
-        delete[] slowDacV0s;
-        delete[] slowDacVfs;
-        delete[] adcChannels;
-        delete[] voltageStepSize;
-        delete[] previousVoltageSet;
-        return rampResult;
+        return rampResult;  // Return the failure reason
       }
     }
 
+    // Set ADC channels to idle mode
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
     }
 
     PeripheralCommsController::dataLedOff();
-
-    delete[] fastDacChannels;
-    delete[] fastDacV0s;
-    delete[] fastDacVfs;
-    delete[] slowDacChannels;
-    delete[] slowDacV0s;
-    delete[] slowDacVfs;
-    delete[] adcChannels;
-
-    delete[] voltageStepSize;
-    delete[] previousVoltageSet;
 
     if (getStopFlag()) {
       setStopFlag(false);
@@ -222,13 +191,13 @@ class God2D {
 
     const int saved_data_size = numSteps * dac_interval_us / adc_interval_us;
 
-    float *voltageStepSize = new float[numDacChannels];
+    float voltageStepSize[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] = (dacVfs[i] - dacV0s[i]) / (numSteps - 1);
     }
 
-    float *previousVoltageSet = new float[numDacChannels];
+    float previousVoltageSet[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       previousVoltageSet[i] = dacV0s[i];
@@ -238,24 +207,26 @@ class God2D {
 
     while (x < saved_data_size && !getStopFlag()) {
       if (TimingUtil::adcFlag) {
+        ADCBoard::commsController.beginTransaction();
         if (steps <= 1) {
           for (int i = 0; i < numAdcChannels; i++) {
             ADCController::getVoltageDataNoTransaction(adcChannels[i]);
           }
         } else {
-          float *packets = new float[numAdcChannels];
+          float packets[numAdcChannels];
           for (int i = 0; i < numAdcChannels; i++) {
             float v =
                 ADCController::getVoltageDataNoTransaction(adcChannels[i]);
             packets[i] = v;
           }
           m4SendVoltage(packets, numAdcChannels);
-          delete[] packets;
           x++;
         }
+        ADCBoard::commsController.endTransaction();
         TimingUtil::adcFlag = false;
       }
       if (TimingUtil::dacFlag && steps < numSteps + 1) {
+        DACChannel::commsController.beginTransaction();
         if (steps == 0) {
           for (int i = 0; i < numDacChannels; i++) {
             DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
@@ -269,6 +240,7 @@ class God2D {
           }
         }
         DACController::toggleLdac();
+        DACChannel::commsController.endTransaction();
         steps++;
         TimingUtil::dacFlag = false;
       }
@@ -276,9 +248,6 @@ class God2D {
 
     TimingUtil::disableDacInterrupt();
     TimingUtil::disableAdcInterrupt();
-
-    delete[] voltageStepSize;
-    delete[] previousVoltageSet;
 
     if (getStopFlag()) {
       setStopFlag(false);
@@ -306,6 +275,7 @@ class God2D {
 
     size_t currentIndex = 0;
 
+    // Parse initial parameters
     int numDacChannels = static_cast<int>(args[currentIndex++]);
     int numAdcChannels = static_cast<int>(args[currentIndex++]);
     int numStepsFast = static_cast<int>(args[currentIndex++]);
@@ -316,6 +286,7 @@ class God2D {
         static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
     int numAdcAverages = static_cast<int>(args[currentIndex++]);
 
+    // Parse Fast DAC Channels
     if (currentIndex >= args.size()) {
       return OperationResult::Failure(
           "Unexpected end of arguments while parsing fast DAC channels");
@@ -326,9 +297,9 @@ class God2D {
           "Not enough arguments for fast DAC channels");
     }
 
-    int *fastDacChannels = new int[numFastDacChannels];
-    float *fastDacV0s = new float[numFastDacChannels];
-    float *fastDacVfs = new float[numFastDacChannels];
+    int fastDacChannels[numFastDacChannels];
+    float fastDacV0s[numFastDacChannels];
+    float fastDacVfs[numFastDacChannels];
 
     for (int i = 0; i < numFastDacChannels; ++i) {
       fastDacChannels[i] = static_cast<int>(args[currentIndex++]);
@@ -336,25 +307,20 @@ class God2D {
       fastDacVfs[i] = args[currentIndex++];
     }
 
+    // Parse Slow DAC Channels
     if (currentIndex >= args.size()) {
-      delete[] fastDacChannels;
-      delete[] fastDacV0s;
-      delete[] fastDacVfs;
       return OperationResult::Failure(
           "Unexpected end of arguments while parsing slow DAC channels");
     }
     int numSlowDacChannels = static_cast<int>(args[currentIndex++]);
     if (args.size() < currentIndex + numSlowDacChannels * 3) {
-      delete[] fastDacChannels;
-      delete[] fastDacV0s;
-      delete[] fastDacVfs;
       return OperationResult::Failure(
           "Not enough arguments for slow DAC channels");
     }
 
-    int *slowDacChannels = new int[numSlowDacChannels];
-    float *slowDacV0s = new float[numSlowDacChannels];
-    float *slowDacVfs = new float[numSlowDacChannels];
+    int slowDacChannels[numSlowDacChannels];
+    float slowDacV0s[numSlowDacChannels];
+    float slowDacVfs[numSlowDacChannels];
 
     for (int i = 0; i < numSlowDacChannels; ++i) {
       slowDacChannels[i] = static_cast<int>(args[currentIndex++]);
@@ -362,48 +328,37 @@ class God2D {
       slowDacVfs[i] = args[currentIndex++];
     }
 
+    // Parse ADC Channels
     if (args.size() < currentIndex + numAdcChannels) {
-      delete[] fastDacChannels;
-      delete[] fastDacV0s;
-      delete[] fastDacVfs;
-      delete[] slowDacChannels;
-      delete[] slowDacV0s;
-      delete[] slowDacVfs;
       return OperationResult::Failure("Not enough arguments for ADC channels");
     }
 
-    int *adcChannels = new int[numAdcChannels];
+    int adcChannels[numAdcChannels];
     for (int i = 0; i < numAdcChannels; ++i) {
       adcChannels[i] = static_cast<int>(args[currentIndex++]);
     }
 
-    for (int i = 0; i < numAdcChannels; i++) {
-      if (dac_settling_time_us <
-          ADCController::getConversionTimeFloat(adcChannels[i])) {
-        return OperationResult::Failure(
-            "DAC settling time too short for ADC conversion time");
-      }
-    }
+    // for (int i = 0; i < numAdcChannels; i++) {
+    //   if (dac_settling_time_us <
+    //       ADCController::getConversionTimeFloat(adcChannels[i])) {
+    //     return OperationResult::Failure(
+    //         "DAC settling time too short for ADC conversion time");
+    //   }
+    // }
 
+    // Validate total number of DAC channels
     if (numFastDacChannels + numSlowDacChannels != numDacChannels) {
-      delete[] fastDacChannels;
-      delete[] fastDacV0s;
-      delete[] fastDacVfs;
-      delete[] slowDacChannels;
-      delete[] slowDacV0s;
-      delete[] slowDacVfs;
-      delete[] adcChannels;
       return OperationResult::Failure(
           "Sum of fast and slow DAC channels does not match numDacChannels");
     }
 
-    float *voltageStepSize = new float[numDacChannels];
+    float voltageStepSize[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] = (slowDacVfs[i] - slowDacV0s[i]) / (numStepsSlow - 1);
     }
 
-    float *previousVoltageSet = new float[numDacChannels];
+    float previousVoltageSet[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       previousVoltageSet[i] = slowDacV0s[i];
@@ -412,74 +367,58 @@ class God2D {
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
+    // Start continuous ADC conversions
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
     }
 
+    // Iterate over slow steps with optional retrace
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
          ++slowStep) {
+      // Set slow DAC channels to the current slow step voltages
+      DACChannel::commsController.beginTransaction();
       for (int i = 0; i < numSlowDacChannels; ++i) {
         DACController::setVoltageNoTransactionNoLdac(slowDacChannels[i],
                                                      previousVoltageSet[i]);
         previousVoltageSet[i] += voltageStepSize[i];
       }
       DACController::toggleLdac();
+      DACChannel::commsController.endTransaction();
 
+      // Determine ramp direction based on retrace flag
       bool isReverse = false;
       if (retrace) {
-        isReverse = (slowStep % 2 != 0);
+        isReverse = (slowStep % 2 != 0);  // Reverse on odd slow steps
       }
 
-      float *currentV0s = fastDacV0s;
-      float *currentVfs = fastDacVfs;
+      // Prepare ramp voltages
+      float currentV0s[numFastDacChannels];
+      float currentVfs[numFastDacChannels];
       if (isReverse) {
-        currentV0s = new float[numFastDacChannels];
-        currentVfs = new float[numFastDacChannels];
+        // Swap V0 and Vf for reverse ramp
         for (int i = 0; i < numFastDacChannels; ++i) {
           currentV0s[i] = fastDacVfs[i];
           currentVfs[i] = fastDacV0s[i];
         }
       }
 
+      // Call the base ramp function for fast channels
       OperationResult rampResult = dacLedBufferRampBaseNoConversionSetup(
           numFastDacChannels, numAdcChannels, numStepsFast, numAdcAverages,
           dac_interval_us, dac_settling_time_us, fastDacChannels, currentV0s,
           currentVfs, adcChannels);
 
-      if (isReverse) {
-        delete[] currentV0s;
-        delete[] currentVfs;
-      }
-
       if (!rampResult.isSuccess()) {
-        delete[] fastDacChannels;
-        delete[] fastDacV0s;
-        delete[] fastDacVfs;
-        delete[] slowDacChannels;
-        delete[] slowDacV0s;
-        delete[] slowDacVfs;
-        delete[] adcChannels;
-        delete[] voltageStepSize;
-        delete[] previousVoltageSet;
-        return rampResult;
+        return rampResult;  // Return the failure reason
       }
     }
 
+    // Set ADC channels to idle mode
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
     }
 
     PeripheralCommsController::dataLedOff();
-
-    delete[] fastDacChannels;
-    delete[] fastDacV0s;
-    delete[] fastDacVfs;
-    delete[] slowDacChannels;
-    delete[] slowDacV0s;
-    delete[] slowDacVfs;
-    delete[] adcChannels;
-    delete[] voltageStepSize;
-    delete[] previousVoltageSet;
 
     if (getStopFlag()) {
       setStopFlag(false);
@@ -498,22 +437,24 @@ class God2D {
 
     float numAdcAveragesInv = 1.0 / static_cast<float>(numAdcAverages);
 
-    float *voltageStepSize = new float[numDacChannels];
+    float voltageStepSize[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] = (dacVfs[i] - dacV0s[i]) / (numSteps - 1);
     }
 
-    float *previousVoltageSet = new float[numDacChannels];
+    float previousVoltageSet[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       previousVoltageSet[i] = dacV0s[i];
     }
 
+    // Set up timers with the same period but phase shifted
     TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us);
 
     while (x < numSteps && !getStopFlag()) {
       if (TimingUtil::adcFlag) {
+        ADCBoard::commsController.beginTransaction();
         if (steps <= 1) {
           for (int i = 0; i < numAdcChannels; i++) {
             for (int j = 0; j < numAdcAverages; j++) {
@@ -521,7 +462,7 @@ class God2D {
             }
           }
         } else {
-          float *packets = new float[numAdcChannels];
+          float packets[numAdcChannels];
           for (int i = 0; i < numAdcChannels; i++) {
             float total = 0.0;
             for (int j = 0; j < numAdcAverages; j++) {
@@ -532,12 +473,13 @@ class God2D {
             packets[i] = v;
           }
           m4SendVoltage(packets, numAdcChannels);
-          delete[] packets;
           x++;
         }
+        ADCBoard::commsController.endTransaction();
         TimingUtil::adcFlag = false;
       }
       if (TimingUtil::dacFlag && steps < numSteps + 1) {
+        DACChannel::commsController.beginTransaction();
         if (steps == 0) {
           for (int i = 0; i < numDacChannels; i++) {
             DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
@@ -551,6 +493,7 @@ class God2D {
           }
         }
         DACController::toggleLdac();
+        DACChannel::commsController.endTransaction();
         steps++;
         TimingUtil::dacFlag = false;
       }
@@ -558,9 +501,6 @@ class God2D {
 
     TimingUtil::disableDacInterrupt();
     TimingUtil::disableAdcInterrupt();
-
-    delete[] voltageStepSize;
-    delete[] previousVoltageSet;
 
     if (getStopFlag()) {
       setStopFlag(false);
