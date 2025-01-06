@@ -13,7 +13,7 @@ class PeripheralCommsController {
   static void setup() {
     if (!spiInitialized) {
       SPI.begin();
-      // SPI.beginTransaction(DAC_SPI_SETTINGS);
+      SPI.beginTransaction(DAC_SPI_SETTINGS);
       spiInitialized = true;
     }
   }
@@ -26,9 +26,9 @@ class PeripheralCommsController {
     return SPI.transfer(0);
   }
 
-  void beginTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
+  // void beginTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
 
-  void endTransaction() { SPI.endTransaction(); }
+  // void endTransaction() { SPI.endTransaction(); }
 
   void transfer(void* buf, size_t count) { SPI.transfer(buf, count); }
 

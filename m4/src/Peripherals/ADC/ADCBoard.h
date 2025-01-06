@@ -6,6 +6,8 @@
 #include <Arduino.h>
 #include <Peripherals/PeripheralCommsController1.h>
 
+#include "Utils/shared_memory.h"
+
 #include "Config.h"
 
 // ADC symbols

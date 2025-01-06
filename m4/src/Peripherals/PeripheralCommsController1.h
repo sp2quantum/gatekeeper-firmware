@@ -13,7 +13,7 @@ class PeripheralCommsController1 {
   static void setup() {
     if (!spiInitialized) {
       SPI1.begin();
-      // SPI1.beginTransaction(ADC_SPI_SETTINGS);
+      SPI1.beginTransaction(ADC_SPI_SETTINGS);
       spiInitialized = true;
     }
   }
@@ -26,9 +26,9 @@ class PeripheralCommsController1 {
     return SPI1.transfer(0);
   }
 
-  void beginTransaction() { SPI1.beginTransaction(ADC_SPI_SETTINGS); }
+  // void beginTransaction() { SPI1.beginTransaction(ADC_SPI_SETTINGS); }
 
-  void endTransaction() { SPI1.endTransaction(); }
+  // void endTransaction() { SPI1.endTransaction(); }
 
   void transfer(void* buf, size_t count) { SPI1.transfer(buf, count); }
 

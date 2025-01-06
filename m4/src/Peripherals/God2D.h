@@ -130,14 +130,14 @@ class God2D {
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
          ++slowStep) {
       // Set slow DAC channels to the current slow step voltages
-      DACChannel::commsController.beginTransaction();
+      // DACChannel::commsController.beginTransaction();
       for (int i = 0; i < numSlowDacChannels; ++i) {
         DACController::setVoltageNoTransactionNoLdac(slowDacChannels[i],
                                                      previousVoltageSet[i]);
         previousVoltageSet[i] += voltageStepSize[i];
       }
       DACController::toggleLdac();
-      DACChannel::commsController.endTransaction();
+      // DACChannel::commsController.endTransaction();
 
       // Determine ramp direction based on retrace flag
       bool isReverse = false;
@@ -207,7 +207,7 @@ class God2D {
 
     while (x < saved_data_size && !getStopFlag()) {
       if (TimingUtil::adcFlag) {
-        ADCBoard::commsController.beginTransaction();
+        // ADCBoard::commsController.beginTransaction();
         if (steps <= 1) {
           for (int i = 0; i < numAdcChannels; i++) {
             ADCController::getVoltageDataNoTransaction(adcChannels[i]);
@@ -222,11 +222,11 @@ class God2D {
           m4SendVoltage(packets, numAdcChannels);
           x++;
         }
-        ADCBoard::commsController.endTransaction();
+        // ADCBoard::commsController.endTransaction();
         TimingUtil::adcFlag = false;
       }
       if (TimingUtil::dacFlag && steps < numSteps + 1) {
-        DACChannel::commsController.beginTransaction();
+        // DACChannel::commsController.beginTransaction();
         if (steps == 0) {
           for (int i = 0; i < numDacChannels; i++) {
             DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
@@ -240,7 +240,7 @@ class God2D {
           }
         }
         DACController::toggleLdac();
-        DACChannel::commsController.endTransaction();
+        // DACChannel::commsController.endTransaction();
         steps++;
         TimingUtil::dacFlag = false;
       }
@@ -376,14 +376,14 @@ class God2D {
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
          ++slowStep) {
       // Set slow DAC channels to the current slow step voltages
-      DACChannel::commsController.beginTransaction();
+      // DACChannel::commsController.beginTransaction();
       for (int i = 0; i < numSlowDacChannels; ++i) {
         DACController::setVoltageNoTransactionNoLdac(slowDacChannels[i],
                                                      previousVoltageSet[i]);
         previousVoltageSet[i] += voltageStepSize[i];
       }
       DACController::toggleLdac();
-      DACChannel::commsController.endTransaction();
+      // DACChannel::commsController.endTransaction();
 
       // Determine ramp direction based on retrace flag
       bool isReverse = false;
@@ -454,7 +454,7 @@ class God2D {
 
     while (x < numSteps && !getStopFlag()) {
       if (TimingUtil::adcFlag) {
-        ADCBoard::commsController.beginTransaction();
+        // ADCBoard::commsController.beginTransaction();
         if (steps <= 1) {
           for (int i = 0; i < numAdcChannels; i++) {
             for (int j = 0; j < numAdcAverages; j++) {
@@ -475,11 +475,11 @@ class God2D {
           m4SendVoltage(packets, numAdcChannels);
           x++;
         }
-        ADCBoard::commsController.endTransaction();
+        // ADCBoard::commsController.endTransaction();
         TimingUtil::adcFlag = false;
       }
       if (TimingUtil::dacFlag && steps < numSteps + 1) {
-        DACChannel::commsController.beginTransaction();
+        // DACChannel::commsController.beginTransaction();
         if (steps == 0) {
           for (int i = 0; i < numDacChannels; i++) {
             DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
@@ -493,7 +493,7 @@ class God2D {
           }
         }
         DACController::toggleLdac();
-        DACChannel::commsController.endTransaction();
+        // DACChannel::commsController.endTransaction();
         steps++;
         TimingUtil::dacFlag = false;
       }
