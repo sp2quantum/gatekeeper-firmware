@@ -27,7 +27,9 @@ struct VoltageCircularBuffer {
 struct SharedMemory {
   CharCircularBuffer m4_to_m7_char_buffer;
   CharCircularBuffer m7_to_m4_char_buffer;
+
   FloatCircularBuffer m4_to_m7_float_buffer;
+
   VoltageCircularBuffer m4_to_m7_voltage_buffer;
 
   volatile bool stop_flag;
@@ -37,35 +39,23 @@ extern SharedMemory* shared_memory;
 
 bool initSharedMemory();
 
-// M4 char functions
+void setStopFlag(bool value);
+bool getStopFlag();
+
 bool m4SendChar(const char* data, size_t length);
 bool m4ReceiveChar(char* data, size_t& length);
 bool m4HasCharMessage();
 
-// M4 float functions
 bool m4SendFloat(const float* data, size_t length);
-bool m4ReceiveFloat(float* data, size_t& length);
-bool m4HasFloatMessage();
 
-// M4 voltage functions
 bool m4SendVoltage(const float* data, size_t length);
-bool m4ReceiveVoltage(float* data, size_t& length);
-bool m4HasVoltageMessage();
 
-// M7 char functions
 bool m7SendChar(const char* data, size_t length);
 bool m7ReceiveChar(char* data, size_t& length);
 bool m7HasCharMessage();
 
-// M7 float functions
-bool m7SendFloat(const float* data, size_t length);
 bool m7ReceiveFloat(float* data, size_t& length);
 bool m7HasFloatMessage();
 
-// M7 voltage functions
-bool m7SendVoltage(const float* data, size_t length);
 bool m7ReceiveVoltage(float* data, size_t& length);
 bool m7HasVoltageMessage();
-
-void setStopFlag(bool value);
-bool getStopFlag();
