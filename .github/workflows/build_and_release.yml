@@ -1,0 +1,70 @@
+name: PlatformIO Build and Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout repository
+      - uses: actions/checkout@v3
+
+      # Cache dependencies
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+
+      # Setup Python environment
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      # Install PlatformIO Core
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+
+      # Build PlatformIO Project for M4 and M7
+      - name: Build M4 and M7 Firmware
+        run: |
+          cd ./m4 && pio run && cd ../m7 && pio run
+
+      # Rename firmware files
+      - name: Rename Firmware Files
+        run: |
+          mkdir -p firmware
+          mv ./m4/.pio/build/*/firmware.bin ./firmware/firmwareM4.bin
+          mv ./m7/.pio/build/*/firmware.bin ./firmware/firmwareM7.bin
+
+      # Clone the firmware uploader repository
+      - name: Clone Firmware Uploader Repo
+        run: |
+          git clone https://github.com/sp2quantum/firmware_uploader.git
+          cd firmware_uploader
+          rm -f firmware/firmwareM4.bin firmware/firmwareM7.bin
+          cp ../firmware/firmwareM4.bin firmware/
+          cp ../firmware/firmwareM7.bin firmware/
+          rm -rf .git
+
+      # Create a zip archive
+      - name: Create Zip Archive
+        run: |
+          zip -r firmware_uploader_package.zip firmware_uploader
+
+      # Create GitHub Release
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Firmware Uploader Package v${{ github.run_number }}
+          body: |
+            This release includes the updated firmware files and firmware uploader package.
+          draft: true
+          prerelease: false
+          files: firmware_uploader.zip
