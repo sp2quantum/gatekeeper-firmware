@@ -53,10 +53,11 @@ jobs:
       # Create a zip archive
       - name: Create Zip Archive
         run: |
-          zip -r firmware_uploader_package.zip firmware_uploader
+          zip -r Firmware_Package.zip firmware_uploader
 
       # Create GitHub Release
       - name: Create Release
+        id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -67,4 +68,14 @@ jobs:
             This release includes the updated firmware files and firmware uploader package.
           draft: true
           prerelease: false
-          files: firmware_uploader.zip
+
+      # Upload release asset
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: Firmware_Package.zip
+          asset_name: Firmware_Package.zip
+          asset_content_type: application/zip
