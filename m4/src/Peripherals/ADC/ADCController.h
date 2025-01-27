@@ -21,20 +21,17 @@ class ADCController {
   }
 
   inline static void setup() {
+
+    #if !defined(__OLD_SHIELD__)
     pinMode(adc_sync, OUTPUT);
     digitalWrite(adc_sync, LOW);
+    #endif
+
+
     initializeRegistry();
     for (auto board : adc_boards) {
       board.setup();
       // int drdy = board.getDataReadyPin();
-      attachInterrupt(
-        digitalPinToInterrupt(47),
-        []() { setReadyFlag(0); },
-        FALLING);
-      attachInterrupt(
-        digitalPinToInterrupt(48),
-        []() { setReadyFlag(1); },
-        FALLING);
     }
   }
 
@@ -63,9 +60,9 @@ class ADCController {
                                "ADC_CH_FULL_SC_CAL");
   }
 
-  inline static void addBoard(int data_sync_pin, int data_ready,
+  inline static void addBoard(int cs_pin, int data_ready,
                               int reset_pin) {
-    ADCBoard newBoard = ADCBoard(data_sync_pin, data_ready, reset_pin);
+    ADCBoard newBoard = ADCBoard(cs_pin, data_ready, reset_pin);
     adc_boards.push_back(newBoard);
   }
 
@@ -89,10 +86,12 @@ class ADCController {
     }
   }
 
+  #if !defined(__OLD_SHIELD__)
   inline static void toggleSync() {
     digitalWrite(adc_sync, HIGH);
     digitalWrite(adc_sync, LOW);
   }
+  #endif
 
   inline static float getVoltage(int channel_index) {
     return adc_boards[getBoardIndexFromGlobalIndex(channel_index)].readVoltage(
