@@ -37,17 +37,18 @@ jobs:
       - name: Rename Firmware Files
         run: |
           mkdir -p firmware
-          mv ./m4/.pio/build/*/firmware.bin ./firmware/firmwareM4.bin
-          mv ./m7/.pio/build/*/firmware.bin ./firmware/firmwareM7.bin
+          mv ./m4/.pio/build/giga_r1_m4_new_hardware/firmware.bin ./firmware/firmwareM4_new_hardware.bin
+          mv ./m4/.pio/build/giga_r1_m4_new_shield_old_hardware/firmware.bin ./firmware/firmwareM4_new_shield_old_hardware.bin
+          mv ./m4/.pio/build/giga_r1_m4_old_hardware/firmware.bin ./firmware/firmwareM4_old_hardware.bin
+          mv ./m7/.pio/build/giga_r1_m7/firmware.bin ./firmware/firmwareM7.bin
 
       # Clone the firmware uploader repository
       - name: Clone Firmware Uploader Repo
         run: |
           git clone https://github.com/sp2quantum/firmware_uploader.git
           cd firmware_uploader
-          rm -f firmware/firmwareM4.bin firmware/firmwareM7.bin
-          cp ../firmware/firmwareM4.bin firmware/
-          cp ../firmware/firmwareM7.bin firmware/
+          rm -f firmware/*.bin
+          cp ../firmware/*.bin firmware/
           rm -rf .git
 
       # Create a zip archive
