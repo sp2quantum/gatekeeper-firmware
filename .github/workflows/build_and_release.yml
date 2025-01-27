@@ -48,6 +48,7 @@ jobs:
           git clone https://github.com/sp2quantum/firmware_uploader.git
           cd firmware_uploader
           rm -f firmware/*.bin
+          mkdir -p firmware
           cp ../firmware/*.bin firmware/
           rm -rf .git
 
