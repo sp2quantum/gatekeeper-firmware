@@ -38,7 +38,7 @@ jobs:
         run: |
           mkdir -p firmware
           mv ./m4/.pio/build/giga_r1_m4_new_hardware/firmware.bin ./firmware/firmwareM4_new_hardware.bin
-          mv ./m4/.pio/build/giga_r1_m4_new_shield_old_hardware/firmware.bin ./firmware/firmwareM4_new_shield_old_hardware.bin
+          mv ./m4/.pio/build/giga_r1_m4_new_shield_old_hardware/firmware.bin ./firmware/firmwareM4_new_shield_old_dac_adc.bin
           mv ./m4/.pio/build/giga_r1_m4_old_hardware/firmware.bin ./firmware/firmwareM4_old_hardware.bin
           mv ./m7/.pio/build/giga_r1_m7/firmware.bin ./firmware/firmwareM7.bin
 
