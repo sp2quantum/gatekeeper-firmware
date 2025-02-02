@@ -92,51 +92,63 @@ struct TimingUtil {
     TIM8->CR1 |= TIM_CR1_CEN;
   }
 
-  inline static void setupTimersDacLed(uint32_t period_us,
-                                       uint32_t phase_shift_us) {
-    resetTimers();
 
+  inline static void setupTimersDacLed(uint32_t period_us, uint32_t phase_shift_us) {
+    // Reset timers and clear flags
+    resetTimers();
     // Enable TIM1 and TIM8 clocks
     __HAL_RCC_TIM1_CLK_ENABLE();
     __HAL_RCC_TIM8_CLK_ENABLE();
-
     uint32_t timerClock = HAL_RCC_GetPCLK2Freq();
-
-    // Configure TIM1 (Master timer - DAC trigger)
-    TIM1->PSC = (2 * timerClock / 1000000) - 1;  // For 1us resolution
+    //
+    // Configure TIM1 as Master (DAC trigger)
+    //
+    TIM1->PSC = (2 * timerClock / 1000000) - 1;  // For 1µs resolution
     TIM1->ARR = period_us - 1;
     TIM1->CR1 = TIM_CR1_ARPE;
-    TIM1->CR2 |= TIM_CR2_MMS_1;  // Master Mode Selection: Update event as
-                                 // trigger output (TRGO)
+    // Set Master Mode: Update event (TRGO) on each overflow
+    TIM1->CR2 = (TIM1->CR2 & ~TIM_CR2_MMS) | TIM_CR2_MMS_1;
+    // Enable update interrupt (if needed for other purposes)
     TIM1->DIER |= TIM_DIER_UIE;
-
-    // Configure TIM8 (Slave timer - ADC trigger)
-    TIM8->PSC = (2 * timerClock / 1000000) - 1;  // For 1us resolution
+    //
+    // Configure TIM8 as Slave (ADC trigger) in RESET mode
+    //
+    TIM8->PSC = (2 * timerClock / 1000000) - 1;  // For 1µs resolution
     TIM8->ARR = period_us - 1;
     TIM8->CR1 = TIM_CR1_ARPE;
-    TIM8->SMCR |=
-        TIM_SMCR_TS_0 | TIM_SMCR_TS_2;  // Trigger selection: ITR0 (TIM1)
-    TIM8->SMCR |= TIM_SMCR_SMS_2 | TIM_SMCR_SMS_1;  // Slave mode: Trigger mode
-    TIM8->DIER |= TIM_DIER_UIE;
-
-    // Set up phase shift
+    // Clear the trigger selection (TS) bits.
+    // For ITR0 (which is TIM1) on many STM32 MCUs TS should be 0.
+    TIM8->SMCR &= ~(TIM_SMCR_TS);
+    // Set the slave mode selection (SMS) bits to 0b100 (Reset Mode)
+    // (This makes TIM8 reset its counter when the trigger occurs.)
+    TIM8->SMCR &= ~(TIM_SMCR_SMS);
+    TIM8->SMCR |= TIM_SMCR_SMS_2;  // Assuming TIM_SMCR_SMS_2 corresponds to 0b100
+    // Optional: If you require a phase shift for the ADC trigger, configure channel 1.
     if (phase_shift_us > 0 && phase_shift_us < period_us) {
+      // Set compare register to trigger ADC a few microseconds after reset.
       TIM8->CCR1 = phase_shift_us + 2;
-      TIM8->CCMR1 |= TIM_CCMR1_OC1M_1 |
-                     TIM_CCMR1_OC1M_2;  // Output Compare mode: PWM mode 1
-      TIM8->CCER |= TIM_CCER_CC1E;      // Enable Capture/Compare 1 output
-      TIM8->DIER |= TIM_DIER_CC1IE;     // Enable Capture/Compare 1 interrupt
+      // Configure Output Compare for Channel 1 to PWM mode 1.
+      TIM8->CCMR1 &= ~(TIM_CCMR1_OC1M);  // Clear OC1M bits
+      TIM8->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2;
+      // Enable the Capture/Compare 1 output.
+      TIM8->CCER |= TIM_CCER_CC1E;
+      // Enable Capture/Compare 1 interrupt.
+      TIM8->DIER |= TIM_DIER_CC1IE;
     }
-
-    // Enable interrupts
+    // Explicitly clear TIM8 counter to guarantee it starts at 0.
+    TIM8->CNT = 0;
+    //
+    // Configure NVIC priorities and enable interrupts
+    //
     NVIC_SetPriority(TIM1_UP_IRQn, 2);
     NVIC_EnableIRQ(TIM1_UP_IRQn);
     NVIC_SetPriority(TIM8_CC_IRQn, 3);
     NVIC_EnableIRQ(TIM8_CC_IRQn);
-
-    // Start timers
-    TIM1->CR1 |= TIM_CR1_CEN;
+    //
+    // Start the timers: start the slave (TIM8) first, then the master (TIM1)
+    //
     TIM8->CR1 |= TIM_CR1_CEN;
+    TIM1->CR1 |= TIM_CR1_CEN;
   }
 
   inline static void disableDacInterrupt() {

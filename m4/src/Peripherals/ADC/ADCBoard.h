@@ -126,6 +126,26 @@ class ADCBoard {
     return data[1];
   }
 
+  void setRDYFN() {
+    byte data[2];
+    data[0] = WRITE | ADDR_IO;
+
+    data[1] = 0 << 6 | 1 << 3 | 1 << 5 | 1 << 4;
+    digitalWrite(cs_pin, LOW);
+    commsController.transferADC(data, 2);
+    digitalWrite(cs_pin, HIGH);
+  }
+
+  void unsetRDYFN() {
+    byte data[2];
+    data[0] = WRITE | ADDR_IO;
+
+    data[1] = 0 << 6 | 1 << 5 | 1 << 4;
+    digitalWrite(cs_pin, LOW);
+    commsController.transferADC(data, 2);
+    digitalWrite(cs_pin, HIGH);
+  }
+
   void channelSetup(int adc_channel, uint8_t flags) {
     byte data[2];
     data[0] = WRITE | ADDR_CHANNELSETUP(adc_channel);
@@ -159,7 +179,7 @@ class ADCBoard {
 
     // address the channel mode register and write to it
     data_array[2] = WRITE | ADDR_MODE(adc_channel);
-    data_array[3] = CONT_CONV_MODE;
+    data_array[3] = CONT_CONV_MODE; // | 1 << 2; //includes setting continuous read mode
 
     // send off command
     digitalWrite(cs_pin, LOW);
@@ -221,6 +241,7 @@ class ADCBoard {
     uint32_t result = upper << 16 | lower << 8 | last;
 
     return result;
+    //return 0;
   }
 
   std::vector<double> continuousConvert(int channel_index, uint32_t period_us,
@@ -243,6 +264,13 @@ class ADCBoard {
     digitalWrite(cs_pin, LOW);
     commsController.transferADC(data, 2);
     digitalWrite(cs_pin, HIGH);
+
+    /*byte data1[2];
+    data1[0] = WRITE | ADDR_CHANNELSETUP(adc_channel);
+    data1[1] = 0x00;
+    digitalWrite(cs_pin, LOW);
+    commsController.transferADC(data1, 2);
+    digitalWrite(cs_pin, HIGH);*/
   }
 
   bool isChannelActive(int adc_channel) {

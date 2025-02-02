@@ -234,7 +234,7 @@ class God {
       return OperationResult::Failure("Invalid number of channels");
     }
     
-    int steps = 0;
+    float packets[numAdcChannels];
     int x = 0;
 
     float voltageStepSize[numDacChannels];
@@ -251,60 +251,47 @@ class God {
 
     float numAdcAveragesInv = 1.0 / static_cast<float>(numAdcAverages);
 
-    // Set up timers with the same period but phase shifted
-    TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us);
-
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
+      ADCController::setRDYFN(adcChannels[i]);
     }
+
+  // Set up timers with the sa                                                                                                                                                                       me period but phase shifted
+    TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us);
+    TimingUtil::adcFlag = false;
+    TimingUtil::dacFlag = false;
+
     while (x < numSteps && !getStopFlag()) {
-      if (TimingUtil::adcFlag) {
-        // ADCBoard::commsController.beginTransaction();
-        if (steps <= 1) {
-          for (int i = 0; i < numAdcChannels; i++) {
-            for (int j = 0; j < numAdcAverages; j++) {
-              ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-            }
-          }
-        } else {
-          float packets[numAdcChannels];
-          for (int i = 0; i < numAdcChannels; i++) {
-            float total = 0.0;
-            for (int j = 0; j < numAdcAverages; j++) {
-              total +=
-                  ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-            }
-            float v = total * numAdcAveragesInv;
-            packets[i] = v;
-          }
-          // m4SendFloat(packets, numAdcChannels);
-          m4SendVoltage(packets, numAdcChannels);
-          x++;
-        }
-        // ADCBoard::commsController.endTransaction();
-        TimingUtil::adcFlag = false;
-      }
-      if (TimingUtil::dacFlag && steps < numSteps + 1) {
+      if (TimingUtil::dacFlag) {
         // DACChannel::commsController.beginTransaction();
-        if (steps == 0) {
-          for (int i = 0; i < numDacChannels; i++) {
-            DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                         dacV0s[i]);
-          }
-        } else {
-          for (int i = 0; i < numDacChannels; i++) {
-            DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                         previousVoltageSet[i]);
-            previousVoltageSet[i] += voltageStepSize[i];
-          }
+        for (int i = 0; i < numDacChannels; i++) {
+          DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
+                                                        previousVoltageSet[i]);
+          previousVoltageSet[i] += voltageStepSize[i];
         }
         DACController::toggleLdac();
         // DACChannel::commsController.endTransaction();
-        steps++;
         TimingUtil::dacFlag = false;
+        x++;
+      }
+      if (TimingUtil::adcFlag) {
+        // ADCBoard::commsController.beginTransaction();
+        for (int i = 0; i < numAdcChannels; i++) {
+          float total = 0.0;
+          for (int j = 0; j < numAdcAverages; j++) {
+            total +=
+                ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+          }
+          float v = total * numAdcAveragesInv;
+          packets[i] = v;
+          // m4SendFloat(packets, numAdcChannels);
+        }
+        m4SendVoltage(packets, numAdcChannels);
+        // ADCBoard::commsController.endTransaction();
+        TimingUtil::adcFlag = false;
       }
     }
 
@@ -313,6 +300,10 @@ class God {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
+    }
+
+    for (int i = 0; i < numAdcChannels; i++) {
+      ADCController::unsetRDYFN(adcChannels[i]);
     }
 
     PeripheralCommsController::dataLedOff();

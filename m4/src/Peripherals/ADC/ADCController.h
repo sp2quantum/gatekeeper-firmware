@@ -180,6 +180,19 @@ class ADCController {
         .getConversionData(getChannelIndexFromGlobalIndex(adc_channel));
   }
 
+  //Sets the RDYFN bit in the IO register to 1
+  //This ensures the RDY pin goes low once all ADCs cycle through their conversion process in continuous read mode
+  inline static void setRDYFN(int adc_channel) {
+    adc_boards[getBoardIndexFromGlobalIndex(adc_channel)].setRDYFN();
+  }
+
+  //unsets the RDYFN bit in the IO register to 1
+  //This ensures the RDY pin goes low once all ADCs cycle through their conversion process in continuous read mode
+  //This needs to be done after fininshing a buffer ramp to take the ADC out of continuous conversion mode
+  inline static void unsetRDYFN(int adc_channel) {
+    adc_boards[getBoardIndexFromGlobalIndex(adc_channel)].unsetRDYFN();
+  }
+
   inline static float getVoltageData(int adc_channel) {
     return ADC2DOUBLE(getConversionData(adc_channel));
   }
