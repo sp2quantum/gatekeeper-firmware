@@ -254,6 +254,12 @@ class God {
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
+    //set initial DAC voltages
+    for (int i = 0; i < numDacChannels; i++) {
+        DACController::setVoltageNoTransactionNoLdac(dacChannels[i], dacV0s[i]);
+    }
+    DACController::toggleLdac();
+
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
       ADCController::setRDYFN(adcChannels[i]);
@@ -261,6 +267,7 @@ class God {
 
   // Set up timers with the sa                                                                                                                                                                       me period but phase shifted
     TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us);
+
     TimingUtil::adcFlag = false;
     TimingUtil::dacFlag = false;
 
@@ -268,14 +275,12 @@ class God {
       if (TimingUtil::dacFlag) {
         // DACChannel::commsController.beginTransaction();
         for (int i = 0; i < numDacChannels; i++) {
-          DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                        previousVoltageSet[i]);
+          DACController::setVoltageNoTransactionNoLdac(dacChannels[i], previousVoltageSet[i] + voltageStepSize[i]);
           previousVoltageSet[i] += voltageStepSize[i];
         }
         DACController::toggleLdac();
         // DACChannel::commsController.endTransaction();
         TimingUtil::dacFlag = false;
-        x++;
       }
       if (TimingUtil::adcFlag) {
         // ADCBoard::commsController.beginTransaction();
@@ -289,6 +294,7 @@ class God {
           packets[i] = v;
           // m4SendFloat(packets, numAdcChannels);
         }
+        x++;
         m4SendVoltage(packets, numAdcChannels);
         // ADCBoard::commsController.endTransaction();
         TimingUtil::adcFlag = false;
