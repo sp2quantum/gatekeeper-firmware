@@ -14,9 +14,9 @@ class God2D {
   static void setup() { initializeRegistry(); }
 
   static void initializeRegistry() {
-    registerMemberFunctionVector(timeSeriesBufferRamp2D,
-                                 "2D_TIME_SERIES_BUFFER_RAMP");
-    registerMemberFunctionVector(dacLedBufferRamp2D, "2D_DAC_LED_BUFFER_RAMP");
+    // registerMemberFunctionVector(timeSeriesBufferRamp2D,
+    //                              "2D_TIME_SERIES_BUFFER_RAMP");
+    // registerMemberFunctionVector(dacLedBufferRamp2D, "2D_DAC_LED_BUFFER_RAMP");
   }
 
   // timeSeriesBufferRamp2D:

@@ -75,11 +75,21 @@ struct TimingUtil {
     TIM1->CR1 = TIM_CR1_ARPE;
     TIM1->DIER |= TIM_DIER_UIE;
 
+    TIM1->EGR |= 0x01;
+    TIM1->SR &= ~TIM_SR_UIF;
+    TIM1->EGR |= 0x02;
+    TIM1->CCR1 &= ~TIM_SR_CC1IF;
+
     // Configure TIM8
     TIM8->PSC = (2 * timerClock / 1000000) - 1;  // For 1us resolution
     TIM8->ARR = adc_period_us - 1;
     TIM8->CR1 = TIM_CR1_ARPE;
     TIM8->DIER |= TIM_DIER_UIE;
+
+    TIM8->EGR |= 0x01;
+    TIM8->SR &= ~TIM_SR_UIF;
+    TIM8->EGR |= 0x02;
+    TIM8->CCR1 &= ~TIM_SR_CC1IF;
 
     // Enable interrupts
     NVIC_SetPriority(TIM1_UP_IRQn, 2);
