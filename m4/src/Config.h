@@ -33,6 +33,6 @@ const int led = 7; // indicator LED
 const int data = 6; // data indicator LED
 const int err = 11; // error indicator LED
 const static SPISettings DAC_SPI_SETTINGS(25000000, MSBFIRST, SPI_MODE1); 
-const static SPISettings ADC_SPI_SETTINGS(6000000, MSBFIRST, SPI_MODE3);
+const static SPISettings ADC_SPI_SETTINGS(8000000, MSBFIRST, SPI_MODE0);
 #endif
 
