@@ -188,9 +188,55 @@ struct TimingUtil {
     NVIC_DisableIRQ(TIM8_CC_IRQn);
   }
 
-  inline static void test() {
-    digitalWrite(adc_sync, LOW);
-    adcFlag = true;
+  inline static const int numChannels = 4;
+
+  inline static bool adcChannelRdy[numChannels];
+
+  inline static const uint32_t fullMask = (1u << numChannels) - 1;
+
+  inline static void adcSyncISR0() {
+    adcChannelRdy[0] = true;
+    
+    // Check if all channels are ready by comparing memory as a single value
+    if (*reinterpret_cast<uint32_t*>(adcChannelRdy) == fullMask) {
+      digitalWrite(adc_sync, LOW);
+      adcFlag = true;
+      // Clear all flags in one operation
+      *reinterpret_cast<uint32_t*>(adcChannelRdy) = 0;
+    }
+  }
+  inline static void adcSyncISR1() {
+    adcChannelRdy[1] = true;
+    
+    // Check if all channels are ready by comparing memory as a single value
+    if (*reinterpret_cast<uint32_t*>(adcChannelRdy) == fullMask) {
+      digitalWrite(adc_sync, LOW);
+      adcFlag = true;
+      // Clear all flags in one operation
+      *reinterpret_cast<uint32_t*>(adcChannelRdy) = 0;
+    }
+  }
+  inline static void adcSyncISR2() {
+    adcChannelRdy[2] = true;
+    
+    // Check if all channels are ready by comparing memory as a single value
+    if (*reinterpret_cast<uint32_t*>(adcChannelRdy) == fullMask) {
+      digitalWrite(adc_sync, LOW);
+      adcFlag = true;
+      // Clear all flags in one operation
+      *reinterpret_cast<uint32_t*>(adcChannelRdy) = 0;
+    }
+  }
+  inline static void adcSyncISR3() {
+    adcChannelRdy[3] = true;
+    
+    // Check if all channels are ready by comparing memory as a single value
+    if (*reinterpret_cast<uint32_t*>(adcChannelRdy) == fullMask) {
+      digitalWrite(adc_sync, LOW);
+      adcFlag = true;
+      // Clear all flags in one operation
+      *reinterpret_cast<uint32_t*>(adcChannelRdy) = 0;
+    }
   }
 };
 

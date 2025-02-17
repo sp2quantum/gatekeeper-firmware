@@ -245,7 +245,14 @@ class God {
     PeripheralCommsController::dataLedOn();
 
     digitalWrite(adc_sync, LOW);
-    attachInterrupt(digitalPinToInterrupt(drdy[0]), TimingUtil::test, FALLING);
+
+    void (*isr[4])(void) = {TimingUtil::adcSyncISR0, TimingUtil::adcSyncISR1,
+                        TimingUtil::adcSyncISR2, TimingUtil::adcSyncISR3};
+    
+    for (int i = 0; i < 4; i++) {
+      int drdy_pin = drdy[i];
+      attachInterrupt(digitalPinToInterrupt(drdy_pin), isr[i], FALLING);
+    }
 
     //set initial DAC voltages
     for (int i = 0; i < numDacChannels; i++) {
