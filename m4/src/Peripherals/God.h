@@ -244,6 +244,9 @@ class God {
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
+    digitalWrite(adc_sync, LOW);
+    attachInterrupt(digitalPinToInterrupt(drdy[0]), TimingUtil::test, FALLING);
+
     //set initial DAC voltages
     for (int i = 0; i < numDacChannels; i++) {
         DACController::setVoltageNoTransactionNoLdac(dacChannels[i], dacV0s[i]);

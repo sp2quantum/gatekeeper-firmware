@@ -91,7 +91,10 @@ class ADCBoard {
 
   void setup() {
     pinMode(reset_pin, OUTPUT);
+
     pinMode(data_ready_pin, INPUT);
+    //attachInterrupt(digitalPinToInterrupt(data_ready_pin), this->RDY_ISR, FALLING);
+
     pinMode(cs_pin, OUTPUT);
     digitalWrite(cs_pin, HIGH);
 
@@ -100,6 +103,23 @@ class ADCBoard {
     digitalWrite(reset_pin, LOW);
     delay(5);
     digitalWrite(reset_pin, HIGH);
+
+    #ifdef __NEW_DAC_ADC__
+    pinMode(adc_sync, OUTPUT);
+    digitalWrite(adc_sync, LOW);
+
+    //Set I/O Register such that P1 bit is set as input and SYNC pin function is enabled
+    byte data[2];
+    data[0] = WRITE | ADDR_IO;
+    data[1] = 0b00010001;
+    digitalWrite(cs_pin, LOW);
+    commsController.transferADC(data, 2);
+    digitalWrite(cs_pin, HIGH);
+    #endif
+  }
+
+  void RDY_ISR () {
+    setReadyFlag();
   }
 
   void initialize() {}
@@ -107,6 +127,7 @@ class ADCBoard {
   int getDataReadyPin() const { return data_ready_pin; }
 
   void setReadyFlag() { data_ready = true; }
+  void clearReadyFlag() { data_ready = false; }
 
   double readVoltage(int channel_index) {
     startSingleConversion(channel_index);
@@ -127,22 +148,42 @@ class ADCBoard {
   }
 
   void setRDYFN() {
+    //first read contents of IO register
     byte data[2];
-    data[0] = WRITE | ADDR_IO;
-
-    data[1] = 0 << 6 | 1 << 3 | 1 << 5 | 1 << 4;
+    data[0] = READ | ADDR_IO;
+    data[1] = 0x00;
     digitalWrite(cs_pin, LOW);
     commsController.transferADC(data, 2);
+    digitalWrite(cs_pin, HIGH);
+
+    byte new_io_reg[2];
+    new_io_reg[0] = WRITE | ADDR_IO;
+    byte set_mask = (1 << 3 | 1 << 5 | 1 << 4);
+    byte unset_mask = ~(1 << 6);
+    new_io_reg[1] = data[1] | set_mask & unset_mask;
+
+    digitalWrite(cs_pin, LOW);
+    commsController.transferADC(new_io_reg, 2);
     digitalWrite(cs_pin, HIGH);
   }
 
   void unsetRDYFN() {
+    //first read contents of IO register
     byte data[2];
-    data[0] = WRITE | ADDR_IO;
-
-    data[1] = 0 << 6 | 1 << 5 | 1 << 4;
+    data[0] = READ | ADDR_IO;
+    data[1] = 0x00;
     digitalWrite(cs_pin, LOW);
     commsController.transferADC(data, 2);
+    digitalWrite(cs_pin, HIGH);
+    
+    byte new_io_reg[2];
+    new_io_reg[0] = WRITE | ADDR_IO;
+    byte set_mask = (1 << 5 | 1 << 4);
+    byte unset_mask = ~(1 << 6 | 1 << 3);
+    new_io_reg[1] = data[1] | set_mask & unset_mask;
+
+    digitalWrite(cs_pin, LOW);
+    commsController.transferADC(new_io_reg, 2);
     digitalWrite(cs_pin, HIGH);
   }
 
@@ -162,9 +203,15 @@ class ADCBoard {
     data[0] = WRITE | ADDR_MODE(adc_channel);
     // setup mode register
     data[1] = SINGLE_CONV_MODE;
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, LOW);
+    #endif
     digitalWrite(cs_pin, LOW);
     commsController.transferADC(data, 2);
     digitalWrite(cs_pin, HIGH);
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, HIGH);
+    #endif
 
     // data is ready when _rdy goes low
   }
@@ -438,3 +485,4 @@ class ADCBoard {
     waitDataReady();
   }
 };
+

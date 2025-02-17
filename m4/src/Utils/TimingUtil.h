@@ -124,7 +124,7 @@ struct TimingUtil {
 
     // --- Configure TIM8 as Slave (for ADC triggering) ---
     TIM8->PSC = (2 * timerClock / 1000000) - 1;  // 1 µs resolution
-    TIM8->ARR = period_us - 1;
+    TIM8->ARR = period_us;
     TIM8->CR1 = TIM_CR1_ARPE;
     TIM8->CNT = 0;  // Start at 0
 
@@ -138,7 +138,7 @@ struct TimingUtil {
     // --- Configure phase shift if requested ---
     if (phase_shift_us > 0 && phase_shift_us < period_us) {
       // Use Channel 1 compare event for phase-shifted ADC trigger
-      TIM8->CCR1 = phase_shift_us + 2;  // Adjust as needed
+      TIM8->CCR1 = phase_shift_us - 1;  // Adjust as needed
       // Set Channel 1 to PWM mode 1: clear then set OC1M bits
       TIM8->CCMR1 &= ~TIM_CCMR1_OC1M;
       TIM8->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2; 
@@ -187,6 +187,11 @@ struct TimingUtil {
     NVIC_DisableIRQ(TIM8_UP_TIM13_IRQn);
     NVIC_DisableIRQ(TIM8_CC_IRQn);
   }
+
+  inline static void test() {
+    digitalWrite(adc_sync, LOW);
+    adcFlag = true;
+  }
 };
 
 extern "C" void TIM1_UP_IRQHandler(void) {
@@ -206,6 +211,7 @@ extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
 extern "C" void TIM8_CC_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_CC1IF) {
     TIM8->SR &= ~TIM_SR_CC1IF;
-    TimingUtil::adcFlag = true;
+    // TimingUtil::adcFlag = true;
+    digitalWrite(adc_sync, HIGH);
   }
 }
