@@ -223,7 +223,7 @@ class God2D {
           x++;
         }
         // ADCBoard::commsController.endTransaction();
-        TimingUtil::adcFlag = false;
+        // TimingUtil::adcFlag = false;
       }
       if (TimingUtil::dacFlag && steps < numSteps + 1) {
         // DACChannel::commsController.beginTransaction();
@@ -476,7 +476,7 @@ class God2D {
           x++;
         }
         // ADCBoard::commsController.endTransaction();
-        TimingUtil::adcFlag = false;
+        // TimingUtil::adcFlag = false;
       }
       if (TimingUtil::dacFlag && steps < numSteps + 1) {
         // DACChannel::commsController.beginTransaction();

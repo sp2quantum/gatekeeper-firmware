@@ -1,9 +1,10 @@
 #pragma once
 
 #include "stm32h7xx.h"
+#include "Config.h"
 
 struct TimingUtil {
-  inline static volatile bool adcFlag = false;
+  inline static volatile uint8_t adcFlag = 8;
   inline static volatile bool dacFlag = false;
 
   inline static void resetTimers() {
@@ -29,7 +30,7 @@ struct TimingUtil {
     NVIC_ClearPendingIRQ(TIM8_CC_IRQn);
 
     // Reset flags
-    adcFlag = false;
+    adcFlag = 0;
     dacFlag = false;
 
     // Re-enable interrupts
@@ -188,55 +189,10 @@ struct TimingUtil {
     NVIC_DisableIRQ(TIM8_CC_IRQn);
   }
 
-  inline static const int numChannels = 4;
-
-  inline static bool adcChannelRdy[numChannels];
-
-  inline static const uint32_t fullMask = (1u << numChannels) - 1;
-
-  inline static void adcSyncISR0() {
-    adcChannelRdy[0] = true;
-    
-    // Check if all channels are ready by comparing memory as a single value
-    if (*reinterpret_cast<uint32_t*>(adcChannelRdy) == fullMask) {
-      digitalWrite(adc_sync, LOW);
-      adcFlag = true;
-      // Clear all flags in one operation
-      *reinterpret_cast<uint32_t*>(adcChannelRdy) = 0;
-    }
-  }
-  inline static void adcSyncISR1() {
-    adcChannelRdy[1] = true;
-    
-    // Check if all channels are ready by comparing memory as a single value
-    if (*reinterpret_cast<uint32_t*>(adcChannelRdy) == fullMask) {
-      digitalWrite(adc_sync, LOW);
-      adcFlag = true;
-      // Clear all flags in one operation
-      *reinterpret_cast<uint32_t*>(adcChannelRdy) = 0;
-    }
-  }
-  inline static void adcSyncISR2() {
-    adcChannelRdy[2] = true;
-    
-    // Check if all channels are ready by comparing memory as a single value
-    if (*reinterpret_cast<uint32_t*>(adcChannelRdy) == fullMask) {
-      digitalWrite(adc_sync, LOW);
-      adcFlag = true;
-      // Clear all flags in one operation
-      *reinterpret_cast<uint32_t*>(adcChannelRdy) = 0;
-    }
-  }
-  inline static void adcSyncISR3() {
-    adcChannelRdy[3] = true;
-    
-    // Check if all channels are ready by comparing memory as a single value
-    if (*reinterpret_cast<uint32_t*>(adcChannelRdy) == fullMask) {
-      digitalWrite(adc_sync, LOW);
-      adcFlag = true;
-      // Clear all flags in one operation
-      *reinterpret_cast<uint32_t*>(adcChannelRdy) = 0;
-    }
+  template<int boardIndex>
+  inline static void adcSyncISR() {
+    adcFlag |= 1 << boardIndex;
+    digitalWrite(adc_sync, LOW);
   }
 };
 
@@ -250,7 +206,8 @@ extern "C" void TIM1_UP_IRQHandler(void) {
 extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
-    TimingUtil::adcFlag = true;
+    // TimingUtil::adcFlag = true;
+    digitalWrite(adc_sync, HIGH);
   }
 }
 

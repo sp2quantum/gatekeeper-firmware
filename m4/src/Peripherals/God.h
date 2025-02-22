@@ -100,6 +100,39 @@ class God {
       previousVoltageSet[i] = dacV0s[i];
     }
 
+    digitalWrite(adc_sync, LOW);
+    
+
+    static void (*isrFunctions[])() = {
+      TimingUtil::adcSyncISR<0>,
+      TimingUtil::adcSyncISR<1>,
+      TimingUtil::adcSyncISR<2>,
+      TimingUtil::adcSyncISR<3>
+    };
+
+    int numAdcBoards;
+
+    std::unordered_set<int> boardSet;
+    for (int i = 0; i < numAdcChannels; i++) {
+      boardSet.insert(adcChannels[i] / 4);
+    }
+    numAdcBoards = boardSet.size();
+    int adcBoards[numAdcBoards];
+    int k = 0;
+    for (auto board : boardSet) {
+      adcBoards[k++] = board;
+    }
+
+    uint8_t adcMask = 0u;
+    for (int i = 0; i < numAdcBoards; i++) {
+      adcMask |= 1 << i;
+    }
+    
+
+    for (int i = 0; i < numAdcBoards; i++) {
+      attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])), isrFunctions[i], FALLING);
+    }
+
     TimingUtil::setupTimersTimeSeries(dac_interval_us, adc_interval_us);
 
     setStopFlag(false);
@@ -135,7 +168,7 @@ class God {
         }
         m4SendVoltage(packets, numAdcChannels);
         x++;
-        TimingUtil::adcFlag = false;
+        // TimingUtil::adcFlag = false;
       }
     }
 
@@ -245,19 +278,46 @@ class God {
     PeripheralCommsController::dataLedOn();
 
     digitalWrite(adc_sync, LOW);
-
-    void (*isr[4])(void) = {TimingUtil::adcSyncISR0, TimingUtil::adcSyncISR1,
-                        TimingUtil::adcSyncISR2, TimingUtil::adcSyncISR3};
     
-    for (int i = 0; i < 4; i++) {
-      int drdy_pin = drdy[i];
-      attachInterrupt(digitalPinToInterrupt(drdy_pin), isr[i], FALLING);
+
+    static void (*isrFunctions[])() = {
+      TimingUtil::adcSyncISR<0>,
+      TimingUtil::adcSyncISR<1>,
+      TimingUtil::adcSyncISR<2>,
+      TimingUtil::adcSyncISR<3>
+    };
+
+    int numAdcBoards;
+
+    std::unordered_set<int> boardSet;
+    for (int i = 0; i < numAdcChannels; i++) {
+      boardSet.insert(adcChannels[i] / 4);
+    }
+    numAdcBoards = boardSet.size();
+    int adcBoards[numAdcBoards];
+    int k = 0;
+    for (auto board : boardSet) {
+      adcBoards[k++] = board;
     }
 
-    //set initial DAC voltages
+    uint8_t adcMask = 0u;
+    for (int i = 0; i < numAdcBoards; i++) {
+      adcMask |= 1 << i;
+    }
+    
+
+    for (int i = 0; i < numAdcBoards; i++) {
+      attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])), isrFunctions[i], FALLING);
+    }
+
+    // attachInterrupt(digitalPinToInterrupt(drdy[0]), TimingUtil::adcSyncISR, FALLING);
+
+
+
+    // set initial DAC voltages
     for (int i = 0; i < numDacChannels; i++) {
-        DACController::setVoltageNoTransactionNoLdac(dacChannels[i], dacV0s[i]);
-        previousVoltageSet[i] += voltageStepSize[i];
+      DACController::setVoltageNoTransactionNoLdac(dacChannels[i], dacV0s[i]);
+      previousVoltageSet[i] += voltageStepSize[i];
     }
     DACController::toggleLdac();
 
@@ -268,38 +328,37 @@ class God {
 
     TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us);
 
-    TimingUtil::adcFlag = false;
     TimingUtil::dacFlag = false;
 
     while (x < numSteps && !getStopFlag()) {
       if (TimingUtil::dacFlag) {
-        // DACChannel::commsController.beginTransaction();
-        for (int i = 0; i < numDacChannels; i++) {
-          DACController::setVoltageNoTransactionNoLdac(dacChannels[i], previousVoltageSet[i]);
-          previousVoltageSet[i] += voltageStepSize[i];
-        }
-        DACController::toggleLdac();
-        // DACChannel::commsController.endTransaction();
-        TimingUtil::dacFlag = false;
+      // DACChannel::commsController.beginTransaction();
+      for (int i = 0; i < numDacChannels; i++) {
+        DACController::setVoltageNoTransactionNoLdac(dacChannels[i], previousVoltageSet[i]);
+        previousVoltageSet[i] += voltageStepSize[i];
       }
-      if (TimingUtil::adcFlag) {
-        // ADCBoard::commsController.beginTransaction();
-        for (int i = 0; i < numAdcChannels; i++) {
-          float total = 0.0;
-          for (int j = 0; j < numAdcAverages; j++) {
-            total +=
-                ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-          }
-          float v = total * numAdcAveragesInv;
-          packets[i] = v;
-          // m4SendFloat(packets, numAdcChannels);
+      DACController::toggleLdac();
+      // DACChannel::commsController.endTransaction();
+      TimingUtil::dacFlag = false;
+      // float adcFlagFloat = static_cast<float>(TimingUtil::adcFlag);
+      // m4SendFloat(&adcFlagFloat, 1);
+      }
+      if (TimingUtil::adcFlag == adcMask) {
+      for (int i = 0; i < numAdcChannels; i++) {
+        float total = 0.0;
+        for (int j = 0; j < numAdcAverages; j++) {
+        total += ADCController::getVoltageDataNoTransaction(adcChannels[i]);
         }
-        x++;
-        m4SendVoltage(packets, numAdcChannels);
-        // ADCBoard::commsController.endTransaction();
-        TimingUtil::adcFlag = false;
+        float v = total * numAdcAveragesInv;
+        packets[i] = v;
+      }
+      m4SendVoltage(packets, numAdcChannels);
+      x++;
+      TimingUtil::adcFlag = 0;
       }
     }
+
+    detachInterrupt(digitalPinToInterrupt(47));
 
     TimingUtil::disableDacInterrupt();
     TimingUtil::disableAdcInterrupt();
@@ -436,7 +495,7 @@ class God {
         }
         adcGetsSinceLastDacSet++;
         // ADCBoard::commsController.endTransaction();
-        TimingUtil::adcFlag = false;
+        // TimingUtil::adcFlag = false;
       }
       if (TimingUtil::dacFlag && steps < totalSteps) {
         // DACChannel::commsController.beginTransaction();

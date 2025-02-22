@@ -101,6 +101,10 @@ class ADCController {
         getChannelIndexFromGlobalIndex(channel_index));
   }
 
+  inline static float getDataReadyPin(int channel_index) {
+    return adc_boards[getBoardIndexFromGlobalIndex(channel_index)].getDataReadyPin();
+  }
+
   // args: num_channels, channel_indexes, total_duration_us
   // ex: TIME_SERIES_ADC_READ 2,0,1,1000000
   inline static OperationResult timeSeriesAdcRead(const std::vector<float>& args) {
@@ -154,7 +158,7 @@ class ADCController {
         }
         m4SendFloat(packets, numAdcChannels);
         x++;
-        TimingUtil::adcFlag = false;
+        // TimingUtil::adcFlag = false;
       }
     }
 
