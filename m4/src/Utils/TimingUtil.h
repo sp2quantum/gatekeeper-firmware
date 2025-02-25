@@ -3,6 +3,8 @@
 #include "stm32h7xx.h"
 #include "Config.h"
 
+#include "Utils/GIGA_digitalWriteFast.h"
+
 struct TimingUtil {
   inline static volatile uint8_t adcFlag = 8;
   inline static volatile bool dacFlag = false;
@@ -103,7 +105,6 @@ struct TimingUtil {
     TIM8->CR1 |= TIM_CR1_CEN;
   }
 
-
   inline static void setupTimersDacLed(uint32_t period_us, uint32_t phase_shift_us) {
     // Reset timers and clear prior configuration
     resetTimers();
@@ -145,15 +146,11 @@ struct TimingUtil {
       TIM8->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2; 
       TIM8->CCER |= TIM_CCER_CC1E;      // Enable CC1 output
       // Enable only the compare interrupt (disable UIE if not needed)
-      TIM8->DIER &= ~TIM_DIER_UIE;
       TIM8->DIER |= TIM_DIER_CC1IE;
     } else {
       // No phase shift: use the update interrupt for ADC triggering.
       TIM8->DIER |= TIM_DIER_UIE;
     }
-    // --- Finalize and start the timers ---
-    // --- NVIC Setup ---
-    //Clear UIF flags and reset UG bits
     TIM1->EGR |= 0x01;
     TIM1->SR &= ~TIM_SR_UIF;
     TIM1->EGR |= 0x02;
@@ -162,22 +159,15 @@ struct TimingUtil {
     NVIC_SetPriority(TIM1_UP_IRQn, 2);
     NVIC_EnableIRQ(TIM1_UP_IRQn);
 
-    TIM8->EGR |= 0x01;
-    TIM8->SR &= ~TIM_SR_UIF;
-    TIM8->EGR |= 0x02;
-    TIM8->CCR1 &= ~TIM_SR_CC1IF;
 
     NVIC_SetPriority(TIM8_CC_IRQn, 3);
     NVIC_EnableIRQ(TIM8_CC_IRQn);
 
-    // Then start the master.
-    TIM1->CR1 |= TIM_CR1_CEN;
     // Start the slave timer first so it’s waiting for TIM1’s trigger.
-    TIM1->EGR |= 0x01;
-    TIM1->SR &= ~TIM_SR_UIF;
     TIM8->CR1 |= TIM_CR1_CEN;
+    TIM1->CR1 |= TIM_CR1_CEN;
   }
-  
+
   inline static void disableDacInterrupt() {
     TIM1->DIER &= ~TIM_DIER_UIE;
     NVIC_DisableIRQ(TIM1_UP_IRQn);
@@ -199,6 +189,8 @@ struct TimingUtil {
 extern "C" void TIM1_UP_IRQHandler(void) {
   if (TIM1->SR & TIM_SR_UIF) {
     TIM1->SR &= ~TIM_SR_UIF;
+    digitalWriteFast(ldac, LOW);
+    digitalWriteFast(ldac, HIGH);
     TimingUtil::dacFlag = true;
   }
 }
@@ -206,15 +198,13 @@ extern "C" void TIM1_UP_IRQHandler(void) {
 extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
-    // TimingUtil::adcFlag = true;
-    digitalWrite(adc_sync, HIGH);
+    digitalWriteFast(adc_sync, HIGH);
   }
 }
 
 extern "C" void TIM8_CC_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_CC1IF) {
     TIM8->SR &= ~TIM_SR_CC1IF;
-    // TimingUtil::adcFlag = true;
-    digitalWrite(adc_sync, HIGH);
+    digitalWriteFast(adc_sync, HIGH);
   }
 }

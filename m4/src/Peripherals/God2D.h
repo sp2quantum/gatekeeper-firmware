@@ -14,9 +14,9 @@ class God2D {
   static void setup() { initializeRegistry(); }
 
   static void initializeRegistry() {
-    // registerMemberFunctionVector(timeSeriesBufferRamp2D,
-    //                              "2D_TIME_SERIES_BUFFER_RAMP");
-    // registerMemberFunctionVector(dacLedBufferRamp2D, "2D_DAC_LED_BUFFER_RAMP");
+    registerMemberFunctionVector(timeSeriesBufferRamp2D,
+                                 "2D_TIME_SERIES_BUFFER_RAMP");
+    registerMemberFunctionVector(dacLedBufferRamp2D, "2D_DAC_LED_BUFFER_RAMP");
   }
 
   // timeSeriesBufferRamp2D:
@@ -121,10 +121,6 @@ class God2D {
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
-    // Start continuous ADC conversions
-    for (int i = 0; i < numAdcChannels; i++) {
-      ADCController::startContinuousConversion(adcChannels[i]);
-    }
 
     // Iterate over slow steps with optional retrace
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
@@ -157,7 +153,7 @@ class God2D {
       }
 
       // Call the base ramp function for fast channels
-      OperationResult rampResult = timeSeriesBufferRampBaseNoConversionSetup(
+      OperationResult rampResult = God::timeSeriesBufferRampBase(
           numFastDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
           adc_interval_us, fastDacChannels, currentV0s, currentVfs,
           adcChannels);
@@ -182,80 +178,6 @@ class God2D {
     return OperationResult::Success();
   }
 
-  static OperationResult timeSeriesBufferRampBaseNoConversionSetup(
-      int numDacChannels, int numAdcChannels, int numSteps,
-      uint32_t dac_interval_us, uint32_t adc_interval_us, int *dacChannels,
-      float *dacV0s, float *dacVfs, int *adcChannels) {
-    int steps = 0;
-    int x = 0;
-
-    const int saved_data_size = numSteps * dac_interval_us / adc_interval_us;
-
-    float voltageStepSize[numDacChannels];
-
-    for (int i = 0; i < numDacChannels; i++) {
-      voltageStepSize[i] = (dacVfs[i] - dacV0s[i]) / (numSteps - 1);
-    }
-
-    float previousVoltageSet[numDacChannels];
-
-    for (int i = 0; i < numDacChannels; i++) {
-      previousVoltageSet[i] = dacV0s[i];
-    }
-
-    TimingUtil::setupTimersTimeSeries(dac_interval_us, adc_interval_us);
-
-    while (x < saved_data_size && !getStopFlag()) {
-      if (TimingUtil::adcFlag) {
-        // ADCBoard::commsController.beginTransaction();
-        if (steps <= 1) {
-          for (int i = 0; i < numAdcChannels; i++) {
-            ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-          }
-        } else {
-          float packets[numAdcChannels];
-          for (int i = 0; i < numAdcChannels; i++) {
-            float v =
-                ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-            packets[i] = v;
-          }
-          m4SendVoltage(packets, numAdcChannels);
-          x++;
-        }
-        // ADCBoard::commsController.endTransaction();
-        // TimingUtil::adcFlag = false;
-      }
-      if (TimingUtil::dacFlag && steps < numSteps + 1) {
-        // DACChannel::commsController.beginTransaction();
-        if (steps == 0) {
-          for (int i = 0; i < numDacChannels; i++) {
-            DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                         dacV0s[i]);
-          }
-        } else {
-          for (int i = 0; i < numDacChannels; i++) {
-            DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                         previousVoltageSet[i]);
-            previousVoltageSet[i] += voltageStepSize[i];                 
-          }
-        }
-        DACController::toggleLdac();
-        // DACChannel::commsController.endTransaction();
-        steps++;
-        TimingUtil::dacFlag = false;
-      }
-    }
-
-    TimingUtil::disableDacInterrupt();
-    TimingUtil::disableAdcInterrupt();
-
-    if (getStopFlag()) {
-      setStopFlag(false);
-      return OperationResult::Failure("RAMPING_STOPPED");
-    }
-
-    return OperationResult::Success();
-  }
 
   // dacLedBufferRamp2D:
   // Arguments (in order):
@@ -367,11 +289,6 @@ class God2D {
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
-    // Start continuous ADC conversions
-    for (int i = 0; i < numAdcChannels; i++) {
-      ADCController::startContinuousConversion(adcChannels[i]);
-    }
-
     // Iterate over slow steps with optional retrace
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
          ++slowStep) {
@@ -403,7 +320,7 @@ class God2D {
       }
 
       // Call the base ramp function for fast channels
-      OperationResult rampResult = dacLedBufferRampBaseNoConversionSetup(
+      OperationResult rampResult = God::dacLedBufferRampBase(
           numFastDacChannels, numAdcChannels, numStepsFast, numAdcAverages,
           dac_interval_us, dac_settling_time_us, fastDacChannels, currentV0s,
           currentVfs, adcChannels);
@@ -428,85 +345,4 @@ class God2D {
     return OperationResult::Success();
   }
 
-  static OperationResult dacLedBufferRampBaseNoConversionSetup(
-      int numDacChannels, int numAdcChannels, int numSteps, int numAdcAverages,
-      uint32_t dac_interval_us, uint32_t dac_settling_time_us, int *dacChannels,
-      float *dacV0s, float *dacVfs, int *adcChannels) {
-    int steps = 0;
-    int x = 0;
-
-    float numAdcAveragesInv = 1.0 / static_cast<float>(numAdcAverages);
-
-    float voltageStepSize[numDacChannels];
-
-    for (int i = 0; i < numDacChannels; i++) {
-      voltageStepSize[i] = (dacVfs[i] - dacV0s[i]) / (numSteps - 1);
-    }
-
-    float previousVoltageSet[numDacChannels];
-
-    for (int i = 0; i < numDacChannels; i++) {
-      previousVoltageSet[i] = dacV0s[i];
-    }
-
-    // Set up timers with the same period but phase shifted
-    TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us);
-
-    while (x < numSteps && !getStopFlag()) {
-      if (TimingUtil::adcFlag) {
-        // ADCBoard::commsController.beginTransaction();
-        if (steps <= 1) {
-          for (int i = 0; i < numAdcChannels; i++) {
-            for (int j = 0; j < numAdcAverages; j++) {
-              ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-            }
-          }
-        } else {
-          float packets[numAdcChannels];
-          for (int i = 0; i < numAdcChannels; i++) {
-            float total = 0.0;
-            for (int j = 0; j < numAdcAverages; j++) {
-              total +=
-                  ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-            }
-            float v = total * numAdcAveragesInv;
-            packets[i] = v;
-          }
-          m4SendVoltage(packets, numAdcChannels);
-          x++;
-        }
-        // ADCBoard::commsController.endTransaction();
-        // TimingUtil::adcFlag = false;
-      }
-      if (TimingUtil::dacFlag && steps < numSteps + 1) {
-        // DACChannel::commsController.beginTransaction();
-        if (steps == 0) {
-          for (int i = 0; i < numDacChannels; i++) {
-            DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                         dacV0s[i]);
-          }
-        } else {
-          for (int i = 0; i < numDacChannels; i++) {
-            DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                         previousVoltageSet[i]);
-            previousVoltageSet[i] += voltageStepSize[i];
-          }
-        }
-        DACController::toggleLdac();
-        // DACChannel::commsController.endTransaction();
-        steps++;
-        TimingUtil::dacFlag = false;
-      }
-    }
-
-    TimingUtil::disableDacInterrupt();
-    TimingUtil::disableAdcInterrupt();
-
-    if (getStopFlag()) {
-      setStopFlag(false);
-      return OperationResult::Failure("RAMPING_STOPPED");
-    }
-
-    return OperationResult::Success();
-  }
 };

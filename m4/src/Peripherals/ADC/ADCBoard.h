@@ -8,6 +8,8 @@
 
 #include "Utils/shared_memory.h"
 
+#include "Utils/GIGA_digitalWriteFast.h"
+
 #include "Config.h"
 
 // ADC symbols
@@ -76,7 +78,7 @@ class ADCBoard {
 
   void waitDataReady() {
     int count = 0;
-    while (digitalRead(data_ready_pin) == HIGH && count < 2000) {
+    while (digitalReadFast(data_ready_pin) == HIGH && count < 2000) {
       count = count + 1;
       delay(1);
     }
