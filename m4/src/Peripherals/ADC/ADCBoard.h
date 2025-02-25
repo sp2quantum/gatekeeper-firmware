@@ -80,7 +80,9 @@ class ADCBoard {
       count = count + 1;
       delay(1);
     }
+    #ifdef __NEW_DAC_ADC__
     digitalWrite(adc_sync, LOW);
+    #endif
   }
 
  public:
