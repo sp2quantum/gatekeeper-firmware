@@ -189,6 +189,12 @@ class God {
       ADCController::unsetRDYFN(adcChannels[i]);
     }
 
+    #ifdef __NEW_DAC_ADC__
+    for (int i = 0; i < numAdcBoards; i++) {
+      detachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])));
+    }
+    #endif
+
     PeripheralCommsController::dataLedOff();
 
     if (getStopFlag()) {
@@ -384,6 +390,12 @@ class God {
       ADCController::idleMode(adcChannels[i]);
       ADCController::unsetRDYFN(adcChannels[i]);
     }
+
+    #ifdef __NEW_DAC_ADC__
+    for (int i = 0; i < numAdcBoards; i++) {
+      detachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])));
+    }
+    #endif
 
     PeripheralCommsController::dataLedOff();
 
