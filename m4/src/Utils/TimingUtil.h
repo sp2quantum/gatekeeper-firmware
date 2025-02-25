@@ -3,8 +3,6 @@
 #include "stm32h7xx.h"
 #include "Config.h"
 
-#include "Utils/GIGA_digitalWriteFast.h"
-
 struct TimingUtil {
   inline static volatile uint8_t adcFlag = 8;
   inline static volatile bool dacFlag = false;
@@ -191,8 +189,8 @@ struct TimingUtil {
 extern "C" void TIM1_UP_IRQHandler(void) {
   if (TIM1->SR & TIM_SR_UIF) {
     TIM1->SR &= ~TIM_SR_UIF;
-    digitalWriteFast(ldac, LOW);
-    digitalWriteFast(ldac, HIGH);
+    digitalWrite(ldac, LOW);
+    digitalWrite(ldac, HIGH);
     TimingUtil::dacFlag = true;
   }
 }
@@ -201,7 +199,7 @@ extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
     #ifdef __NEW_DAC_ADC__
-    digitalWriteFast(adc_sync, HIGH);
+    digitalWrite(adc_sync, HIGH);
     #else
     TimingUtil::adcFlag = 1;
     #endif
@@ -212,7 +210,7 @@ extern "C" void TIM8_CC_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_CC1IF) {
     TIM8->SR &= ~TIM_SR_CC1IF;
     #ifdef __NEW_DAC_ADC__
-    digitalWriteFast(adc_sync, HIGH);
+    digitalWrite(adc_sync, HIGH);
     #else
     TimingUtil::adcFlag = 1;
     #endif

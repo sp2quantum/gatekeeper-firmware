@@ -101,7 +101,7 @@ class God {
     }
 
     #ifdef __NEW_DAC_ADC__
-    digitalWriteFast(adc_sync, LOW);
+    digitalWrite(adc_sync, LOW);
     static void (*isrFunctions[])() = {
       TimingUtil::adcSyncISR<0>,
       TimingUtil::adcSyncISR<1>,
@@ -287,7 +287,7 @@ class God {
     PeripheralCommsController::dataLedOn();
 
     #ifdef __NEW_DAC_ADC__
-    digitalWriteFast(adc_sync, LOW);
+    digitalWrite(adc_sync, LOW);
     static void (*isrFunctions[])() = {
       TimingUtil::adcSyncISR<0>,
       TimingUtil::adcSyncISR<1>,
