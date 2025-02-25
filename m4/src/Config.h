@@ -28,7 +28,11 @@ const int dac_cs_pins[NUM_DAC_CHANNELS] = {23,24,25,26,27,28,29,30,31,32,33,34,3
 const int ldac = 22;
 const int reset[NUM_ADC_BOARDS] = {43,44,45,46};
 const int drdy[NUM_ADC_BOARDS] = {47,48,49,50};
+
+#ifdef __NEW_DAC_ADC__
 const int adc_sync = 51;
+#endif
+
 const int led = 7; // indicator LED
 const int data = 6; // data indicator LED
 const int err = 11; // error indicator LED

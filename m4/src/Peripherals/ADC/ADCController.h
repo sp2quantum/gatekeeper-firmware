@@ -24,7 +24,7 @@ class ADCController {
 
   inline static void setup() {
 
-    #if !defined(__OLD_SHIELD__)
+    #ifdef __NEW_DAC_ADC__
     pinMode(adc_sync, OUTPUT);
     digitalWrite(adc_sync, LOW);
     #endif
@@ -89,7 +89,7 @@ class ADCController {
     }
   }
 
-  #if !defined(__OLD_SHIELD__)
+  #ifdef __NEW_DAC_ADC__
   inline static void toggleSync() {
     digitalWrite(adc_sync, HIGH);
     digitalWrite(adc_sync, LOW);
