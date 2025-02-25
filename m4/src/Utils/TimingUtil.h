@@ -179,11 +179,13 @@ struct TimingUtil {
     NVIC_DisableIRQ(TIM8_CC_IRQn);
   }
 
+  #ifdef __NEW_DAC_ADC__
   template<int boardIndex>
   inline static void adcSyncISR() {
     adcFlag |= 1 << boardIndex;
     digitalWrite(adc_sync, LOW);
   }
+  #endif
 };
 
 extern "C" void TIM1_UP_IRQHandler(void) {
@@ -198,13 +200,21 @@ extern "C" void TIM1_UP_IRQHandler(void) {
 extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
+    #ifdef __NEW_DAC_ADC__
     digitalWriteFast(adc_sync, HIGH);
+    #else
+    TimingUtil::adcFlag = 1;
+    #endif
   }
 }
 
 extern "C" void TIM8_CC_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_CC1IF) {
     TIM8->SR &= ~TIM_SR_CC1IF;
+    #ifdef __NEW_DAC_ADC__
     digitalWriteFast(adc_sync, HIGH);
+    #else
+    TimingUtil::adcFlag = 1;
+    #endif
   }
 }

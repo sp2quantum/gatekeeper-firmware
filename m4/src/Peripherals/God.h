@@ -100,9 +100,8 @@ class God {
       nextVoltageSet[i] = dacV0s[i];
     }
 
+    #ifdef __NEW_DAC_ADC__
     digitalWriteFast(adc_sync, LOW);
-    
-
     static void (*isrFunctions[])() = {
       TimingUtil::adcSyncISR<0>,
       TimingUtil::adcSyncISR<1>,
@@ -123,15 +122,19 @@ class God {
       adcBoards[k++] = board;
     }
 
-    uint8_t adcMask = 0u;
-    for (int i = 0; i < numAdcBoards; i++) {
-      adcMask |= 1 << i;
-    }
-    
-
     for (int i = 0; i < numAdcBoards; i++) {
       attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])), isrFunctions[i], FALLING);
     }
+    #endif
+
+    uint8_t adcMask = 0u;
+    #ifdef __NEW_DAC_ADC__
+    for (int i = 0; i < numAdcBoards; i++) {
+      adcMask |= 1 << i;
+    }
+    #else
+    adcMask = 1;
+    #endif
 
     TimingUtil::setupTimersTimeSeries(dac_interval_us, adc_interval_us);
 
@@ -283,8 +286,8 @@ class God {
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
+    #ifdef __NEW_DAC_ADC__
     digitalWriteFast(adc_sync, LOW);
-
     static void (*isrFunctions[])() = {
       TimingUtil::adcSyncISR<0>,
       TimingUtil::adcSyncISR<1>,
@@ -305,15 +308,19 @@ class God {
       adcBoards[k++] = board;
     }
 
-    uint8_t adcMask = 0u;
-    for (int i = 0; i < numAdcBoards; i++) {
-      adcMask |= 1 << i;
-    }
-    
-
     for (int i = 0; i < numAdcBoards; i++) {
       attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])), isrFunctions[i], FALLING);
     }
+    #endif
+
+    uint8_t adcMask = 0u;
+    #ifdef __NEW_DAC_ADC__
+    for (int i = 0; i < numAdcBoards; i++) {
+      adcMask |= 1 << i;
+    }
+    #else
+    adcMask = 1;
+    #endif
 
     // attachInterrupt(digitalPinToInterrupt(drdy[0]), TimingUtil::adcSyncISR, FALLING);
 
