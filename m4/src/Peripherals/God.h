@@ -381,8 +381,6 @@ class God {
       }
     }
 
-    detachInterrupt(digitalPinToInterrupt(47));
-
     TimingUtil::disableDacInterrupt();
     TimingUtil::disableAdcInterrupt();
 

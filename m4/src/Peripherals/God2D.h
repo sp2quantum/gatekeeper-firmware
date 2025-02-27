@@ -150,6 +150,11 @@ class God2D {
           currentV0s[i] = fastDacVfs[i];
           currentVfs[i] = fastDacV0s[i];
         }
+      } else {
+        for (int i = 0; i < numFastDacChannels; ++i) {
+          currentV0s[i] = fastDacV0s[i];
+          currentVfs[i] = fastDacVfs[i];
+        }
       }
 
       // Call the base ramp function for fast channels
@@ -316,6 +321,11 @@ class God2D {
         for (int i = 0; i < numFastDacChannels; ++i) {
           currentV0s[i] = fastDacVfs[i];
           currentVfs[i] = fastDacV0s[i];
+        }
+      } else {
+        for (int i = 0; i < numFastDacChannels; ++i) {
+          currentV0s[i] = fastDacV0s[i];
+          currentVfs[i] = fastDacVfs[i];
         }
       }
 
