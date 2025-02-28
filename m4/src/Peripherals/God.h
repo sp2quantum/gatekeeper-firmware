@@ -156,7 +156,9 @@ class God {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
+      #ifdef __NEW_DAC_ADC__
       ADCController::setRDYFN(adcChannels[i]);
+      #endif
     }
 
     while ((x < saved_data_size || steps < numSteps) && !getStopFlag()) {
@@ -186,7 +188,9 @@ class God {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
+      #ifdef __NEW_DAC_ADC__
       ADCController::unsetRDYFN(adcChannels[i]);
+      #endif
     }
 
     #ifdef __NEW_DAC_ADC__
@@ -346,7 +350,9 @@ class God {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
+      #ifdef __NEW_DAC_ADC__
       ADCController::setRDYFN(adcChannels[i]);
+      #endif
     }
 
     TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us);
@@ -386,7 +392,9 @@ class God {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
-      ADCController::unsetRDYFN(adcChannels[i]);
+      #ifdef __NEW_DAC_ADC__
+      ADCController::setRDYFN(adcChannels[i]);
+      #endif
     }
 
     #ifdef __NEW_DAC_ADC__
@@ -533,7 +541,9 @@ class God {
 
     for (int i = 0; i < numAdcChannels; ++i) {
       ADCController::startContinuousConversion(adcChannels[i]);
+      #ifdef __NEW_DAC_ADC__
       ADCController::setRDYFN(adcChannels[i]);
+      #endif
     }
 
     for (int i = 0; i < numDacChannels; i++) {
@@ -602,7 +612,9 @@ class God {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
+      #ifdef __NEW_DAC_ADC__
       ADCController::unsetRDYFN(adcChannels[i]);
+      #endif
     }
 
     PeripheralCommsController::dataLedOff();
