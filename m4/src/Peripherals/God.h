@@ -466,7 +466,7 @@ class God {
     }
 
     uint32_t dacPeriod_us = (numAdcMeasuresPerDacStep + numAdcConversionSkips) *
-                            (actualConversionTime_us + 5) * numAdcChannels;
+                            (actualConversionTime_us + 5) * numAdcChannels * numAdcAverages;
 
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
@@ -489,71 +489,106 @@ class God {
       previousVoltageSetHigh[i] = dacV0_2[i];
     }
 
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, LOW);
+    static void (*isrFunctions[])() = {
+      TimingUtil::adcSyncISR<0>,
+      TimingUtil::adcSyncISR<1>,
+      TimingUtil::adcSyncISR<2>,
+      TimingUtil::adcSyncISR<3>
+    };
+
+    int numAdcBoards;
+
+    std::unordered_set<int> boardSet;
+    for (int i = 0; i < numAdcChannels; i++) {
+      boardSet.insert(adcChannels[i] / 4);
+    }
+    numAdcBoards = boardSet.size();
+    int adcBoards[numAdcBoards];
+    int k = 0;
+    for (auto board : boardSet) {
+      adcBoards[k++] = board;
+    }
+
+    for (int i = 0; i < numAdcBoards; i++) {
+      attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])), isrFunctions[i], FALLING);
+    }
+    #endif
+
+    uint8_t adcMask = 0u;
+    #ifdef __NEW_DAC_ADC__
+    for (int i = 0; i < numAdcBoards; i++) {
+      adcMask |= 1 << i;
+    }
+    #else
+    adcMask = 1;
+    #endif
+
     int steps = 0;
-    int totalSteps = 2 * numDacSteps * numAdcAverages + 1;
+    int totalSteps = 2 * numDacSteps * numAdcAverages;
     int x = 0;
-    int total_data_size = (totalSteps - 1) * numAdcMeasuresPerDacStep;
+    int total_data_size = totalSteps * numAdcMeasuresPerDacStep;
     int adcGetsSinceLastDacSet = 0;
 
     for (int i = 0; i < numAdcChannels; ++i) {
       ADCController::startContinuousConversion(adcChannels[i]);
+      ADCController::setRDYFN(adcChannels[i]);
     }
+
+    for (int i = 0; i < numDacChannels; i++) {
+      float currentVoltage;
+      if (steps % 2 == 0) {
+        currentVoltage = previousVoltageSetLow[i];
+      } else {
+        currentVoltage = previousVoltageSetHigh[i];
+      }
+
+      DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
+                                                   currentVoltage);
+    }
+
+    DACController::toggleLdac();
 
     TimingUtil::setupTimersTimeSeries(dacPeriod_us, actualConversionTime_us);
 
     while (x < total_data_size && !getStopFlag()) {
-      if (TimingUtil::adcFlag && x < (steps - 1) * numAdcMeasuresPerDacStep) {
-        // ADCBoard::commsController.beginTransaction();
-        if (steps <= 1) {
+      if (TimingUtil::adcFlag == adcMask) {
+        if (adcGetsSinceLastDacSet >= numAdcConversionSkips) {
+          float packets[numAdcChannels];
           for (int i = 0; i < numAdcChannels; i++) {
-            ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+            float v =
+                ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+            packets[i] = v;
           }
-        } else {
-          if (adcGetsSinceLastDacSet >= numAdcConversionSkips) {
-            float packets[numAdcChannels];
-            for (int i = 0; i < numAdcChannels; i++) {
-              float v =
-                  ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-              packets[i] = v;
-            }
-            m4SendVoltage(packets, numAdcChannels);
-            x++;
-          }
+          m4SendVoltage(packets, numAdcChannels);
+          x++;
         }
         adcGetsSinceLastDacSet++;
-        // ADCBoard::commsController.endTransaction();
-        // TimingUtil::adcFlag = false;
+        TimingUtil::adcFlag = 0;
       }
       if (TimingUtil::dacFlag && steps < totalSteps) {
         // DACChannel::commsController.beginTransaction();
-        if (steps == 0) {
-          for (int i = 0; i < numDacChannels; i++) {
-            DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                         dacV0_1[i]);
-          }
-        } else {
-          for (int i = 0; i < numDacChannels; i++) {
-            float currentVoltage;
-            if (steps % (2 * numAdcAverages) != 0) {
-              if (steps % 2 == 0) {
-                currentVoltage = previousVoltageSetLow[i];
-              } else {
-                currentVoltage = previousVoltageSetHigh[i];
-              }
-            } else if (steps % 2 == 0) {
-              previousVoltageSetLow[i] += voltageStepSizeLow[i];
-              previousVoltageSetHigh[i] += voltageStepSizeHigh[i];
+        for (int i = 0; i < numDacChannels; i++) {
+          float currentVoltage;
+          if (steps % (2 * numAdcAverages) != 0) {
+            if (steps % 2 == 0) {
               currentVoltage = previousVoltageSetLow[i];
             } else {
-              previousVoltageSetLow[i] += voltageStepSizeLow[i];
-              previousVoltageSetHigh[i] += voltageStepSizeHigh[i];
               currentVoltage = previousVoltageSetHigh[i];
             }
-            DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                         currentVoltage);
+          } else if (steps % 2 == 0) {
+            previousVoltageSetLow[i] += voltageStepSizeLow[i];
+            previousVoltageSetHigh[i] += voltageStepSizeHigh[i];
+            currentVoltage = previousVoltageSetLow[i];
+          } else {
+            previousVoltageSetLow[i] += voltageStepSizeLow[i];
+            previousVoltageSetHigh[i] += voltageStepSizeHigh[i];
+            currentVoltage = previousVoltageSetHigh[i];
           }
+          DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
+                                                       currentVoltage);
         }
-        DACController::toggleLdac();
         // DACChannel::commsController.endTransaction();
         steps++;
         adcGetsSinceLastDacSet = 0;
@@ -567,6 +602,7 @@ class God {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
+      ADCController::unsetRDYFN(adcChannels[i]);
     }
 
     PeripheralCommsController::dataLedOff();
