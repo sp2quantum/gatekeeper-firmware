@@ -22,10 +22,11 @@ class God2D {
   // timeSeriesBufferRamp2D:
   // Arguments (in order):
   // numDacChannels, numAdcChannels, numStepsFast, numStepsSlow,
-  // dacInterval_us, adcInterval_us, retrace (0.0f = false, 1.0f = true),
+  // dacInterval_us, adcInterval_us, retrace (0.0f = false, 1.0f = true), snake (0.0f = false, 1.0f = true),
   // numFastDacChannels, [fastDacChannelID, fastDacV0, fastDacVf] *
   // numFastDacChannels, numSlowDacChannels, [slowDacChannelID, slowDacV0,
   // slowDacVf] * numSlowDacChannels, [adcChannelID] * numAdcChannels
+  // note that if snake is true, the value of retrace is ignored.
   static OperationResult timeSeriesBufferRamp2D(
       const std::vector<float> &args) {
     // Minimum required arguments:
@@ -47,6 +48,9 @@ class God2D {
     uint32_t adc_interval_us = static_cast<uint32_t>(args[currentIndex++]);
     bool retrace =
         static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
+    
+    bool snake =
+      static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
 
     // Parse Fast DAC Channels
     if (currentIndex >= args.size()) {
@@ -137,7 +141,7 @@ class God2D {
 
       // Determine ramp direction based on retrace flag
       bool isReverse = false;
-      if (retrace) {
+      if (snake) {
         isReverse = (slowStep % 2 != 0);  // Reverse on odd slow steps
       }
 
@@ -157,14 +161,29 @@ class God2D {
         }
       }
 
-      // Call the base ramp function for fast channels
-      OperationResult rampResult = God::timeSeriesBufferRampBase(
-          numFastDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
-          adc_interval_us, fastDacChannels, currentV0s, currentVfs,
-          adcChannels);
+      OperationResult ramp1Result = OperationResult::Success();
+      OperationResult ramp2Result = OperationResult::Success();
 
-      if (!rampResult.isSuccess()) {
-        return rampResult;  // Return the failure reason
+      ramp1Result = God::timeSeriesBufferRampBase(
+        numFastDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
+        adc_interval_us, fastDacChannels, currentV0s, currentVfs,
+        adcChannels);
+
+      if (retrace && !snake) {
+        ramp2Result = God::timeSeriesBufferRampBase(
+          numFastDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
+          adc_interval_us, fastDacChannels, currentVfs, currentV0s,
+          adcChannels);
+      }
+
+
+      if (!ramp1Result.isSuccess() && !ramp2Result.isSuccess()) {
+        return OperationResult::Failure(ramp1Result.getMessage() + "\n" +
+                                        ramp2Result.getMessage());
+      } else if (!ramp1Result.isSuccess()) {
+        return OperationResult::Failure(ramp1Result.getMessage());
+      } else if (!ramp2Result.isSuccess()) {
+        return OperationResult::Failure(ramp2Result.getMessage());
       }
     }
 
@@ -187,10 +206,11 @@ class God2D {
   // dacLedBufferRamp2D:
   // Arguments (in order):
   // numDacChannels, numAdcChannels, numStepsFast, numStepsSlow,
-  // dacInterval_us, dacSettlingTime_us, retrace (0.0f = false, 1.0f = true),
+  // dacInterval_us, dacSettlingTime_us, retrace (0.0f = false, 1.0f = true), snake (0.0f = false, 1.0f = true),
   // numAdcAverages numFastDacChannels, [fastDacChannelID, fastDacV0, fastDacVf]
   // * numFastDacChannels, numSlowDacChannels, [slowDacChannelID, slowDacV0,
   // slowDacVf] * numSlowDacChannels, [adcChannelID] * numAdcChannels
+  // note that if snake is true, the value of retrace is ignored.
   static OperationResult dacLedBufferRamp2D(const std::vector<float> &args) {
     // Minimum required arguments:
     // 7 initial params + at least 1 fast DAC channel + 1 slow DAC channel + ADC
@@ -211,6 +231,9 @@ class God2D {
     uint32_t dac_settling_time_us = static_cast<uint32_t>(args[currentIndex++]);
     bool retrace =
         static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
+    bool snake =
+        static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
+    
     int numAdcAverages = static_cast<int>(args[currentIndex++]);
 
     // Parse Fast DAC Channels
@@ -309,7 +332,7 @@ class God2D {
 
       // Determine ramp direction based on retrace flag
       bool isReverse = false;
-      if (retrace) {
+      if (snake) {
         isReverse = (slowStep % 2 != 0);  // Reverse on odd slow steps
       }
 
@@ -329,14 +352,28 @@ class God2D {
         }
       }
 
-      // Call the base ramp function for fast channels
-      OperationResult rampResult = God::dacLedBufferRampBase(
+      OperationResult ramp1Result = OperationResult::Success();
+      OperationResult ramp2Result = OperationResult::Success();
+
+      ramp1Result = God::dacLedBufferRampBase(
           numFastDacChannels, numAdcChannels, numStepsFast, numAdcAverages,
           dac_interval_us, dac_settling_time_us, fastDacChannels, currentV0s,
           currentVfs, adcChannels);
+      
+      if (retrace && !snake) {
+        ramp2Result = God::dacLedBufferRampBase(
+          numFastDacChannels, numAdcChannels, numStepsFast, numAdcAverages,
+          dac_interval_us, dac_settling_time_us, fastDacChannels, currentVfs,
+          currentV0s, adcChannels);
+      }
 
-      if (!rampResult.isSuccess()) {
-        return rampResult;  // Return the failure reason
+      if (!ramp1Result.isSuccess() && !ramp2Result.isSuccess()) {
+        return OperationResult::Failure(ramp1Result.getMessage() + "\n" +
+                                        ramp2Result.getMessage());
+      } else if (!ramp1Result.isSuccess()) {
+        return OperationResult::Failure(ramp1Result.getMessage());
+      } else if (!ramp2Result.isSuccess()) {
+        return OperationResult::Failure(ramp2Result.getMessage());
       }
     }
 
