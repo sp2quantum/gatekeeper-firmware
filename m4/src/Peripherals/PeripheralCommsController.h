@@ -3,10 +3,9 @@
 #include <Arduino.h>
 #include "SPI.h"
 
-class PeripheralCommsController {
+struct PeripheralCommsController {
 
- public:
-  static bool spiInitialized;
+  inline static bool spiInitialized = false;
 
   PeripheralCommsController() {}
 
@@ -20,18 +19,19 @@ class PeripheralCommsController {
       SPI1.beginTransaction(ADC_SPI_SETTINGS);
     }
   }
-  void transferDAC(void* buf, size_t count) {
-    SPI.transfer(buf, count);
+  static void transferDAC(void* buf, size_t count) {
+    transferDACNoTransaction(buf, count);
   }
-  void transferADC(void* buf, size_t count) {
-    SPI1.transfer(buf, count);
+  static void transferADC(void* buf, size_t count) {
+    transferAdcNoTransaction(buf, count);
   }
-  uint8_t transferDAC(uint8_t data) {
-    return SPI.transfer(data);
+  static uint8_t transferDAC(uint8_t data) {
+    return transferDACNoTransaction(data);
   }
-  uint8_t transferADC(uint8_t data) {
-    return SPI1.transfer(data);
+  static uint8_t transferADC(uint8_t data) {
+    return transferADCNoTransaction(data);
   }
+
   #else
   static void setup() {
     if (!spiInitialized) {
@@ -39,40 +39,54 @@ class PeripheralCommsController {
       spiInitialized = true;
     }
   }
-  void transferDAC(void* buf, size_t count) {
+  static void transferDAC(void* buf, size_t count) {
     SPI.beginTransaction(DAC_SPI_SETTINGS);
-    SPI.transfer(buf, count);
+    transferDACNoTransaction(buf, count);
     SPI.endTransaction();
   }
-  void transferADC(void* buf, size_t count) {
+  static void transferADC(void* buf, size_t count) {
     SPI.beginTransaction(ADC_SPI_SETTINGS);
-    SPI.transfer(buf, count);
+    transferADCNoTransaction(buf, count);
     SPI.endTransaction();
   }
-  uint8_t transferDAC(uint8_t data) {
+  static uint8_t transferDAC(uint8_t data) {
     SPI.beginTransaction(DAC_SPI_SETTINGS);
-    uint8_t result = SPI.transfer(data);
+    uint8_t result = transferDACNoTransaction(data);
     SPI.endTransaction();
     return result;
   }
-  uint8_t transferADC(uint8_t data) {
+  static uint8_t transferADC(uint8_t data) {
     SPI.beginTransaction(ADC_SPI_SETTINGS);
-    uint8_t result = SPI.transfer(data);
+    uint8_t result = transferADCNoTransaction(data);
     SPI.endTransaction();
     return result;
   }
+
   #endif
+
+  static void transferDACNoTransaction(void* buf, size_t count) {
+    SPI.transfer(buf, count);
+  }
+  static void transferADCNoTransaction(void* buf, size_t count) {
+    SPI.transfer(buf, count);
+  }
+  static uint8_t transferDACNoTransaction(uint8_t data) {
+    return SPI.transfer(data);
+  }
+  static uint8_t transferADCNoTransaction(uint8_t data) {
+    return SPI.transfer(data);
+  }
 
   static void dataLedOn() { /*digitalWrite(led, HIGH);*/ }
 
   static void dataLedOff() { /*digitalWrite(led, LOW);*/ }
 
 
-  // void beginTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
+  static void beginDacTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
 
-  // void endTransaction() { SPI.endTransaction(); }
+  static void beginAdcTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
+
+  static void endTransaction() { SPI.endTransaction(); }
 
   
 };
-
-bool PeripheralCommsController::spiInitialized = false;

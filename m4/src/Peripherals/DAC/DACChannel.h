@@ -18,7 +18,6 @@ class DACChannel {
   float full_scale = 10.0;
 
  public:
-  inline static PeripheralCommsController commsController;
   DACChannel(int cs_pin) {
     this->cs_pin = cs_pin;
     offset_error = 0.0;
@@ -33,7 +32,7 @@ class DACChannel {
         32, 0,
         2};  // Write to control register; Reserved byte; Unclamp DAC from GND
     digitalWrite(cs_pin, LOW);
-    commsController.transferDAC(bytesToSend, 3);
+    PeripheralCommsController::transferDAC(bytesToSend, 3);
     digitalWrite(cs_pin, HIGH);
     setVoltage(0.0);
 
@@ -66,7 +65,7 @@ class DACChannel {
     byte bytesToSend[3] = {b1, b2, b3};
 
     digitalWrite(cs_pin, LOW);
-    commsController.transferDAC(bytesToSend,
+    PeripheralCommsController::transferDAC(bytesToSend,
                              3);  // send command byte to DAC; MS data bits,
                                   // DAC2; LS 8 data bits, DAC2
     digitalWrite(cs_pin, HIGH);
@@ -87,7 +86,7 @@ class DACChannel {
     byte bytesToSend[3] = {b1, b2, b3};
 
     digitalWrite(cs_pin, LOW);
-    commsController.transferDAC(bytesToSend,
+    PeripheralCommsController::transferDACNoTransaction(bytesToSend,
                              3);  // send command byte to DAC; MS data bits,
                                   // DAC2; LS 8 data bits, DAC2
     digitalWrite(cs_pin, HIGH);
@@ -129,7 +128,7 @@ class DACChannel {
     byte bytesToSend[3] = {b1, b2, b3};
 
     digitalWrite(cs_pin, LOW);
-    commsController.transferDAC(bytesToSend,
+    PeripheralCommsController::transferDAC(bytesToSend,
                              3);  // send command byte to DAC; MS data bits,
                                   // DAC2; LS 8 data bits, DAC2
     digitalWrite(cs_pin, HIGH);
@@ -145,11 +144,11 @@ class DACChannel {
     byte bytesToSend[3] = {144, 0, 0};
     byte data[3];
     digitalWrite(cs_pin, LOW);
-    commsController.transferDAC(bytesToSend, 3);
+    PeripheralCommsController::transferDAC(bytesToSend, 3);
     digitalWrite(cs_pin, HIGH);
     delayMicroseconds(2);
     digitalWrite(cs_pin, LOW);
-    commsController.transferDAC(data, 3);
+    PeripheralCommsController::transferDAC(data, 3);
     digitalWrite(cs_pin, HIGH);
 
     float voltage = threeByteToVoltage(data[0], data[1], data[2]);
