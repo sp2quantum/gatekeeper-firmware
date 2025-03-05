@@ -130,14 +130,18 @@ class God2D {
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
          ++slowStep) {
       // Set slow DAC channels to the current slow step voltages
-      // DACChannel::commsController.beginTransaction();
+      #if !defined(__NEW_DAC_ADC__)
+      PeripheralCommsController::beginDacTransaction();
+      #endif
       for (int i = 0; i < numSlowDacChannels; ++i) {
         DACController::setVoltageNoTransactionNoLdac(slowDacChannels[i],
                                                      previousVoltageSet[i]);
         previousVoltageSet[i] += voltageStepSize[i];
       }
       DACController::toggleLdac();
-      // DACChannel::commsController.endTransaction();
+      #if !defined(__NEW_DAC_ADC__)
+      PeripheralCommsController::endTransaction();
+      #endif
 
       // Determine ramp direction based on retrace flag
       bool isReverse = false;
@@ -321,14 +325,18 @@ class God2D {
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
          ++slowStep) {
       // Set slow DAC channels to the current slow step voltages
-      // DACChannel::commsController.beginTransaction();
+      #if !defined(__NEW_DAC_ADC__)
+      PeripheralCommsController::beginDacTransaction();
+      #endif
       for (int i = 0; i < numSlowDacChannels; ++i) {
         DACController::setVoltageNoTransactionNoLdac(slowDacChannels[i],
                                                      previousVoltageSet[i]);
         previousVoltageSet[i] += voltageStepSize[i];
       }
       DACController::toggleLdac();
-      // DACChannel::commsController.endTransaction();
+      #if !defined(__NEW_DAC_ADC__)
+      PeripheralCommsController::endTransaction();
+      #endif
 
       // Determine ramp direction based on retrace flag
       bool isReverse = false;

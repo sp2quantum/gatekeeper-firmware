@@ -583,12 +583,18 @@ class God {
     while (x < total_data_size && !getStopFlag()) {
       if (TimingUtil::adcFlag == adcMask) {
         if (adcGetsSinceLastDacSet >= numAdcConversionSkips) {
+          #if !defined(__NEW_DAC_ADC__)
+          PeripheralCommsController::beginAdcTransaction();
+          #endif
           float packets[numAdcChannels];
           for (int i = 0; i < numAdcChannels; i++) {
             float v =
                 ADCController::getVoltageDataNoTransaction(adcChannels[i]);
             packets[i] = v;
           }
+          #if !defined(__NEW_DAC_ADC__)
+          PeripheralCommsController::endTransaction();
+          #endif
           m4SendVoltage(packets, numAdcChannels);
           x++;
         }
@@ -596,7 +602,9 @@ class God {
         TimingUtil::adcFlag = 0;
       }
       if (TimingUtil::dacFlag && steps < totalSteps) {
-        // DACChannel::commsController.beginTransaction();
+        #if !defined(__NEW_DAC_ADC__)
+        PeripheralCommsController::beginDacTransaction();
+        #endif
         for (int i = 0; i < numDacChannels; i++) {
           float currentVoltage;
           if (steps % (2 * numAdcAverages) != 0) {
@@ -617,7 +625,9 @@ class God {
           DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
                                                        currentVoltage);
         }
-        // DACChannel::commsController.endTransaction();
+        #if !defined(__NEW_DAC_ADC__)
+        PeripheralCommsController::endTransaction();
+        #endif
         steps++;
         adcGetsSinceLastDacSet = 0;
         TimingUtil::dacFlag = false;
