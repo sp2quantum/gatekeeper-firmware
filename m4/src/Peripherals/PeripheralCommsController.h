@@ -23,7 +23,7 @@ struct PeripheralCommsController {
     transferDACNoTransaction(buf, count);
   }
   static void transferADC(void* buf, size_t count) {
-    transferAdcNoTransaction(buf, count);
+    transferADCNoTransaction(buf, count);
   }
   static uint8_t transferDAC(uint8_t data) {
     return transferDACNoTransaction(data);
