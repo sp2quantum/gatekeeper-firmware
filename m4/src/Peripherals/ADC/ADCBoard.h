@@ -8,8 +8,6 @@
 
 #include "Utils/shared_memory.h"
 
-#include "Utils/GIGA_digitalWriteFast.h"
-
 #include "Config.h"
 
 // ADC symbols
@@ -78,10 +76,13 @@ class ADCBoard {
 
   void waitDataReady() {
     int count = 0;
-    while (digitalReadFast(data_ready_pin) == HIGH && count < 2000) {
+    while (digitalRead(data_ready_pin) == HIGH && count < 2000) {
       count = count + 1;
       delay(1);
     }
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, LOW);
+    #endif
   }
 
  public:
@@ -150,18 +151,9 @@ class ADCBoard {
 
   void setRDYFN() {
     //first read contents of IO register
-    byte data[2];
-    data[0] = READ | ADDR_IO;
-    data[1] = 0x00;
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
-
     byte new_io_reg[2];
     new_io_reg[0] = WRITE | ADDR_IO;
-    byte set_mask = (1 << 3 | 1 << 5 | 1 << 4);
-    byte unset_mask = ~(1 << 6);
-    new_io_reg[1] = data[1] | set_mask & unset_mask;
+    new_io_reg[1] = 0b00011001;
 
     digitalWrite(cs_pin, LOW);
     PeripheralCommsController::transferADC(new_io_reg, 2);
@@ -170,18 +162,9 @@ class ADCBoard {
 
   void unsetRDYFN() {
     //first read contents of IO register
-    byte data[2];
-    data[0] = READ | ADDR_IO;
-    data[1] = 0x00;
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
-    
     byte new_io_reg[2];
     new_io_reg[0] = WRITE | ADDR_IO;
-    byte set_mask = (1 << 5 | 1 << 4);
-    byte unset_mask = ~(1 << 6 | 1 << 3);
-    new_io_reg[1] = data[1] | set_mask & unset_mask;
+    new_io_reg[1] = 0b00010001;
 
     digitalWrite(cs_pin, LOW);
     PeripheralCommsController::transferADC(new_io_reg, 2);

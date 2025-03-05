@@ -3,8 +3,6 @@
 #include "stm32h7xx.h"
 #include "Config.h"
 
-#include "Utils/GIGA_digitalWriteFast.h"
-
 struct TimingUtil {
   inline static volatile uint8_t adcFlag = 8;
   inline static volatile bool dacFlag = false;
@@ -46,11 +44,26 @@ struct TimingUtil {
     // Enable TIM1 clock
     __HAL_RCC_TIM1_CLK_ENABLE();
 
-    uint32_t timerClock = HAL_RCC_GetPCLK2Freq();
+    uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
+    
+    uint64_t total_ticks_dac = (period_us * timerClock) / 1000000;
+
+    uint16_t psc_dac;
+    uint16_t arr_dac;
+
+    if (total_ticks_dac <= 65536) {
+        psc_dac = 0;                // No prescaling
+        arr_dac = total_ticks_dac - 1;    // Full resolution within 16 bits
+    } else {
+        // Compute the minimal prescaler (PSC+1) needed so that ARR <= 65535
+        uint32_t prescaler_dac = (total_ticks_dac + 65536 - 1) / 65536;  // Rounds up division
+        psc_dac = prescaler_dac - 1;   // Because PSC register = (PSC+1) - 1
+        arr_dac = (total_ticks_dac / prescaler_dac) - 1;  // ARR counts from 0 to ARR, hence subtract 1
+    }
 
     // Configure TIM1
-    TIM1->PSC = (2 * timerClock / 1000000) - 1;  // For 1us resolution
-    TIM1->ARR = period_us - 1;
+    TIM1->PSC = psc_dac;
+    TIM1->ARR = arr_dac;
     TIM1->CR1 = TIM_CR1_ARPE;
     TIM1->DIER |= TIM_DIER_UIE;
 
@@ -70,11 +83,41 @@ struct TimingUtil {
    __HAL_RCC_TIM1_CLK_ENABLE();
     __HAL_RCC_TIM8_CLK_ENABLE();
 
-    uint32_t timerClock = HAL_RCC_GetPCLK2Freq();
+    uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
+    
+    uint64_t total_ticks_dac = (dac_period_us * timerClock) / 1000000;
+
+    uint16_t psc_dac;
+    uint16_t arr_dac;
+
+    if (total_ticks_dac <= 65536) {
+        psc_dac = 0;                // No prescaling
+        arr_dac = total_ticks_dac - 1;    // Full resolution within 16 bits
+    } else {
+        // Compute the minimal prescaler (PSC+1) needed so that ARR <= 65535
+        uint32_t prescaler_dac = (total_ticks_dac + 65536 - 1) / 65536;  // Rounds up division
+        psc_dac = prescaler_dac - 1;   // Because PSC register = (PSC+1) - 1
+        arr_dac = (total_ticks_dac / prescaler_dac) - 1;  // ARR counts from 0 to ARR, hence subtract 1
+    }
+
+    uint64_t total_ticks_adc = (adc_period_us * timerClock) / 1000000;
+
+    uint16_t psc_adc;
+    uint16_t arr_adc;
+
+    if (total_ticks_adc <= 65536) {
+        psc_adc = 0;                // No prescaling
+        arr_adc = total_ticks_adc - 1;    // Full resolution within 16 bits
+    } else {
+        // Compute the minimal prescaler (PSC+1) needed so that ARR <= 65535
+        uint32_t prescaler_adc = (total_ticks_adc + 65536 - 1) / 65536;  // Rounds up division
+        psc_adc = prescaler_adc - 1;   // Because PSC register = (PSC+1) - 1
+        arr_adc = (total_ticks_adc / prescaler_adc) - 1;  // ARR counts from 0 to ARR, hence subtract 1
+    }
 
     // Configure TIM1
-    TIM1->PSC = (2 * timerClock / 1000000) - 1;  // For 1us resolution
-    TIM1->ARR = dac_period_us - 1;
+    TIM1->PSC = psc_dac;
+    TIM1->ARR = arr_adc;
     TIM1->CR1 = TIM_CR1_ARPE;
     TIM1->DIER |= TIM_DIER_UIE;
 
@@ -84,8 +127,8 @@ struct TimingUtil {
     TIM1->CCR1 &= ~TIM_SR_CC1IF;
 
     // Configure TIM8
-    TIM8->PSC = (2 * timerClock / 1000000) - 1;  // For 1us resolution
-    TIM8->ARR = adc_period_us - 1;
+    TIM8->PSC = psc_adc;
+    TIM8->ARR = arr_adc;
     TIM8->CR1 = TIM_CR1_ARPE;
     TIM8->DIER |= TIM_DIER_UIE;
 
@@ -105,17 +148,34 @@ struct TimingUtil {
     TIM8->CR1 |= TIM_CR1_CEN;
   }
 
-  inline static void setupTimersDacLed(uint32_t period_us, uint32_t phase_shift_us) {
+  inline static void setupTimersDacLed(uint64_t period_us, uint64_t phase_shift_us) {
     // Reset timers and clear prior configuration
     resetTimers();
     // Enable clocks for TIM1 (master) and TIM8 (slave)
     __HAL_RCC_TIM1_CLK_ENABLE();
     __HAL_RCC_TIM8_CLK_ENABLE();
 
-    uint32_t timerClock = HAL_RCC_GetPCLK2Freq();
-    // --- Configure TIM1 as Master (for DAC triggering) ---
-    TIM1->PSC = (2 * timerClock / 1000000) - 1;  // 1 µs resolution
-    TIM1->ARR = period_us - 1;
+    uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
+    
+    // Calculate total timer ticks for the desired period (in µs)
+    uint64_t total_ticks = (period_us * timerClock) / 1000000;
+
+    uint16_t psc;
+    uint16_t arr;
+
+    if (total_ticks <= 65536) {
+        psc = 0;                // No prescaling
+        arr = total_ticks - 1;    // Full resolution within 16 bits
+    } else {
+        // Compute the minimal prescaler (PSC+1) needed so that ARR <= 65535
+        uint32_t prescaler = (total_ticks + 65536 - 1) / 65536;  // Rounds up division
+        psc = prescaler - 1;   // Because PSC register = (PSC+1) - 1
+        arr = (total_ticks / prescaler) - 1;  // ARR counts from 0 to ARR, hence subtract 1
+    }
+
+    TIM1->PSC = psc;  // Set prescaler
+    TIM1->ARR = arr;  // Set auto-reload value
+
     TIM1->CR1 = TIM_CR1_ARPE;
     TIM1->CNT = 0;  // Start at 0
 
@@ -125,8 +185,8 @@ struct TimingUtil {
     TIM1->DIER |= TIM_DIER_UIE;  // (Enable update interrupt if needed)
 
     // --- Configure TIM8 as Slave (for ADC triggering) ---
-    TIM8->PSC = (2 * timerClock / 1000000) - 1;  // 1 µs resolution
-    TIM8->ARR = period_us;
+    TIM8->PSC = psc;
+    TIM8->ARR = arr;
     TIM8->CR1 = TIM_CR1_ARPE;
     TIM8->CNT = 0;  // Start at 0
 
@@ -140,7 +200,8 @@ struct TimingUtil {
     // --- Configure phase shift if requested ---
     if (phase_shift_us > 0 && phase_shift_us < period_us) {
       // Use Channel 1 compare event for phase-shifted ADC trigger
-      TIM8->CCR1 = phase_shift_us - 1;  // Adjust as needed
+      uint32_t timerPhaseShift = (phase_shift_us * (TIM8->ARR + 1)) / period_us;
+      TIM8->CCR1 = timerPhaseShift;  // Set to the proper timer tick count for the phase shift
       // Set Channel 1 to PWM mode 1: clear then set OC1M bits
       TIM8->CCMR1 &= ~TIM_CCMR1_OC1M;
       TIM8->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2; 
@@ -191,8 +252,8 @@ struct TimingUtil {
 extern "C" void TIM1_UP_IRQHandler(void) {
   if (TIM1->SR & TIM_SR_UIF) {
     TIM1->SR &= ~TIM_SR_UIF;
-    digitalWriteFast(ldac, LOW);
-    digitalWriteFast(ldac, HIGH);
+    digitalWrite(ldac, LOW);
+    digitalWrite(ldac, HIGH);
     TimingUtil::dacFlag = true;
   }
 }
@@ -201,7 +262,7 @@ extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
     #ifdef __NEW_DAC_ADC__
-    digitalWriteFast(adc_sync, HIGH);
+    digitalWrite(adc_sync, HIGH);
     #else
     TimingUtil::adcFlag = 1;
     #endif
@@ -212,7 +273,7 @@ extern "C" void TIM8_CC_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_CC1IF) {
     TIM8->SR &= ~TIM_SR_CC1IF;
     #ifdef __NEW_DAC_ADC__
-    digitalWriteFast(adc_sync, HIGH);
+    digitalWrite(adc_sync, HIGH);
     #else
     TimingUtil::adcFlag = 1;
     #endif
