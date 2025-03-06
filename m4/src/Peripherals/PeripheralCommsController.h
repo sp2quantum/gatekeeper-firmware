@@ -9,7 +9,7 @@ struct PeripheralCommsController {
 
   PeripheralCommsController() {}
 
-  #if !defined(__OLD_SHIELD__)
+  #if !defined(__NEW_DAC_ADC__)
   static void setup() {
     if (!spiInitialized) {
       SPI.begin();
@@ -31,6 +31,25 @@ struct PeripheralCommsController {
   static uint8_t transferADC(uint8_t data) {
     return transferADCNoTransaction(data);
   }
+
+
+  static void transferDACNoTransaction(void* buf, size_t count) {
+    SPI.transfer(buf, count);
+  }
+  static void transferADCNoTransaction(void* buf, size_t count) {
+    SPI.transfer(buf, count);
+  }
+  static uint8_t transferDACNoTransaction(uint8_t data) {
+    return SPI1.transfer(data);
+  }
+  static uint8_t transferADCNoTransaction(uint8_t data) {
+    return SPI1.transfer(data);
+  }
+
+  static void beginDacTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
+
+  static void beginAdcTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
+
 
   #else
   static void setup() {
@@ -62,8 +81,6 @@ struct PeripheralCommsController {
     return result;
   }
 
-  #endif
-
   static void transferDACNoTransaction(void* buf, size_t count) {
     SPI.transfer(buf, count);
   }
@@ -77,14 +94,12 @@ struct PeripheralCommsController {
     return SPI.transfer(data);
   }
 
+  #endif
+
+
   static void dataLedOn() { /*digitalWrite(led, HIGH);*/ }
 
   static void dataLedOff() { /*digitalWrite(led, LOW);*/ }
-
-
-  static void beginDacTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
-
-  static void beginAdcTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
 
   static void endTransaction() { SPI.endTransaction(); }
 
