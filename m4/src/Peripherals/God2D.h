@@ -130,7 +130,7 @@ class God2D {
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
          ++slowStep) {
       // Set slow DAC channels to the current slow step voltages
-      #if !defined(__NEW_DAC_ADC__)
+      #if !defined(__NEW_SHIELD__)
       PeripheralCommsController::beginDacTransaction();
       #endif
       for (int i = 0; i < numSlowDacChannels; ++i) {
@@ -139,7 +139,7 @@ class God2D {
         previousVoltageSet[i] += voltageStepSize[i];
       }
       DACController::toggleLdac();
-      #if !defined(__NEW_DAC_ADC__)
+      #if !defined(__NEW_SHIELD__)
       PeripheralCommsController::endTransaction();
       #endif
 
@@ -325,7 +325,7 @@ class God2D {
     for (int slowStep = 0; slowStep < numStepsSlow && !getStopFlag();
          ++slowStep) {
       // Set slow DAC channels to the current slow step voltages
-      #if !defined(__NEW_DAC_ADC__)
+      #if !defined(__NEW_SHIELD__)
       PeripheralCommsController::beginDacTransaction();
       #endif
       for (int i = 0; i < numSlowDacChannels; ++i) {
@@ -334,7 +334,7 @@ class God2D {
         previousVoltageSet[i] += voltageStepSize[i];
       }
       DACController::toggleLdac();
-      #if !defined(__NEW_DAC_ADC__)
+      #if !defined(__NEW_SHIELD__)
       PeripheralCommsController::endTransaction();
       #endif
 

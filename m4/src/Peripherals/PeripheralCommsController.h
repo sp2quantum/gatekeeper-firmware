@@ -9,7 +9,7 @@ struct PeripheralCommsController {
 
   PeripheralCommsController() {}
 
-  #if !defined(__NEW_DAC_ADC__)
+  #ifdef __NEW_SHIELD__
   static void setup() {
     if (!spiInitialized) {
       SPI.begin();
@@ -37,18 +37,14 @@ struct PeripheralCommsController {
     SPI.transfer(buf, count);
   }
   static void transferADCNoTransaction(void* buf, size_t count) {
-    SPI.transfer(buf, count);
+    SPI1.transfer(buf, count);
   }
   static uint8_t transferDACNoTransaction(uint8_t data) {
-    return SPI1.transfer(data);
+    return SPI.transfer(data);
   }
   static uint8_t transferADCNoTransaction(uint8_t data) {
     return SPI1.transfer(data);
   }
-
-  static void beginDacTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
-
-  static void beginAdcTransaction() { SPI.beginTransaction(DAC_SPI_SETTINGS); }
 
 
   #else
@@ -92,6 +88,13 @@ struct PeripheralCommsController {
   }
   static uint8_t transferADCNoTransaction(uint8_t data) {
     return SPI.transfer(data);
+  }
+
+  static void beginDacTransaction() {
+    SPI.beginTransaction(DAC_SPI_SETTINGS);
+  }
+  static void beginAdcTransaction() {
+    SPI.beginTransaction(ADC_SPI_SETTINGS);
   }
 
   #endif
