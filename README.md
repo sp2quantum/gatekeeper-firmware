@@ -44,8 +44,6 @@ Note for vim users: If you have any issues with linting/LSP with (neo)vim then t
 
 - DAC calibration data currently not stored in ROM; calibration data deletes after a power cycle.
   - Will be implemented soon
-- Retrace in 2D buffer ramps currently retraces on next slow step, which may not be desired.
-  - Option to further specify retrace parameters will be implemented soon
 
 ### Function Registry
 
