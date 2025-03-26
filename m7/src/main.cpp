@@ -3,6 +3,8 @@
 #include "Utils/shared_memory.h"
 #include "Utils/flash.h"
 
+#define NUM_DAC_CHANNELS 16
+
 
 #define return_if_not_ok(x) \
   do                        \
@@ -64,8 +66,6 @@ typedef union {
   byte binary[4];
 } binaryFloat;
 
-CalibrationData calibrationData;
-
 
 void setup()
 {
@@ -79,30 +79,21 @@ void setup()
       delay(1000);
     }
   }
-  // for (int i = 0; i<16; i++) {
-  //   calibrationData.offset[i] = 0.5;
-  //   calibrationData.gain[i] = 4.2069;
-  // }
-  // writeCalibrationToFlash(calibrationData);
-  // delay(1000);
-
-  // Read calibration data from flash
-  readCalibrationFromFlash(calibrationData);
+  CalibrationData calibrationData;
+  if (!readCalibrationFromFlash(calibrationData))
+  {
+    Serial.println("Failed to read calibration data from flash. Using default values!");
+    for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i)
+    {
+      calibrationData.gain[i] = 1.0f;
+      calibrationData.offset[i] = 0.0f;
+    }
+  }
+  m7SendCalibrationData(calibrationData);
 }
 
 void loop()
 {
-  for (int i=0;i<16;i++) {
-    Serial.print("Offset ");
-    Serial.print(i);
-    Serial.print(": ");
-    Serial.print(calibrationData.offset[i], 8);
-    Serial.print(", Gain ");
-    Serial.print(i);
-    Serial.print(": ");
-    Serial.println(calibrationData.gain[i], 8);
-  }
-  delay(1000);
   if (Serial.available())
   {
     String command = Serial.readStringUntil('\n');
@@ -154,17 +145,19 @@ void loop()
     {
       for (size_t i = 0; i < size; ++i)
       {
-        // Serial.print("ADC ID: ");
-        // Serial.print(response[i].adc_id);
-        // Serial.print(", Setnum: ");
-        // Serial.print(response[i].setnum);
-        // Serial.print(", ");
-        // Serial.print(response[i].voltage, 8);
         binaryFloat send;
         send.floatingPoint = response[i];
         Serial.write(send.binary, 4);
-        // Serial.println("V");
       }
+    }
+  }
+  if (isCalibrationUpdated())
+  {
+    CalibrationData calibrationData;
+    m7ReceiveCalibrationData(calibrationData);
+    if (!writeCalibrationToFlash(calibrationData))
+    {
+      Serial.println("Failed to write calibration data to flash!");
     }
   }
 }

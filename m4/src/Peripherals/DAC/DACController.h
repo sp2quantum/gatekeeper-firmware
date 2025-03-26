@@ -156,10 +156,14 @@ class DACController {
   inline static OperationResult inquiryOSG() {
     String output = "";
     for (auto channel : dac_channels) {
-      output += String(channel.getOffsetError(), 6) + "\n";
+      // output += String(, 4) + "\n";
+      float offset = channel.getOffsetError();
+      m4SendFloat(&offset, 1);  // Send offset error to M4
     }
     for (auto channel : dac_channels) {
-      output += String(channel.getGainError(), 6) + "\n";
+      // output += String(channel.getGainError(), 4) + "\n";
+      float gain = channel.getGainError();
+      m4SendFloat(&gain, 1);  // Send offset error to M4
     }
     return OperationResult::Success(output);
   }

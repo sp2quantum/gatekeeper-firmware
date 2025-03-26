@@ -27,8 +27,39 @@ bool initSharedMemory() {
   // Reset stop_flag
   shared_memory->stop_flag = false;
 
+  shared_memory->isCalibrationUpdated = false;
+  shared_memory->isBootComplete = false;
+
   return true;
 }
+
+void m4SendCalibrationData(const CalibrationData& data) {
+  memcpy(&shared_memory->calibrationData, &data, sizeof(CalibrationData));
+  shared_memory->isCalibrationUpdated = true;
+}
+
+void m4ReceiveCalibrationData(CalibrationData& data) {
+  memcpy(&data, &shared_memory->calibrationData, sizeof(CalibrationData));
+}
+
+void m7SendCalibrationData(const CalibrationData& data) {
+  memcpy(&shared_memory->calibrationData, &data, sizeof(CalibrationData));
+  shared_memory->isBootComplete = true;
+}
+
+void m7ReceiveCalibrationData(CalibrationData& data) {
+  memcpy(&data, &shared_memory->calibrationData, sizeof(CalibrationData));
+  shared_memory->isCalibrationUpdated = false;
+}
+
+bool isCalibrationUpdated() {
+  return shared_memory->isCalibrationUpdated;
+}
+
+bool isBootComplete() {
+  return shared_memory->isBootComplete;
+}
+
 
 // Set/get stop flag
 void setStopFlag(bool value) { shared_memory->stop_flag = value; }

@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "Utils/CalibrationData.h"
 
 #define CHAR_BUFFER_SIZE 256
 #define FLOAT_BUFFER_SIZE 256
@@ -33,11 +34,25 @@ struct SharedMemory {
   VoltageCircularBuffer m4_to_m7_voltage_buffer;
 
   volatile bool stop_flag;
+
+  volatile bool isCalibrationUpdated;
+  volatile bool isBootComplete;
+
+  CalibrationData calibrationData;
 };
 
 extern SharedMemory* shared_memory;
 
 bool initSharedMemory();
+
+
+void m4SendCalibrationData(const CalibrationData& data);
+void m4ReceiveCalibrationData(CalibrationData& data);
+void m7SendCalibrationData(const CalibrationData& data);
+void m7ReceiveCalibrationData(CalibrationData& data);
+bool isCalibrationUpdated();
+bool isBootComplete();
+
 
 void setStopFlag(bool value);
 bool getStopFlag();

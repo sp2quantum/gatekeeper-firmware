@@ -43,12 +43,20 @@ void setup() {
   God::setup();
   God2D::setup();
   
+  // wait for calibration data to be loaded
+  while (!isBootComplete());
+
+  CalibrationData calibrationData;
+  m4ReceiveCalibrationData(calibrationData);
+
+  for (int i=0; i<NUM_DAC_CHANNELS; i++) {
+    DACController::setCalibration(i, calibrationData.offset[i], calibrationData.gain[i]);
+  }
+
 }
 
 
 
 void loop() {
   UserIOHandler::handleUserIO();
-  // m4SendData("Hello, World!");
-  // delay(1000);
 }

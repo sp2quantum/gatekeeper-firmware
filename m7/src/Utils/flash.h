@@ -1,20 +1,17 @@
+#pragma once
+
 #include <Arduino.h>
 #include "QSPIFBlockDevice.h"
 #include <cstdint>
 #include <cstring>
-
-// Structure to hold calibration data (16 gain values and 16 offset values)
-struct CalibrationData {
-    float gain[16];
-    float offset[16];
-};
+#include "CalibrationData.h"
 
 // Fixed flash memory address for storing calibration (15 MB offset in 16 MB QSPI flash).
 // This address is chosen to avoid the region used by WiFi firmware (first 1MB) and OTA (next 13MB).
 static constexpr uint32_t CALIBRATION_FLASH_ADDR = 15 * 1024 * 1024;  // 15 MB offset
 
 // Helper function: Calculate CRC32 (polynomial 0xEDB88320) over a data buffer
-uint32_t calculateCRC32(const uint8_t *data, size_t length) {
+inline uint32_t calculateCRC32(const uint8_t *data, size_t length) {
     uint32_t crc = 0xFFFFFFFF;  // start with all bits high
     for (size_t i = 0; i < length; ++i) {
         crc ^= data[i];
@@ -31,7 +28,7 @@ uint32_t calculateCRC32(const uint8_t *data, size_t length) {
 }
 
 // Write calibration data to QSPI flash. Returns true on success, false on failure.
-bool writeCalibrationToFlash(const CalibrationData &data) {
+inline bool writeCalibrationToFlash(const CalibrationData &data) {
     // Instantiate the QSPI flash block device (use Arduino GIGA's QSPI pins and settings)
     QSPIFBlockDevice qspi(QSPI_SO0, QSPI_SO1, QSPI_SO2, QSPI_SO3, QSPI_SCK, QSPI_CS,
                           QSPIF_POLARITY_MODE_1, 40000000);  // Mode 1, 40 MHz
@@ -39,7 +36,7 @@ bool writeCalibrationToFlash(const CalibrationData &data) {
     // Initialize the QSPI flash device
     int err = qspi.init();
     if (err != 0) {
-        Serial.println("Error: QSPI flash init failed");
+        Serial.println("FAILURE: QSPI flash init failed");
         return false;
     }
     
@@ -61,7 +58,7 @@ bool writeCalibrationToFlash(const CalibrationData &data) {
     uint32_t alignedAddr = CALIBRATION_FLASH_ADDR - (CALIBRATION_FLASH_ADDR % eraseSize);
     err = qspi.erase(alignedAddr, eraseSize);
     if (err != 0) {
-        Serial.println("Error: QSPI flash erase failed");
+        Serial.println("FAILURE: QSPI flash erase failed");
         qspi.deinit();
         return false;
     }
@@ -69,7 +66,7 @@ bool writeCalibrationToFlash(const CalibrationData &data) {
     // Program (write) the data + CRC buffer into flash at the fixed address
     err = qspi.program(writeBuf, CALIBRATION_FLASH_ADDR, totalSize);
     if (err != 0) {
-        Serial.println("Error: QSPI flash program failed");
+        Serial.println("FAILURE: QSPI flash program failed");
         qspi.deinit();
         return false;
     }
@@ -80,12 +77,12 @@ bool writeCalibrationToFlash(const CalibrationData &data) {
 }
 
 // Read calibration data from QSPI flash. Returns true if valid data was read (CRC ok).
-bool readCalibrationFromFlash(CalibrationData &data) {
+inline bool readCalibrationFromFlash(CalibrationData &data) {
     QSPIFBlockDevice qspi(QSPI_SO0, QSPI_SO1, QSPI_SO2, QSPI_SO3, QSPI_SCK, QSPI_CS,
                           QSPIF_POLARITY_MODE_1, 40000000);
     int err = qspi.init();
     if (err != 0) {
-        Serial.println("Error: QSPI flash init failed");
+        Serial.println("FAILURE: QSPI flash init failed");
         return false;
     }
     
@@ -95,7 +92,7 @@ bool readCalibrationFromFlash(CalibrationData &data) {
     // Read the data and CRC from flash
     err = qspi.read(readBuf, CALIBRATION_FLASH_ADDR, totalSize);
     if (err != 0) {
-        Serial.println("Error: QSPI flash read failed");
+        Serial.println("FAILURE: QSPI flash read failed");
         qspi.deinit();
         return false;
     }
@@ -111,7 +108,7 @@ bool readCalibrationFromFlash(CalibrationData &data) {
     
     // Verify CRC matches
     if (calcCrc != storedCrc) {
-        Serial.println("Error: Calibration data CRC mismatch (data is corrupted or not written)");
+        Serial.println("FAILURE: Calibration data CRC mismatch (data is corrupted or not written)");
         qspi.deinit();
         return false;
     }

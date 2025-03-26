@@ -432,7 +432,8 @@ class God {
   }
 
   static OperationResult dacChannelCalibration() {
-    for (int i = 0; i < NUM_CHANNELS_PER_DAC_BOARD; i++) {
+    CalibrationData calibrationData;
+    for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
       DACController::initialize();
       DACController::setCalibration(i, 0, 1);
       DACController::setVoltage(i, 0);
@@ -444,7 +445,11 @@ class God {
       delay(1);
       float gainError = (ADCController::getVoltage(i) - offsetError) / voltSet;
       DACController::setCalibration(i, offsetError, gainError);
+      DACController::setVoltage(i, 0);
+      calibrationData.offset[i] = offsetError;
+      calibrationData.gain[i] = gainError;
     }
+    m4SendCalibrationData(calibrationData);
     return OperationResult::Success("CALIBRATION_FINISHED");
   }
 
