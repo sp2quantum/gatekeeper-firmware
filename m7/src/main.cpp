@@ -1,6 +1,8 @@
 #include <Arduino.h>
 
 #include "Utils/shared_memory.h"
+#include "Utils/flash.h"
+
 
 #define return_if_not_ok(x) \
   do                        \
@@ -57,11 +59,13 @@ void enableM4()
   LL_RCC_ForceCM4Boot();
 }
 
-
 typedef union {
   float floatingPoint;
   byte binary[4];
 } binaryFloat;
+
+CalibrationData calibrationData;
+
 
 void setup()
 {
@@ -75,10 +79,30 @@ void setup()
       delay(1000);
     }
   }
+  // for (int i = 0; i<16; i++) {
+  //   calibrationData.offset[i] = 0.5;
+  //   calibrationData.gain[i] = 4.2069;
+  // }
+  // writeCalibrationToFlash(calibrationData);
+  // delay(1000);
+
+  // Read calibration data from flash
+  readCalibrationFromFlash(calibrationData);
 }
 
 void loop()
 {
+  for (int i=0;i<16;i++) {
+    Serial.print("Offset ");
+    Serial.print(i);
+    Serial.print(": ");
+    Serial.print(calibrationData.offset[i], 8);
+    Serial.print(", Gain ");
+    Serial.print(i);
+    Serial.print(": ");
+    Serial.println(calibrationData.gain[i], 8);
+  }
+  delay(1000);
   if (Serial.available())
   {
     String command = Serial.readStringUntil('\n');
