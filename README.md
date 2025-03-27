@@ -1,4 +1,4 @@
-# DAC/ADC Dual Core Firmware
+# DAC/ADC Firmware
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -18,7 +18,26 @@ The firmware is designed to be easily extensible, as new peripherals can simply 
 
 ## Installation
 
-This firmware is comprised of two individual PlatformIO projects, one for the M7 core and the other for the M4. To build and upload to the Arduino Giga, you need to install PlatformIO and separately upload the firmware for **both** the M7 and M4 processors (found in their respective folders). There is no extra configuration you need to do, as all processor information is contained in each project's platformio.ini file.
+1. Unzip Firmware_Package.zip (from the releases tab)
+
+2. Make sure you have `dfu-util` installed
+
+  - **Linux (Debian)**: `sudo apt install dfu-util`
+  - **MacOS**: `brew install dfu-util`
+  - **Windows**:
+    - Download [dfu-util](https://dfu-util.sourceforge.net) to your local system, e.g., under `D:\dfu-util`.
+    - Rename it to `dfu-util.exe`.
+    - Append the path of the `dfu-util.exe` to the system environment variable PATH.
+
+3. Run `pip install -r requirements.txt`
+
+4. Plug in Arduino Giga
+
+5. Run `python3 upload_firmware.py`
+
+You can also build/upload from source:
+
+This firmware is comprised of two individual PlatformIO projects, one for the M7 core and the other for the M4. To build and upload to the Arduino Giga, you need to install PlatformIO and separately upload the firmware for both the M7 and M4 processors (found in their respective folders). There is no extra configuration you need to do, as all processor information is contained in each project's platformio.ini file.
 
 ## Usage
 
@@ -42,8 +61,7 @@ Note for vim users: If you have any issues with linting/LSP with (neo)vim then t
 
 ### Known Issues
 
-- DAC calibration data currently not stored in ROM; calibration data deletes after a power cycle.
-  - Will be implemented soon
+- There are currently no known issues! Please let me know if you find a bug.
 
 ### Function Registry
 
