@@ -120,6 +120,76 @@ class ADCBoard {
     #endif
   }
 
+  // Define the polynomial constant for the AD7734 checksum (16-bit LFSR)
+  // (This constant is chosen to reflect taps at bits 0,2,3,5 – verify against your datasheet.)
+  #define AD7734_CRC_POLY 0x2D
+
+
+  // Local 16-bit checksum accumulator
+  uint16_t checksum;
+
+  // --- Checksum helper functions ---
+  // Update the checksum with one bit (assumes bit is 0 or 1)
+  void updateChecksumBit(uint8_t bit) {
+    uint8_t msb = (checksum >> 15) & 0x01;
+    uint8_t feedback = msb ^ (bit & 0x01);
+    checksum = (checksum << 1) & 0xFFFF;  // Shift left keeping 16 bits
+    if (feedback) {
+      checksum ^= AD7734_CRC_POLY;
+    }
+  }
+
+  // Update the checksum with a full byte (MSB first)
+  void updateChecksumByte(uint8_t byteVal) {
+    for (int i = 7; i >= 0; i--) {
+      updateChecksumBit((byteVal >> i) & 0x01);
+    }
+  }
+
+  // Reset checksum for write operations (DIN monitoring).
+  // Write 0x0000 to the CHECKSUM register so that the ADC begins computing checksum on DIN.
+  void resetChecksumDIN() {
+    checksum = 0xFFFF;
+    digitalWrite(cs_pin, LOW);
+    uint8_t comm = WRITE | ADDR_CHECKSUM;
+    SPI.transfer(comm);
+    updateChecksumByte(comm);
+    SPI.transfer(0x00);
+    updateChecksumByte(0x00);
+    SPI.transfer(0x00);
+    updateChecksumByte(0x00);
+    digitalWrite(cs_pin, HIGH);
+  }
+
+  // Reset checksum for read operations (DOUT monitoring).
+  // Write 0xFF00 to the CHECKSUM register so that the ADC computes checksum on outgoing data.
+  void resetChecksumDOUT() {
+    checksum = 0xFFFF;
+    digitalWrite(cs_pin, LOW);
+    uint8_t comm = WRITE | ADDR_CHECKSUM;
+    SPI.transfer(comm);
+    updateChecksumByte(comm);
+    SPI.transfer(0xFF);
+    updateChecksumByte(0xFF);
+    SPI.transfer(0x00);
+    updateChecksumByte(0x00);
+    digitalWrite(cs_pin, HIGH);
+  }
+
+  // Read back the device's internal checksum value from the CHECKSUM register.
+  uint16_t readDeviceChecksum() {
+    uint16_t devCRC = 0;
+    digitalWrite(cs_pin, LOW);
+    uint8_t comm = READ | ADDR_CHECKSUM;
+    SPI.transfer(comm);
+    updateChecksumByte(comm);
+    uint8_t crcHigh = SPI.transfer(0x00);
+    uint8_t crcLow  = SPI.transfer(0x00);
+    digitalWrite(cs_pin, HIGH);
+    devCRC = ((uint16_t)crcHigh << 8) | crcLow;
+    return devCRC;
+  }
+
   void RDY_ISR () {
     setReadyFlag();
   }
@@ -270,6 +340,11 @@ class ADCBoard {
     uint32_t last = data[3];
 
     uint32_t result = upper << 16 | lower << 8 | last;
+
+    updateChecksumByte(data[0]);
+    updateChecksumByte(data[1]);
+    updateChecksumByte(data[2]);
+    updateChecksumByte(data[3]);
 
     return result;
     //return 0;

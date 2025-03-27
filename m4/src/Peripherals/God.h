@@ -100,15 +100,6 @@ class God {
       nextVoltageSet[i] = dacV0s[i];
     }
 
-    #ifdef __NEW_DAC_ADC__
-    digitalWrite(adc_sync, LOW);
-    static void (*isrFunctions[])() = {
-      TimingUtil::adcSyncISR<0>,
-      TimingUtil::adcSyncISR<1>,
-      TimingUtil::adcSyncISR<2>,
-      TimingUtil::adcSyncISR<3>
-    };
-
     int numAdcBoards;
 
     std::unordered_set<int> boardSet;
@@ -121,6 +112,15 @@ class God {
     for (auto board : boardSet) {
       adcBoards[k++] = board;
     }
+
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, LOW);
+    static void (*isrFunctions[])() = {
+      TimingUtil::adcSyncISR<0>,
+      TimingUtil::adcSyncISR<1>,
+      TimingUtil::adcSyncISR<2>,
+      TimingUtil::adcSyncISR<3>
+    };
 
     for (int i = 0; i < numAdcBoards; i++) {
       attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])), isrFunctions[i], FALLING);
@@ -135,6 +135,10 @@ class God {
     #else
     adcMask = 1;
     #endif
+
+    for (int i = 0; i < numAdcChannels; i++) {
+      ADCController::resetChecksumDOUT(adcChannels[i]);
+    }
 
     TimingUtil::setupTimersTimeSeries(dac_interval_us, adc_interval_us);
 
@@ -215,6 +219,20 @@ class God {
     if (getStopFlag()) {
       setStopFlag(false);
       return OperationResult::Failure("RAMPING_STOPPED");
+    }
+    
+    m4SendChar("ADC_CHECKSUM!", 14);
+    // Reset the ADC checksum
+    for (int i = 0; i < numAdcChannels; i++) {
+      uint16_t actualChecksum = ADCController::readDeviceChecksum(i);
+      uint16_t expectedChecksum = ADCController::getExpectedChecksum(i);
+      // convert checksums to strings
+      char actualChecksumStr[16];
+      char expectedChecksumStr[16];
+      snprintf(actualChecksumStr, sizeof(actualChecksumStr), "%04X", actualChecksum);
+      snprintf(expectedChecksumStr, sizeof(expectedChecksumStr), "%04X", expectedChecksum);
+      m4SendChar(actualChecksumStr, sizeof(actualChecksumStr));
+      m4SendChar(expectedChecksumStr, sizeof(expectedChecksumStr));
     }
 
     return OperationResult::Success();

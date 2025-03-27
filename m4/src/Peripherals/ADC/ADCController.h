@@ -101,9 +101,34 @@ class ADCController {
         getChannelIndexFromGlobalIndex(channel_index));
   }
 
-  inline static float getDataReadyPin(int channel_index) {
-    return adc_boards[getBoardIndexFromGlobalIndex(channel_index)].getDataReadyPin();
+  inline static float getDataReadyPin(int board_index) {
+    return adc_boards[board_index].getDataReadyPin();
   }
+
+  inline static void updateChecksumBit(int board_index, uint8_t checksum) {
+    adc_boards[board_index].updateChecksumBit(checksum);
+  }
+
+  inline static void updateChecksumByte(int board_index, uint8_t checksum) {
+    adc_boards[board_index].updateChecksumByte(checksum);
+  }
+
+  inline static void resetChecksumDIN(int board_index) {
+    adc_boards[board_index].resetChecksumDIN();
+  }
+
+  inline static void resetChecksumDOUT(int board_index) {
+    adc_boards[board_index].resetChecksumDOUT();
+  }
+
+  inline static uint16_t readDeviceChecksum(int board_index) {
+    return adc_boards[board_index].readDeviceChecksum();
+  }
+
+  inline static uint16_t getExpectedChecksum(int board_index) {
+    return adc_boards[board_index].checksum;
+  }
+
 
   // args: num_channels, channel_indexes, total_duration_us
   // ex: TIME_SERIES_ADC_READ 2,0,1,1000000
