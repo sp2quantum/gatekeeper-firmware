@@ -110,7 +110,7 @@ class PeripheralCommsController {
       uint8_t transferADCNoTransaction(uint8_t data) {
         digitalWrite(cs_pin, LOW);
         uint8_t output = SPI.transfer(data);
-        digitalWrite(cs_pin, HIGH);
+digitalWrite(cs_pin, HIGH);                                 
         return output;
       }
 

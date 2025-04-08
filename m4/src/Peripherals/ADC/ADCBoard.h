@@ -77,7 +77,7 @@ class ADCBoard {
 
   void waitDataReady() {
     int count = 0;
-    while (digitalRead(data_ready_pin) == HIGH && count < 2000) {
+    while (digitalRead(data_ready_pin) == HIGH && count < 20000) {
       count = count + 1;
       delay(1);
     }
@@ -401,6 +401,9 @@ class ADCBoard {
     byte data[2];
     data[0] = WRITE | ADDR_MODE(0);  // channel is zero but this is system-wide
     data[1] = ZERO_SCALE_SELF_CAL_MODE;
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, HIGH);
+    #endif
     commsController.transferADC(data, 2);
     waitDataReady();
   }
@@ -409,6 +412,9 @@ class ADCBoard {
     byte data[2];
     data[0] = WRITE | ADDR_MODE(channel);
     data[1] = CH_ZERO_SCALE_SYS_CAL_MODE;
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, HIGH);
+    #endif
     commsController.transferADC(data, 2);
     waitDataReady();
   }
@@ -417,6 +423,9 @@ class ADCBoard {
     byte data[2];
     data[0] = WRITE | ADDR_MODE(channel);
     data[1] = CH_FULL_SCALE_SYS_CAL_MODE;
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, HIGH);
+    #endif
     commsController.transferADC(data, 2);
     waitDataReady();
   }
