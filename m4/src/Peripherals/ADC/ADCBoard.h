@@ -73,10 +73,11 @@ class ADCBoard {
   int cs_pin;
   int data_ready_pin;
   int reset_pin;
+  PeripheralCommsController commsController;
 
   void waitDataReady() {
     int count = 0;
-    while (digitalRead(data_ready_pin) == HIGH && count < 2000) {
+    while (digitalRead(data_ready_pin) == HIGH && count < 20000) {
       count = count + 1;
       delay(1);
     }
@@ -89,7 +90,7 @@ class ADCBoard {
   bool data_ready = false;
 
   ADCBoard(int cs_pin, int data_ready_pin, int reset_pin)
-      : cs_pin(cs_pin), data_ready_pin(data_ready_pin), reset_pin(reset_pin) {}
+      : cs_pin(cs_pin), data_ready_pin(data_ready_pin), reset_pin(reset_pin), commsController(cs_pin) {}
 
   void setup() {
     pinMode(reset_pin, OUTPUT);
@@ -114,9 +115,7 @@ class ADCBoard {
     byte data[2];
     data[0] = WRITE | ADDR_IO;
     data[1] = 0b00010001;
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(data, 2);
     #endif
   }
 
@@ -213,9 +212,7 @@ class ADCBoard {
     byte data[2];
     data[0] = READ | ADDR_ADCSTATUS;
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(data, 2);
     return data[1];
   }
 
@@ -225,9 +222,7 @@ class ADCBoard {
     new_io_reg[0] = WRITE | ADDR_IO;
     new_io_reg[1] = 0b00011001;
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(new_io_reg, 2);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(new_io_reg, 2);
   }
 
   void unsetRDYFN() {
@@ -236,18 +231,14 @@ class ADCBoard {
     new_io_reg[0] = WRITE | ADDR_IO;
     new_io_reg[1] = 0b00010001;
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(new_io_reg, 2);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(new_io_reg, 2);
   }
 
   void channelSetup(int adc_channel, uint8_t flags) {
     byte data[2];
     data[0] = WRITE | ADDR_CHANNELSETUP(adc_channel);
     data[1] = flags;
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(data, 2);
   }
 
   // tells the ADC to start a single conversion on the passed channel
@@ -260,9 +251,7 @@ class ADCBoard {
     #ifdef __NEW_DAC_ADC__
     digitalWrite(adc_sync, LOW);
     #endif
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(data, 2);
     #ifdef __NEW_DAC_ADC__
     digitalWrite(adc_sync, HIGH);
     #endif
@@ -283,9 +272,7 @@ class ADCBoard {
     data_array[3] = CONT_CONV_MODE; // | 1 << 2; //includes setting continuous read mode
 
     // send off command
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data_array, 4);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(data_array, 4);
 
     // data is ready when _rdy goes low
   }
@@ -298,18 +285,14 @@ class ADCBoard {
     data[0] = WRITE | ADDR_CHANNELCONVERSIONTIME(adc_channel);
     data[1] = send;
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(data, 2);
   }
 
   uint32_t getConversionData(int adc_channel) {
     byte data[4];
     data[0] = READ | ADDR_CHANNELDATA(adc_channel);
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 4);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(data, 4);
 
     uint32_t upper = data[1];
     uint32_t lower = data[2];
@@ -330,10 +313,8 @@ class ADCBoard {
     data[3] = 0;
 
     // write to the communication register
-    digitalWrite(cs_pin, LOW);
     // read upper and lower bytes of channel data register (16 bit mode)
-    PeripheralCommsController::transferADCNoTransaction(data, 4);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADCNoTransaction(data, 4);
 
     uint32_t upper = data[1];
     uint32_t lower = data[2];
@@ -367,16 +348,7 @@ class ADCBoard {
     byte data[2];
     data[0] = WRITE | ADDR_MODE(adc_channel);
     data[1] = IDLE_MODE;
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
-
-    /*byte data1[2];
-    data1[0] = WRITE | ADDR_CHANNELSETUP(adc_channel);
-    data1[1] = 0x00;
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data1, 2);
-    digitalWrite(cs_pin, HIGH);*/
+    commsController.transferADC(data, 2);
   }
 
   bool isChannelActive(int adc_channel) {
@@ -390,27 +362,17 @@ class ADCBoard {
     delay(5);
     digitalWrite(reset_pin, HIGH);
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(0x28);
-    digitalWrite(cs_pin, HIGH);
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(0);
-    digitalWrite(cs_pin, HIGH);
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(0x2A);
-    digitalWrite(cs_pin, HIGH);
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(0);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(0x28);
+    commsController.transferADC(0);
+    commsController.transferADC(0x2A);
+    commsController.transferADC(0);
     for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
       idleMode(i);
     }
   }
 
   uint8_t talkADC(byte command) {
-    digitalWrite(cs_pin, LOW);
-    uint8_t comm = PeripheralCommsController::transferADC(command);
-    digitalWrite(cs_pin, HIGH);
+    uint8_t comm = commsController.transferADC(command);
     return comm;
   }
 
@@ -442,9 +404,7 @@ class ADCBoard {
     data[0] = WRITE | ADDR_CHANNELCONVERSIONTIME(channel);
     data[1] = send;
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(data, 2);
 
     delayMicroseconds(100);
 
@@ -460,9 +420,7 @@ class ADCBoard {
   float getConversionTime(int channel, bool moreThanOneChannelActive) {
     byte data[2];
     data[0] = READ | ADDR_CHANNELCONVERSIONTIME(channel);
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferADC(data, 2);
 
     return calculateConversionTime(data[1], moreThanOneChannelActive);
   }
@@ -518,9 +476,10 @@ class ADCBoard {
     byte data[2];
     data[0] = WRITE | ADDR_MODE(0);  // channel is zero but this is system-wide
     data[1] = ZERO_SCALE_SELF_CAL_MODE;
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, HIGH);
+    #endif
+    commsController.transferADC(data, 2);
     waitDataReady();
   }
 
@@ -528,9 +487,10 @@ class ADCBoard {
     byte data[2];
     data[0] = WRITE | ADDR_MODE(channel);
     data[1] = CH_ZERO_SCALE_SYS_CAL_MODE;
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, HIGH);
+    #endif
+    commsController.transferADC(data, 2);
     waitDataReady();
   }
 
@@ -538,9 +498,10 @@ class ADCBoard {
     byte data[2];
     data[0] = WRITE | ADDR_MODE(channel);
     data[1] = CH_FULL_SCALE_SYS_CAL_MODE;
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferADC(data, 2);
-    digitalWrite(cs_pin, HIGH);
+    #ifdef __NEW_DAC_ADC__
+    digitalWrite(adc_sync, HIGH);
+    #endif
+    commsController.transferADC(data, 2);
     waitDataReady();
   }
 };

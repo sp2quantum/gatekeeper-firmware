@@ -14,8 +14,10 @@ class DACChannel {
   float voltage_lower_bound;
   float full_scale = 10.0;
 
+  PeripheralCommsController commsController;
+
  public:
-  DACChannel(int cs_pin) {
+  DACChannel(int cs_pin) : commsController(cs_pin) {
     this->cs_pin = cs_pin;
     offset_error = 0.0;
     gain_error = 1.0;
@@ -28,9 +30,7 @@ class DACChannel {
     byte bytesToSend[3] = {
         32, 0,
         2};  // Write to control register; Reserved byte; Unclamp DAC from GND
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferDAC(bytesToSend, 3);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferDAC(bytesToSend, 3);
     setVoltage(0.0);
   }
 
@@ -49,11 +49,9 @@ class DACChannel {
 
     byte bytesToSend[3] = {b1, b2, b3};
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferDAC(bytesToSend,
+    commsController.transferDAC(bytesToSend,
                              3);  // send command byte to DAC; MS data bits,
                                   // DAC2; LS 8 data bits, DAC2
-    digitalWrite(cs_pin, HIGH);
 
     digitalWrite(ldac, LOW);
     digitalWrite(ldac, HIGH);
@@ -70,11 +68,9 @@ class DACChannel {
 
     byte bytesToSend[3] = {b1, b2, b3};
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferDACNoTransaction(bytesToSend,
+    commsController.transferDACNoTransaction(bytesToSend,
                              3);  // send command byte to DAC; MS data bits,
                                   // DAC2; LS 8 data bits, DAC2
-    digitalWrite(cs_pin, HIGH);
   }
 
   void setCalibration(float offset, float gain) {
@@ -106,11 +102,9 @@ class DACChannel {
 
     byte bytesToSend[3] = {b1, b2, b3};
 
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferDAC(bytesToSend,
+    commsController.transferDAC(bytesToSend,
                              3);  // send command byte to DAC; MS data bits,
                                   // DAC2; LS 8 data bits, DAC2
-    digitalWrite(cs_pin, HIGH);
 
     digitalWrite(ldac, LOW);
 
@@ -122,13 +116,9 @@ class DACChannel {
   float getVoltage() {
     byte bytesToSend[3] = {144, 0, 0};
     byte data[3];
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferDAC(bytesToSend, 3);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferDAC(bytesToSend, 3);
     delayMicroseconds(2);
-    digitalWrite(cs_pin, LOW);
-    PeripheralCommsController::transferDAC(data, 3);
-    digitalWrite(cs_pin, HIGH);
+    commsController.transferDAC(data, 3);
 
     float voltage = threeByteToVoltage(data[0], data[1], data[2]);
     return gain_error * (voltage + offset_error);

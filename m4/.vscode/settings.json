@@ -1,6 +1,10 @@
 {
     "files.associations": {
         "chrono": "cpp",
-        "algorithm": "cpp"
+        "algorithm": "cpp",
+        "mstd_iterator": "cpp",
+        "array": "cpp",
+        "string": "cpp",
+        "string_view": "cpp"
     }
 }
