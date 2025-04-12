@@ -20,8 +20,16 @@ struct UserIOHandler {
     return OperationResult::Success("DAC-ADC_AD7734-AD5791");
   }
   static OperationResult rdy() { return OperationResult::Success("READY"); }
+
+
+  // IMPORTANT: If you are modifying the serial number, it MUST have the format __SERIAL_NUMBER__ and then 11 characters.
+  // I HIGHLY recommend using the following format: __SERIAL_NUMBER__ {2 characters representing the instrument} {4 digits for the year} {3 characters for the device ID}
+  // The serial number ideally should be set to a default value here and then changed post-compile time using the firmware_uploader.py or patch_serial_number.py scripts.
+  __attribute__((section(".serial_number")))
+  inline static const char serial_number[29] = "__SERIAL_NUMBER__DA_2025_ABC";
+
   static OperationResult serialNumber() {
-    return OperationResult::Success("DA20_16_08");
+    return OperationResult::Success(serial_number + 17);
   }
 
   static std::vector<String> query_memory() {
