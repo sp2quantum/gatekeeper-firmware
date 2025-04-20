@@ -9,6 +9,9 @@
 #include "Utils/shared_memory.h"
 #include "unordered_set"
 
+#include <vector>
+#include <algorithm>
+
 class God {
  public:
   static void setup() { initializeRegistry(); }
@@ -20,6 +23,28 @@ class God {
                                  "DAC_LED_BUFFER_RAMP");
     registerMemberFunction(dacChannelCalibration, "DAC_CH_CAL");
     registerMemberFunctionVector(boxcarAverageRamp, "BOXCAR_BUFFER_RAMP");
+  }
+
+
+  struct BoardUsage {
+    uint8_t numBoards;          // how many distinct boards are in use
+    std::vector<uint8_t> idx;   // their indexes, sorted (e.g. {0,1})
+  };
+
+  static BoardUsage getUsedBoards(const int *adcChannels, int numAdcChannels) {
+      std::vector<uint8_t> boards;
+
+      for (int i = 0; i < numAdcChannels; ++i) {
+          int ch = adcChannels[i];
+          if (ch < 0) continue;          // skip invalid values
+          uint8_t board = ch / 4;        // 0‑based board index
+          if (std::find(boards.begin(), boards.end(), board) == boards.end())
+              boards.push_back(board);   // keep only unique board numbers
+      }
+
+      std::sort(boards.begin(), boards.end());
+
+      return BoardUsage{ static_cast<uint8_t>(boards.size()), boards };
   }
 
   // args:
@@ -109,18 +134,10 @@ class God {
       TimingUtil::adcSyncISR<3>
     };
 
-    int numAdcBoards;
+    BoardUsage boardUsage = getUsedBoards(adcChannels, numAdcChannels);
 
-    std::unordered_set<int> boardSet;
-    for (int i = 0; i < numAdcChannels; i++) {
-      boardSet.insert(adcChannels[i] / 4);
-    }
-    numAdcBoards = boardSet.size();
-    int adcBoards[numAdcBoards];
-    int k = 0;
-    for (auto board : boardSet) {
-      adcBoards[k++] = board;
-    }
+    int numAdcBoards = boardUsage.numBoards;
+    std::vector<uint8_t> adcBoards = boardUsage.idx;
 
     for (int i = 0; i < numAdcBoards; i++) {
       attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])), isrFunctions[i], FALLING);
@@ -309,6 +326,7 @@ class God {
 
     #ifdef __NEW_DAC_ADC__
     digitalWrite(adc_sync, LOW);
+
     static void (*isrFunctions[])() = {
       TimingUtil::adcSyncISR<0>,
       TimingUtil::adcSyncISR<1>,
@@ -316,22 +334,25 @@ class God {
       TimingUtil::adcSyncISR<3>
     };
 
-    int numAdcBoards;
+    std::vector<uint8_t> boards;
 
-    std::unordered_set<int> boardSet;
-    for (int i = 0; i < numAdcChannels; i++) {
-      boardSet.insert(adcChannels[i] / 4);
+    for (int i = 0; i < numAdcChannels; ++i) {
+        int ch = adcChannels[i];
+        if (ch < 0) continue;          // skip invalid values
+        uint8_t board = ch / 4;        // 0‑based board index
+        if (std::find(boards.begin(), boards.end(), board) == boards.end())
+            boards.push_back(board);   // keep only unique board numbers
     }
-    numAdcBoards = boardSet.size();
-    int adcBoards[numAdcBoards];
-    int k = 0;
-    for (auto board : boardSet) {
-      adcBoards[k++] = board;
-    }
+
+    std::sort(boards.begin(), boards.end());
+
+    int numAdcBoards = boards.size();
 
     for (int i = 0; i < numAdcBoards; i++) {
-      attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])), isrFunctions[i], FALLING);
+      attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(boards[i])), isrFunctions[i], FALLING);
     }
+
+
     #endif
 
     uint8_t adcMask = 0u;
@@ -416,8 +437,8 @@ class God {
     }
 
     #ifdef __NEW_DAC_ADC__
-    for (int i = 0; i < numAdcBoards; i++) {
-      detachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])));
+    for (int i = 0; i < 2; i++) {
+      detachInterrupt(digitalPinToInterrupt(drdy[i]));
     }
     #endif
 
@@ -529,18 +550,10 @@ class God {
       TimingUtil::adcSyncISR<3>
     };
 
-    int numAdcBoards;
+    BoardUsage boardUsage = getUsedBoards(adcChannels, numAdcChannels);
 
-    std::unordered_set<int> boardSet;
-    for (int i = 0; i < numAdcChannels; i++) {
-      boardSet.insert(adcChannels[i] / 4);
-    }
-    numAdcBoards = boardSet.size();
-    int adcBoards[numAdcBoards];
-    int k = 0;
-    for (auto board : boardSet) {
-      adcBoards[k++] = board;
-    }
+    int numAdcBoards = boardUsage.numBoards;
+    std::vector<uint8_t> adcBoards = boardUsage.idx;
 
     for (int i = 0; i < numAdcBoards; i++) {
       attachInterrupt(digitalPinToInterrupt(ADCController::getDataReadyPin(adcBoards[i])), isrFunctions[i], FALLING);

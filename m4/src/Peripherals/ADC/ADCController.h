@@ -101,8 +101,8 @@ class ADCController {
         getChannelIndexFromGlobalIndex(channel_index));
   }
 
-  inline static float getDataReadyPin(int channel_index) {
-    return adc_boards[getBoardIndexFromGlobalIndex(channel_index)].getDataReadyPin();
+  inline static float getDataReadyPin(int board_index) {
+    return adc_boards[board_index].getDataReadyPin();
   }
 
   // args: num_channels, channel_indexes, total_duration_us
