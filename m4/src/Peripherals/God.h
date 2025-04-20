@@ -179,7 +179,7 @@ class God {
     }
 
     while ((x < saved_data_size || steps < numSteps) && !getStopFlag()) {
-      if (TimingUtil::dacFlag) {
+      if (TimingUtil::dacFlag && steps < numSteps) {
         #if !defined(__NEW_SHIELD__)
         PeripheralCommsController::beginDacTransaction();
         #endif
@@ -392,7 +392,7 @@ class God {
     TimingUtil::dacFlag = false;
 
     while (x < numSteps && !getStopFlag()) {
-      if (TimingUtil::dacFlag) {
+      if (TimingUtil::dacFlag && x < numSteps) {
         #if !defined(__NEW_SHIELD__)
         PeripheralCommsController::beginDacTransaction();
         #endif
