@@ -13,9 +13,23 @@ struct UserIOHandler {
     registerMemberFunction(id, "*IDN?");
     registerMemberFunction(rdy, "*RDY?");
     registerMemberFunction(serialNumber, "SERIAL_NUMBER");
+    registerMemberFunction(getEnvironment, "GET_ENVIRONMENT");
   }
 
   static OperationResult nop() { return OperationResult::Success("NOP"); }
+
+  static OperationResult getEnvironment() {
+    String env;
+    #if defined(__NEW_DAC_ADC__) && defined(__NEW_SHIELD__)
+    env = "NEW_HARDWARE";
+    #elif !defined(__NEW_DAC_ADC__) && defined(__NEW_SHIELD__)
+    env = "NEW_SHIELD_OLD_DAC_ADC";
+    #else
+    env = "OLD_HARDWARE";
+    #endif
+    return OperationResult::Success(env);
+  }
+
   static OperationResult id() {
     return OperationResult::Success("DAC-ADC_AD7734-AD5791");
   }
