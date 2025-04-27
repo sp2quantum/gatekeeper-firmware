@@ -165,11 +165,13 @@ class God {
     }
 
     DACController::toggleLdac();
+    steps++;
 
     for (int i = 0; i < numDacChannels; i++) {
       DACController::setVoltageNoTransactionNoLdac(dacChannels[i], nextVoltageSet[i]);
       nextVoltageSet[i] += voltageStepSize[i];
     }
+    steps++;
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
@@ -392,7 +394,7 @@ class God {
     TimingUtil::dacFlag = false;
 
     while (x < numSteps && !getStopFlag()) {
-      if (TimingUtil::dacFlag && x < numSteps) {
+      if (TimingUtil::dacFlag && x < numSteps - 1) {
         #if !defined(__NEW_SHIELD__)
         PeripheralCommsController::beginDacTransaction();
         #endif
@@ -595,6 +597,7 @@ class God {
     }
 
     DACController::toggleLdac();
+    steps++;
 
     TimingUtil::setupTimersTimeSeries(dacPeriod_us, actualConversionTime_us);
 

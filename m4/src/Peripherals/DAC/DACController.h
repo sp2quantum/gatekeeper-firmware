@@ -30,6 +30,7 @@ class DACController {
     registerMemberFunction(autoRamp1, "RAMP1");
     registerMemberFunction(autoRamp2, "RAMP2");
     registerMemberFunctionVector(autoRampN, "RAMP_N");
+    registerMemberFunction(toggleLdacTest, "TOGGLE_LDAC");
   }
 
   inline static void addChannel(int cs_pin) {
@@ -93,6 +94,11 @@ class DACController {
     }
 
     dac_channel.setVoltageNoTransactionNoLdac(voltage);
+  }
+
+  inline static OperationResult toggleLdacTest() {
+    toggleLdac();
+    return OperationResult::Success("LDAC TOGGLED");
   }
 
   inline static void toggleLdac() {
