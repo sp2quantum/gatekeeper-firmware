@@ -201,9 +201,9 @@ class DACController {
     // Store per-channel parameters with precomputed step size
     struct RampParams {
       int channel;
-      float v0;
-      float vf;
-      float stepSize;
+      double v0;
+      double vf;
+      double stepSize;
     };
     
     RampParams* rampParams = new RampParams[numDacs];
@@ -212,8 +212,8 @@ class DACController {
     for (int i = 0; i < numDacs; i++) {
       int baseIndex = 3 + i * 3;
       int ch = static_cast<int>(args[baseIndex]);
-      float v0 = args[baseIndex + 1];
-      float vf = args[baseIndex + 2];
+      double v0 = args[baseIndex + 1];
+      double vf = args[baseIndex + 2];
 
       // Validate channel index.
       if (!isChannelIndexValid(ch)) {
@@ -229,7 +229,7 @@ class DACController {
       }
       
       // Precompute step size
-      float stepSize = (vf - v0) / (numSteps - 1);
+      double stepSize = (vf - v0) / (numSteps - 1);
       rampParams[rampParamsCount++] = {ch, v0, vf, stepSize};
     }
 
@@ -237,7 +237,7 @@ class DACController {
     TimingUtil::setupTimerOnlyDac(settlingTime_us);
     
     // Store current voltages for each channel
-    float* currentVoltages = new float[rampParamsCount];
+    double* currentVoltages = new double[rampParamsCount];
     for (int i = 0; i < rampParamsCount; i++) {
       currentVoltages[i] = rampParams[i].v0;
     }

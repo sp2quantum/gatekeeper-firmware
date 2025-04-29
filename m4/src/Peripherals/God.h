@@ -113,13 +113,13 @@ class God {
 
     const int saved_data_size = numSteps * dac_interval_us / adc_interval_us;
 
-    float voltageStepSize[numDacChannels];
+    double voltageStepSize[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] = (dacVfs[i] - dacV0s[i]) / (numSteps - 1);
     }
 
-    float nextVoltageSet[numDacChannels];
+    double nextVoltageSet[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       nextVoltageSet[i] = dacV0s[i];
@@ -171,7 +171,6 @@ class God {
       DACController::setVoltageNoTransactionNoLdac(dacChannels[i], nextVoltageSet[i]);
       nextVoltageSet[i] += voltageStepSize[i];
     }
-    steps++;
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
@@ -182,16 +181,20 @@ class God {
 
     while ((x < saved_data_size || steps < numSteps) && !getStopFlag()) {
       if (TimingUtil::dacFlag && steps < numSteps) {
-        #if !defined(__NEW_SHIELD__)
-        PeripheralCommsController::beginDacTransaction();
-        #endif
-        for (int i = 0; i < numDacChannels; i++) {
-          DACController::setVoltageNoTransactionNoLdac(dacChannels[i], nextVoltageSet[i]);
-          nextVoltageSet[i] += voltageStepSize[i];
+        
+        if (steps < numSteps - 1) {
+          #if !defined(__NEW_SHIELD__)
+          PeripheralCommsController::beginDacTransaction();
+          #endif
+          for (int i = 0; i < numDacChannels; i++) {
+            DACController::setVoltageNoTransactionNoLdac(dacChannels[i], nextVoltageSet[i]);
+            nextVoltageSet[i] += voltageStepSize[i];
+          }
+          #if !defined(__NEW_SHIELD__)
+          PeripheralCommsController::endTransaction();
+          #endif
         }
-        #if !defined(__NEW_SHIELD__)
-        PeripheralCommsController::endTransaction();
-        #endif
+        
         steps++;
         TimingUtil::dacFlag = false;
       }
@@ -201,8 +204,7 @@ class God {
         #endif
         float packets[numAdcChannels];
         for (int i = 0; i < numAdcChannels; i++) {
-          float v = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-          packets[i] = v;
+          packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
         }
         #if !defined(__NEW_SHIELD__)
         PeripheralCommsController::endTransaction();
@@ -309,19 +311,19 @@ class God {
     float packets[numAdcChannels];
     int x = 0;
 
-    float voltageStepSize[numDacChannels];
+    double voltageStepSize[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] = (dacVfs[i] - dacV0s[i]) / (numSteps - 1);
     }
 
-    float nextVoltageSet[numDacChannels];
+    double nextVoltageSet[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       nextVoltageSet[i] = dacV0s[i];
     }
 
-    float numAdcAveragesInv = 1.0 / static_cast<float>(numAdcAverages);
+    double numAdcAveragesInv = 1.0 / static_cast<double>(numAdcAverages);
 
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
@@ -366,9 +368,6 @@ class God {
     adcMask = 1;
     #endif
 
-    // attachInterrupt(digitalPinToInterrupt(drdy[0]), TimingUtil::adcSyncISR, FALLING);
-
-
     // set initial DAC voltages
     for (int i = 0; i < numDacChannels; i++) {
       DACController::setVoltageNoTransactionNoLdac(dacChannels[i], dacV0s[i]);
@@ -412,12 +411,11 @@ class God {
         PeripheralCommsController::beginAdcTransaction();
         #endif
         for (int i = 0; i < numAdcChannels; i++) {
-          float total = 0.0;
+          double total = 0.0;
           for (int j = 0; j < numAdcAverages; j++) {
-          total += ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+            total += ADCController::getVoltageDataNoTransaction(adcChannels[i]);
           }
-          float v = total * numAdcAveragesInv;
-          packets[i] = v;
+          packets[i] =  total * numAdcAveragesInv;
         }
         #if !defined(__NEW_SHIELD__)
         PeripheralCommsController::endTransaction();
@@ -525,18 +523,18 @@ class God {
     setStopFlag(false);
     PeripheralCommsController::dataLedOn();
 
-    float voltageStepSizeLow[numDacChannels];
-    float voltageStepSizeHigh[numDacChannels];
+    double voltageStepSizeLow[numDacChannels];
+    double voltageStepSizeHigh[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSizeLow[i] =
-          (dacVf_1[i] - dacV0_1[i]) / static_cast<float>(numDacSteps - 1);
+          (dacVf_1[i] - dacV0_1[i]) / static_cast<double>(numDacSteps - 1);
       voltageStepSizeHigh[i] =
-          (dacVf_2[i] - dacV0_2[i]) / static_cast<float>(numDacSteps - 1);
+          (dacVf_2[i] - dacV0_2[i]) / static_cast<double>(numDacSteps - 1);
     }
 
-    float previousVoltageSetLow[numDacChannels];
-    float previousVoltageSetHigh[numDacChannels];
+    double previousVoltageSetLow[numDacChannels];
+    double previousVoltageSetHigh[numDacChannels];
 
     for (int i = 0; i < numDacChannels; i++) {
       previousVoltageSetLow[i] = dacV0_1[i];
@@ -585,7 +583,7 @@ class God {
     }
 
     for (int i = 0; i < numDacChannels; i++) {
-      float currentVoltage;
+      double currentVoltage;
       if (steps % 2 == 0) {
         currentVoltage = previousVoltageSetLow[i];
       } else {
@@ -609,9 +607,7 @@ class God {
           #endif
           float packets[numAdcChannels];
           for (int i = 0; i < numAdcChannels; i++) {
-            float v =
-                ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-            packets[i] = v;
+            packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
           }
           #if !defined(__NEW_SHIELD__)
           PeripheralCommsController::endTransaction();
@@ -627,7 +623,7 @@ class God {
         PeripheralCommsController::beginDacTransaction();
         #endif
         for (int i = 0; i < numDacChannels; i++) {
-          float currentVoltage;
+          double currentVoltage;
           if (steps % (2 * numAdcAverages) != 0) {
             if (steps % 2 == 0) {
               currentVoltage = previousVoltageSetLow[i];
