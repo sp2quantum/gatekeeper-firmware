@@ -202,7 +202,7 @@ class God {
         #if !defined(__NEW_SHIELD__)
         PeripheralCommsController::beginAdcTransaction();
         #endif
-        float packets[numAdcChannels];
+        double packets[numAdcChannels];
         for (int i = 0; i < numAdcChannels; i++) {
           packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
         }
@@ -308,7 +308,7 @@ class God {
       return OperationResult::Failure("Invalid number of channels");
     }
     
-    float packets[numAdcChannels];
+    double packets[numAdcChannels];
     int x = 0;
 
     double voltageStepSize[numDacChannels];
@@ -605,7 +605,7 @@ class God {
           #if !defined(__NEW_SHIELD__)
           PeripheralCommsController::beginAdcTransaction();
           #endif
-          float packets[numAdcChannels];
+          double packets[numAdcChannels];
           for (int i = 0; i < numAdcChannels; i++) {
             packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
           }

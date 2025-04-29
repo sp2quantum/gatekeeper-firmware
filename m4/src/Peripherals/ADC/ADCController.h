@@ -197,11 +197,11 @@ class ADCController {
     adc_boards[getBoardIndexFromGlobalIndex(adc_channel)].unsetRDYFN();
   }
 
-  inline static float getVoltageData(int adc_channel) {
+  inline static double getVoltageData(int adc_channel) {
     return ADC2DOUBLE(getConversionData(adc_channel));
   }
 
-  inline static float getVoltageDataNoTransaction(int adc_channel) {
+  inline static double getVoltageDataNoTransaction(int adc_channel) {
     return ADC2DOUBLE(adc_boards[getBoardIndexFromGlobalIndex(adc_channel)]
                           .getConversionDataNoTransaction(
                               getChannelIndexFromGlobalIndex(adc_channel)));

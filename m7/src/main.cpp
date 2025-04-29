@@ -62,9 +62,9 @@ void enableM4()
 }
 
 typedef union {
-  float floatingPoint;
-  byte binary[4];
-} binaryFloat;
+  double floatingDoublePoint;
+  byte binary[8];
+} binaryDouble;
 
 
 void setup()
@@ -139,15 +139,16 @@ void loop()
   }
   if (m7HasVoltageMessage())
   {
-    float response[VOLTAGE_BUFFER_SIZE];
+    double response[VOLTAGE_BUFFER_SIZE];
     size_t size;
     if (m7ReceiveVoltage(response, size))
     {
       for (size_t i = 0; i < size; ++i)
       {
-        binaryFloat send;
-        send.floatingPoint = response[i];
-        Serial.write(send.binary, 4);
+        binaryDouble send;
+        send.floatingDoublePoint = response[i];
+        Serial.write(send.binary, 8);
+        // Serial.println(response[i], 8);
       }
     }
   }

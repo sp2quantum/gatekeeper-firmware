@@ -229,18 +229,18 @@ static bool floatBufferHasMessage(FloatCircularBuffer* buffer) {
 }
 
 // ---------------------------------------------------------------------------
-//  Voltage buffer operations (unchanged from original)
+//  Voltage buffer operations
 // ---------------------------------------------------------------------------
 static bool voltageBufferSend(VoltageCircularBuffer* buffer,
-                              const float* data, size_t length) {
+                              const double* data, size_t length) {
   if (length > MAX_MESSAGE_SIZE) return false;
 
-  // How many float-slots are free?
+  // How many double-slots are free?
   uint32_t available_space =
       (buffer->read_index - buffer->write_index - 1 + VOLTAGE_BUFFER_SIZE) %
       VOLTAGE_BUFFER_SIZE;
 
-  // We do not store a "length" here; just push floats
+  // We do not store a "length" here; just push doubles
   if (length > available_space) return false;
 
   for (size_t i = 0; i < length; ++i) {
@@ -252,7 +252,7 @@ static bool voltageBufferSend(VoltageCircularBuffer* buffer,
 }
 
 static bool voltageBufferReceive(VoltageCircularBuffer* buffer,
-                                 float* data, size_t& length) {
+                                 double* data, size_t& length) {
   if (buffer->read_index == buffer->write_index) {
     length = 0;
     return false;
@@ -307,11 +307,11 @@ bool m4HasFloatMessage() {
 }
 
 // M4 voltage functions
-bool m4SendVoltage(const float* data, size_t length) {
+bool m4SendVoltage(const double* data, size_t length) {
   return voltageBufferSend(&shared_memory->m4_to_m7_voltage_buffer, data, length);
 }
 // Stub: not implemented in your original snippet
-bool m4ReceiveVoltage(float* data, size_t& length) {
+bool m4ReceiveVoltage(double* data, size_t& length) {
   length = 0;
   return false; // or implement properly if needed
 }
@@ -345,7 +345,7 @@ bool m7HasFloatMessage() {
 // ---------------------------------------------------------------------------
 //  M7 voltage functions
 // ---------------------------------------------------------------------------
-bool m7ReceiveVoltage(float* data, size_t& length) {
+bool m7ReceiveVoltage(double* data, size_t& length) {
   return voltageBufferReceive(&shared_memory->m4_to_m7_voltage_buffer, data, length);
 }
 bool m7HasVoltageMessage() {
