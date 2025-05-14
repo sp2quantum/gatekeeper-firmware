@@ -392,8 +392,13 @@ class God {
 
     TimingUtil::dacFlag = false;
 
+    int maxDiff = 0;
+
+    TimingUtil::dacIncrements++;
+    x = 0;
+
     while (x < numSteps && !getStopFlag()) {
-      if (TimingUtil::dacFlag && x < numSteps - 1) {
+      if (TimingUtil::dacFlag && TimingUtil::dacIncrements < numSteps) {
         #if !defined(__NEW_SHIELD__)
         PeripheralCommsController::beginDacTransaction();
         #endif
@@ -407,6 +412,7 @@ class God {
         TimingUtil::dacFlag = false;
       }
       if (TimingUtil::adcFlag == adcMask) {
+        x++;
         #if !defined(__NEW_SHIELD__)
         PeripheralCommsController::beginAdcTransaction();
         #endif
@@ -421,7 +427,13 @@ class God {
         PeripheralCommsController::endTransaction();
         #endif
         m4SendVoltage(packets, numAdcChannels);
-        x++;
+
+        int diff = TimingUtil::dacIncrements - x;
+        if (diff < 0) diff = -diff;
+        if (diff > maxDiff) {
+          maxDiff = diff;
+        }
+
         TimingUtil::adcFlag = 0;
       }
     }
@@ -447,6 +459,11 @@ class God {
     if (getStopFlag()) {
       setStopFlag(false);
       return OperationResult::Failure("RAMPING_STOPPED");
+    }
+
+    if (maxDiff > 1) {
+      String message = "DAC and ADC are not synchronized. maxDiff: " + String(maxDiff);
+      return OperationResult::Failure(message);
     }
 
     return OperationResult::Success();
