@@ -24,9 +24,10 @@ class DACController {
         initialize, "INNIT");  // oi bruv u got a loicense for that DAC? 🇬🇧
     registerMemberFunction(setVoltage, "SET");
     registerMemberFunction(getVoltage, "GET_DAC");
-    registerMemberFunction(sendCode, "SEND_CODE");
+    registerMemberFunction(sendCode, "SET_DAC_CODE");
     registerMemberFunction(setFullScale, "FULL_SCALE");
     registerMemberFunction(inquiryOSG, "INQUIRY_OSG");
+    registerMemberFunction(setOSG, "SET_OSG");
     registerMemberFunction(autoRamp1, "RAMP1");
     registerMemberFunction(autoRamp2, "RAMP2");
     registerMemberFunctionVector(autoRampN, "RAMP_N");
@@ -113,6 +114,16 @@ class DACController {
     }
     return OperationResult::Success(
         String(dac_channels[channel_index].getVoltage(), 6));
+  }
+
+  inline static OperationResult setOSG(int channel_index, float offset, float gain) {
+    if (!isChannelIndexValid(channel_index)) {
+      return OperationResult::Failure("Invalid channel index " +
+                                      String(channel_index));
+    }
+    setCalibration(channel_index, offset, gain);
+
+    return OperationResult::Success("OSG SET FOR DAC " + String(channel_index));
   }
 
   inline static void setCalibration(int channel_index, float offset,
