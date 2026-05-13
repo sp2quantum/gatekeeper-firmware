@@ -21,7 +21,8 @@ CALIBRATION_UPLOAD_TIMEOUT_S = 10
 CALIBRATION_VERIFY_TIMEOUT_S = 10
 FLOAT_VERIFY_ABS_TOL = 1e-6
 ADC_CHANNEL_COUNT = 8
-MAX_DAC_CALIBRATION_RESPONSE_CHANNELS = 16
+DAC_CHANNEL_COUNT = 8
+SUPPORTED_ENVIRONMENT = "GATEKEEPER"
 SERIAL_PATTERN = re.compile(r"DA_\d{4}_.{3}$")
 NO_CALIBRATION_UPLOAD_SERIAL_PATTERN = re.compile(r"DA_\d{4}____$")
 SERIAL_MARKER = b"__SERIAL_NUMBER__"
@@ -31,10 +32,9 @@ DEFAULT_CALIBRATION_BACKUP_DIR_NAME = "calibration_backups"
 DEFAULT_CALIBRATION_PATH = Path("calibration_data.json")
 POST_FLASH_PORT_RETRY_COUNT = 30
 
-M4_ENVIRONMENT_MAP = {
-    "giga_r1_m4_old_hardware": "OLD_HARDWARE",
-    "giga_r1_m4_new_hardware": "NEW_HARDWARE",
-    "giga_r1_m4_new_shield_old_dac_adc": "NEW_SHIELD_OLD_DAC_ADC",
+M4_ENVIRONMENTS = {
+    "gatekeeper_m4_usb_gateway",
+    "gatekeeper_m4_usb_gateway_stlink",
 }
 
 
@@ -127,7 +127,7 @@ KNOWN_GIGA_VIDS_PIDS = {
 
 
 def is_m4_project(env):
-    return env.subst("$PIOENV") in M4_ENVIRONMENT_MAP
+    return env.subst("$PIOENV") in M4_ENVIRONMENTS
 
 
 def parse_vid_pid_from_hwid(hwid):
@@ -327,11 +327,9 @@ def wait_for_giga_port(expected_serial_number=None):
 
 
 def get_dac_channel_count_for_environment(environment):
-    if environment == "OLD_HARDWARE":
-        return 4
-    if environment in ("NEW_HARDWARE", "NEW_SHIELD_OLD_DAC_ADC"):
-        return 8
-    raise RuntimeError(f"Unknown device environment '{environment}'.")
+    if environment != SUPPORTED_ENVIRONMENT:
+        raise RuntimeError(f"Unsupported device environment '{environment}'.")
+    return DAC_CHANNEL_COUNT
 
 
 def read_float_stream(ser, expected_count):
@@ -352,7 +350,7 @@ def read_float_stream(ser, expected_count):
 
 def read_dac_float_stream(ser, active_dac_channel_count):
     min_count = active_dac_channel_count * 2
-    max_count = MAX_DAC_CALIBRATION_RESPONSE_CHANNELS * 2
+    max_count = DAC_CHANNEL_COUNT * 2
     values = []
     deadline = time.monotonic() + SERIAL_TIMEOUT_S
 
@@ -656,6 +654,11 @@ def backup_device_state(port):
 
         wait_for_ready(ser)
         source_environment = send_command(ser, "GET_ENVIRONMENT")
+        if source_environment != SUPPORTED_ENVIRONMENT:
+            return {
+                "skip": True,
+                "skip_reason": f"unsupported_environment_{source_environment}",
+            }
         serial_number = send_command(ser, "SERIAL_NUMBER")
         firmware_version = send_command(ser, "GET_FIRMWARE_VERSION")
         device_id = send_command(ser, "*IDN?")
@@ -751,7 +754,6 @@ def delete_state(env):
 
 
 def run_pre_upload(env):
-    pioenv = env.subst("$PIOENV")
     port = find_giga_port(env)
     if port is None:
         raise RuntimeError("Arduino GIGA not found before upload.")
@@ -790,11 +792,10 @@ def run_pre_upload(env):
     )
 
     if is_m4_project(env):
-        expected_environment = M4_ENVIRONMENT_MAP[pioenv]
-        if state["source_environment"] != expected_environment:
+        if state["source_environment"] != SUPPORTED_ENVIRONMENT:
             raise RuntimeError(
                 f"Connected board environment {state['source_environment']} "
-                f"does not match selected PlatformIO environment {expected_environment}."
+                f"does not match selected PlatformIO environment {SUPPORTED_ENVIRONMENT}."
             )
 
     binary_path = get_binary_path(env)

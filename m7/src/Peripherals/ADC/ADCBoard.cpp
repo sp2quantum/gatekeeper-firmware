@@ -10,9 +10,7 @@
       count = count + 1;
       delay(1);
     }
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, false);
-    #endif
   }
 
 
@@ -41,7 +39,6 @@
     delay(5);
     FastGpio::digitalWrite(reset_pin, true);
 
-    #ifdef __NEW_DAC_ADC__
     pinMode(adc_sync, OUTPUT);
     FastGpio::digitalWrite(adc_sync, false);
 
@@ -50,7 +47,6 @@
     data[0] = WRITE | ADDR_IO;
     data[1] = 0b00010001;
     commsController.transferADC(data, 2);
-    #endif
   }
 
 
@@ -215,13 +211,9 @@
     data[0] = WRITE | ADDR_MODE(adc_channel);
     // setup mode register
     data[1] = SINGLE_CONV_MODE;
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, false);
-    #endif
     commsController.transferADC(data, 2);
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, true);
-    #endif
 
     // data is ready when _rdy goes low
   }
@@ -398,12 +390,10 @@
     }
 
     //Set I/O Register such that P1 bit is set as input and SYNC pin function is enabled
-    #ifdef __NEW_DAC_ADC__
     byte data[2];
     data[0] = WRITE | ADDR_IO;
     data[1] = 0b00010001;
     commsController.transferADC(data, 2);
-    #endif
 
     restoreCalibrationFromFlash();
   }
@@ -542,9 +532,7 @@
     byte data[2];
     data[0] = WRITE | ADDR_MODE(0);  // channel is zero but this is system-wide
     data[1] = ZERO_SCALE_SELF_CAL_MODE;
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, true);
-    #endif
     commsController.transferADC(data, 2);
     waitDataReady();
   }
@@ -555,9 +543,7 @@
     byte data[2];
     data[0] = WRITE | ADDR_MODE(channel);
     data[1] = CH_ZERO_SCALE_SYS_CAL_MODE;
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, true);
-    #endif
     commsController.transferADC(data, 2);
     waitDataReady();
 
@@ -579,9 +565,7 @@
     byte data[2];
     data[0] = WRITE | ADDR_MODE(channel);
     data[1] = CH_FULL_SCALE_SYS_CAL_MODE;
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, true);
-    #endif
     commsController.transferADC(data, 2);
     waitDataReady();
 

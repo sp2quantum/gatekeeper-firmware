@@ -7,7 +7,6 @@ namespace {
 constexpr int kMaxDacChannels = NUM_DAC_CHANNELS;
 constexpr int kMaxAdcChannels = NUM_ADC_BOARDS * NUM_CHANNELS_PER_ADC_BOARD;
 
-#ifdef __NEW_DAC_ADC__
 using AdcIsr = void (*)();
 
 AdcIsr kAdcSyncIsrFunctions[] = {
@@ -39,7 +38,6 @@ uint8_t adcMaskForBoardUsage(const God::BoardUsage& boardUsage) {
   }
   return adcMask;
 }
-#endif
 
 bool isValidDacChannelCount(int count) {
   return count >= 1 && count <= kMaxDacChannels;
@@ -102,7 +100,6 @@ OperationResult validateAdcChannels(const int* channels, int count) {
   return OperationResult::Success();
 }
 
-#ifdef __NEW_DAC_ADC__
 OperationResult validateDacLedBufferRampTiming(
     int numAdcChannels, uint32_t dacIntervalUs, uint32_t dacSettlingTimeUs,
     const int* adcChannels) {
@@ -163,7 +160,6 @@ OperationResult validateDacLedBufferRampTiming(
 
   return OperationResult::Success();
 }
-#endif
 
 bool sendVoltageFrame(const double* packets, size_t length) {
   if (sendVoltageFrameToGateway(packets, length)) {
@@ -202,10 +198,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 }
 
   void God::setup() {
-    #ifdef __NEW_SHIELD__
     pinMode(GPIO_0, OUTPUT);
     FastGpio::digitalWrite(GPIO_0, false);
-    #endif
     initializeRegistry();
   }
 
@@ -350,11 +344,9 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
 
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, false); //Set the sync pin low to prevent ADCs from triggering
     BoardUsage boardUsage = getUsedBoards(adcChannels, numAdcChannels);
     attachAdcSyncInterrupts(boardUsage);
-    #endif
 
     // reset all ADCs before ramp
     ADCController::resetToPreviousConversionTimes();
@@ -362,18 +354,12 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     // Start continous conversion for each ADC channel
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::setRDYFN(adcChannels[i]);
-      #endif
     }
 
     // initialize ADC mask
     uint8_t adcMask = 0u;
-    #ifdef __NEW_DAC_ADC__
     adcMask = adcMaskForBoardUsage(boardUsage);
-    #else
-    adcMask = 1;
-    #endif
 
     // Set up timers for ADC sampling
     TimingUtil::setupTimersOnlyADC(sample_rate);
@@ -398,9 +384,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
         x++;
         TimingUtil::adcFlag = 0;
 
-        #ifdef __NEW_DAC_ADC__
         FastGpio::digitalWrite(adc_sync, false);
-        #endif
       }
     }
 
@@ -411,18 +395,14 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     // Set the ADCs into idle mode and unset the readyfnc bit (this allows single channel ADC conversions -- ready flag goes high after any ADC has unread data)
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::unsetRDYFN(adcChannels[i]);
-      #endif
     }
 
     // reset all ADCs after ramp
     ADCController::resetToPreviousConversionTimes();
 
     //Detach hardware interrupt for ready pin on ADCs
-    #ifdef __NEW_DAC_ADC__
     detachAdcSyncInterrupts(boardUsage);
-    #endif
 
     PeripheralCommsController::dataLedOff();
 
@@ -566,7 +546,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     adcMask = 0u;
     boardUsage = BoardUsage{0, std::vector<uint8_t>()};
 
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, false);
 
     // Prevent user from setting the DAC update rate too fast.
@@ -615,16 +594,11 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     boardUsage = getUsedBoards(adcChannels, numAdcChannels);
     attachAdcSyncInterrupts(boardUsage);
     adcMask = adcMaskForBoardUsage(boardUsage);
-    #else
-    adcMask = 1;
-    #endif
 
     ADCController::resetToPreviousConversionTimes();
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::setRDYFN(adcChannels[i]);
-      #endif
     }
 
     TimingUtil::setupTimersTimeSeries(dac_interval_us, adc_interval_us);
@@ -666,9 +640,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       nextVoltageSet[i] += voltageStepSize[i];
     }
     steps++;
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, false);
-    #endif
     TimingUtil::dacFlag = false;
     TimingUtil::adcFlag = 0;
 
@@ -698,9 +670,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
           break;
         }
 
-        #ifdef __NEW_DAC_ADC__
         FastGpio::digitalWrite(adc_sync, false);
-        #endif
 
         x++;
         TimingUtil::adcFlag = 0;
@@ -731,16 +701,12 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::unsetRDYFN(adcChannels[i]);
-      #endif
     }
 
     ADCController::resetToPreviousConversionTimes();
 
-    #ifdef __NEW_DAC_ADC__
     detachAdcSyncInterrupts(boardUsage);
-    #endif
   }
 
 
@@ -880,7 +846,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     ADCController::resetToPreviousConversionTimes();
 
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, false);
 
     OperationResult timingValidation = validateDacLedBufferRampTiming(
@@ -894,15 +859,10 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     attachAdcSyncInterrupts(boardUsage);
     adcMask = adcMaskForBoardUsage(boardUsage);
-    #else
-    adcMask = 1;
-    #endif
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::setRDYFN(adcChannels[i]);
-      #endif
     }
 
     TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us);
@@ -943,9 +903,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       nextVoltageSet[i] += voltageStepSize[i];
     }
     dacIncrements++;
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, false);
-    #endif
     int maxDiff = 0;
     int x = 0;
     bool voltageOverflow = false;
@@ -954,9 +912,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       __WFE();
 
       if (TimingUtil::dacFlag && dacIncrements < numSteps) {
-        #ifdef __NEW_SHIELD__
         FastGpio::digitalWrite(GPIO_0, false);
-        #endif
         for (int i = 0; i < numDacChannels; i++) {
           if (!DACController::setVoltageNoTransactionNoLdac(
                   dacChannels[i], nextVoltageSet[i])) {
@@ -968,9 +924,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
         dacIncrements++;
       }
       if (TimingUtil::adcFlag == adcMask) {
-        #ifdef __NEW_SHIELD__
         FastGpio::digitalWrite(GPIO_0, true);
-        #endif
         x++;
         for (int i = 0; i < numAdcChannels; i++) {
           double total = 0.0;
@@ -989,9 +943,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
         if (diff > maxDiff) {
           maxDiff = diff;
         }
-        #ifdef __NEW_DAC_ADC__
         FastGpio::digitalWrite(adc_sync, false);
-        #endif
         TimingUtil::adcFlag = 0;
       }
     }
@@ -1026,14 +978,10 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::unsetRDYFN(adcChannels[i]);
-      #endif
     }
 
-    #ifdef __NEW_DAC_ADC__
     detachAdcSyncInterrupts(boardUsage);
-    #endif
 
     ADCController::resetToPreviousConversionTimes();
   }
@@ -1195,7 +1143,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
   
       ADCController::resetToPreviousConversionTimes();
   
-      #ifdef __NEW_DAC_ADC__
       FastGpio::digitalWrite(adc_sync, false);
   
       BoardUsage boardUsage = getUsedBoards(adcChannels, numAdcChannels);
@@ -1217,7 +1164,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       }
   
       attachAdcSyncInterrupts(boardUsage);
-      #endif
   
       // Initialize timing flags
       TimingUtil::dacFlag = false;
@@ -1251,9 +1197,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       // Start ADC continuous conversion
       for (int i = 0; i < numAdcChannels; i++) {
         ADCController::startContinuousConversion(adcChannels[i]);
-        #ifdef __NEW_DAC_ADC__
         ADCController::setRDYFN(adcChannels[i]);
-        #endif
       }
   
       // Setup timers for DAC and ADC events
@@ -1315,9 +1259,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
             voltageOverflow = true;
           }
           
-          #ifdef __NEW_DAC_ADC__
           FastGpio::digitalWrite(adc_sync, false);
-          #endif
           TimingUtil::adcFlag = 0;
           currentAdcReads++;
           currentLoop++; // Each ADC read marks completion of one loop
@@ -1333,14 +1275,10 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       // Clean up
       for (int i = 0; i < numAdcChannels; i++) {
         ADCController::idleMode(adcChannels[i]);
-        #ifdef __NEW_DAC_ADC__
         ADCController::unsetRDYFN(adcChannels[i]);
-        #endif
       }
   
-      #ifdef __NEW_DAC_ADC__
       detachAdcSyncInterrupts(boardUsage);
-      #endif
   
       ADCController::resetToPreviousConversionTimes();
       PeripheralCommsController::dataLedOff();
@@ -1572,12 +1510,10 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       }
     }
 
-    #ifdef __NEW_DAC_ADC__
       FastGpio::digitalWrite(adc_sync, false);
 
       BoardUsage boardUsage = getUsedBoards(adcChannels, numAdcChannels);
       attachAdcSyncInterrupts(boardUsage);
-      #endif
 
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
@@ -1590,9 +1526,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     // Start ADC continuous conversion
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::setRDYFN(adcChannels[i]);
-      #endif
     }
 
     // Apply initial step
@@ -1601,15 +1535,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       DACController::setVoltageNoTransactionNoLdac(dacChannels[i], v0);
     }
 
-    #ifdef __NEW_DAC_ADC__
-    // New hardware: DAC timer only, ADC triggered by data_ready interrupt
+    // DAC timer only; ADC is triggered by data_ready interrupts.
     TimingUtil::setupTimerOnlyDac(dac_interval_us);
-    #else
-    // Old hardware: Need both DAC and ADC timers since no data_ready interrupt
-    // Use ADC conversion time as ADC interval
-    uint32_t adc_interval_us = static_cast<uint32_t>(ADCController::getConversionTimeFloat(adcChannels[0])) + 50;
-    TimingUtil::setupTimersTimeSeries(dac_interval_us, adc_interval_us);
-    #endif
     TimingUtil::dacFlag = false;
     TimingUtil::adcFlag = 0;
 
@@ -1628,17 +1555,13 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
                                                 static_cast<size_t>(step)];
             DACController::setVoltageNoTransactionNoLdac(dacChannels[i], v);
           }
-          #ifdef __NEW_DAC_ADC__
           FastGpio::digitalWrite(adc_sync, true);
-          #endif
           step++;
         }
 
         if (TimingUtil::adcFlag) {
           // Read ADC channels (data already converted, just read it)
-          #ifdef __NEW_DAC_ADC__
           FastGpio::digitalWrite(adc_sync, false);
-          #endif
           for (int i = 0; i < numAdcChannels; i++) {
             packets[i] = ADCController::getVoltageData(adcChannels[i]);
           }
@@ -1654,23 +1577,16 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     TimingUtil::disableDacInterrupt();
-    #ifndef __NEW_DAC_ADC__
-    TimingUtil::disableAdcInterrupt();  // Old hardware uses TIM8 for ADC
-    #endif
     TimingUtil::dacFlag = false;
     PeripheralCommsController::dataLedOff();
 
     // Stop continuous conversion
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::unsetRDYFN(adcChannels[i]);
-      #endif
     }
 
-    #ifdef __NEW_DAC_ADC__
     detachAdcSyncInterrupts(boardUsage);
-    #endif
 
     ADCController::resetToPreviousConversionTimes();
 
@@ -1731,7 +1647,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     ADCController::resetToPreviousConversionTimes();
 
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, false);
 
     BoardUsage boardUsage = getUsedBoards(adcChannels, numAdcChannels);
@@ -1753,7 +1668,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     attachAdcSyncInterrupts(boardUsage);
-    #endif
 
     // Initialize timing flags
     TimingUtil::dacFlag = false;
@@ -1775,9 +1689,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     // Start ADC continuous conversion
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::startContinuousConversion(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::setRDYFN(adcChannels[i]);
-      #endif
     }
 
     // Setup timers for DAC and ADC events
@@ -1823,9 +1735,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
           voltageOverflow = true;
         }
         
-        #ifdef __NEW_DAC_ADC__
         FastGpio::digitalWrite(adc_sync, false);
-        #endif
         TimingUtil::adcFlag = 0;
         currentAdcReads++;
         currentLoop++; // Each ADC read marks completion of one loop
@@ -1841,14 +1751,10 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     // Clean up
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::unsetRDYFN(adcChannels[i]);
-      #endif
     }
 
-    #ifdef __NEW_DAC_ADC__
     detachAdcSyncInterrupts(boardUsage);
-    #endif
 
     ADCController::resetToPreviousConversionTimes();
     PeripheralCommsController::dataLedOff();
@@ -2034,19 +1940,13 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       previousVoltageSetHigh[i] = dacV0_2[i];
     }
 
-    #ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, false);
 
     BoardUsage boardUsage = getUsedBoards(adcChannels, numAdcChannels);
     attachAdcSyncInterrupts(boardUsage);
-    #endif
 
     uint8_t adcMask = 0u;
-    #ifdef __NEW_DAC_ADC__
     adcMask = adcMaskForBoardUsage(boardUsage);
-    #else
-    adcMask = 1;
-    #endif
 
     int steps = 0;
     int totalSteps = 2 * numDacSteps * numAdcAverages;
@@ -2057,9 +1957,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     for (int i = 0; i < numAdcChannels; ++i) {
       ADCController::startContinuousConversion(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::setRDYFN(adcChannels[i]);
-      #endif
     }
 
     for (int i = 0; i < numDacChannels; i++) {
@@ -2128,14 +2026,10 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     for (int i = 0; i < numAdcChannels; i++) {
       ADCController::idleMode(adcChannels[i]);
-      #ifdef __NEW_DAC_ADC__
       ADCController::unsetRDYFN(adcChannels[i]);
-      #endif
     }
 
-    #ifdef __NEW_DAC_ADC__
     detachAdcSyncInterrupts(boardUsage);
-    #endif
 
     PeripheralCommsController::dataLedOff();
 

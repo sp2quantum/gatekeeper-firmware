@@ -33,7 +33,7 @@ M4_ADDRESS = "0x08100000"
 M7_ADDRESS = "0x08040000"
 M7_LEAVE_ADDRESS = f"{M7_ADDRESS}:leave"
 
-M4_FIRMWARE_NAME = "firmwareM4_new_hardware.bin"
+M4_FIRMWARE_NAME = "firmwareM4.bin"
 M7_FIRMWARE_NAME = "firmwareM7.bin"
 
 

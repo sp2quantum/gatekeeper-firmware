@@ -9,12 +9,11 @@ Import("env")
 def _bundle_command(build_only=False, clean_only=False):
     project_dir = Path(env.subst("$PROJECT_DIR"))
     script_path = project_dir / "platformio_tools" / "usb_bundle_upload.py"
-    hardware = env.GetProjectOption("custom_gatekeeper_hardware")
     command = [
         env.subst("$PYTHONEXE"),
         str(script_path),
-        "--hardware",
-        hardware,
+        "--root-build-name",
+        env.subst("$PIOENV"),
     ]
     if build_only:
         command.append("--build-only")
@@ -61,7 +60,7 @@ env.AddCustomTarget(
     dependencies=None,
     actions=[_run_bundle_build],
     title="Build GateKeeper firmware bundle",
-    description="Build USB gateway M4 and selected worker M7 firmware.",
+    description="Build USB gateway M4 and worker M7 firmware.",
 )
 
 env.AddCustomTarget(
@@ -69,5 +68,5 @@ env.AddCustomTarget(
     dependencies=None,
     actions=[_run_bundle_clean],
     title="Clean GateKeeper firmware bundle",
-    description="Clean USB gateway M4 and selected worker M7 firmware builds.",
+    description="Clean USB gateway M4 and worker M7 firmware builds.",
 )

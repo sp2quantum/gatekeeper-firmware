@@ -37,18 +37,16 @@ The firmware is designed to be easily extensible, as new peripherals can simply 
 
 You can also build/upload from source:
 
-This firmware has one root PlatformIO upload entrypoint plus separate M4 and M7 core projects. For normal development uploads, run one of these from the repo root:
+This firmware has one root PlatformIO entrypoint plus separate M4 and M7 core projects. The root default environment is `gatekeeper_firmware`, so normal development uploads do not need an explicit `-e` selection. From the repo root, run:
 
 ```sh
-pio run -e new_hardware -t upload
-pio run -e old_hardware -t upload
-pio run -e new_shield_old_dac_adc -t upload
+pio run -t upload
 ```
 
-Each command uploads the complete firmware bundle over USB DFU: USB gateway M4, then the selected worker M7 firmware. To build the same bundle without uploading, use:
+This uploads the complete firmware bundle over USB DFU: USB gateway M4, then worker M7 firmware. To build the same bundle without uploading, use:
 
 ```sh
-pio run -e new_hardware
+pio run
 ```
 
 The `m4/` and `m7/` folders remain normal PlatformIO projects for core-specific development and debugging.
@@ -151,12 +149,6 @@ This is an example for how ADC voltages are collected and transmitted to LabRAD 
 A `VoltagePacket` is simply a float that is transmitted to LabRAD over serial as four bytes, most significant bit first. This is significantly faster than printing to serial the voltage float converted to a char array, which is why we use this in buffer ramps. Technically, this is one extra byte than in the old firmware, which sent raw DAC data and had LabRAD calculate the voltage. Since we have async data transfer now, we don't need to worry about this extra byte --the added simplicity is worth it.
 
 ### Buffer Ramps
-
-#### Boxcar Buffer Ramp Notes
-
-On old hardware, boxcar ramps may have ADCs convert before DAC updates, then read converted data after DAC update, making it appear as if data is after DAC conversion when it may not be
-
-- Workaround: the function allows you to add ADC conversion skips. Adding one skip guarantees that all collected data is within the current DAC period, but data is slightly delayed after DAC update.
 
 ## License
 

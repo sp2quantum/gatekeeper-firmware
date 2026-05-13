@@ -7,8 +7,6 @@
       "command": "pio",
       "args": [
         "run",
-        "-e",
-        "${input:gatekeeperEnvironment}",
         "-t",
         "upload"
       ],
@@ -24,9 +22,7 @@
       "type": "process",
       "command": "pio",
       "args": [
-        "run",
-        "-e",
-        "${input:gatekeeperEnvironment}"
+        "run"
       ],
       "group": "build",
       "problemMatcher": "$gcc",
@@ -42,8 +38,6 @@
       "command": "pio",
       "args": [
         "run",
-        "-e",
-        "${input:gatekeeperEnvironment}",
         "-t",
         "clean"
       ],
@@ -59,9 +53,7 @@
       "type": "process",
       "command": "python3",
       "args": [
-        "platformio_tools/update_compile_commands.py",
-        "--hardware",
-        "${input:gatekeeperEnvironment}"
+        "platformio_tools/update_compile_commands.py"
       ],
       "problemMatcher": [],
       "presentation": {
@@ -69,19 +61,6 @@
         "panel": "shared",
         "clear": true
       }
-    }
-  ],
-  "inputs": [
-    {
-      "id": "gatekeeperEnvironment",
-      "type": "pickString",
-      "description": "GateKeeper firmware target",
-      "default": "new_hardware",
-      "options": [
-        "new_hardware",
-        "old_hardware",
-        "new_shield_old_dac_adc"
-      ]
     }
   ]
 }

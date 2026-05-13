@@ -273,23 +273,13 @@ extern "C" void TIM1_UP_IRQHandler(void) {
 extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
-#ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, true);
-#else
-    TimingUtil::adcFlag = true;
-    __SEV();
-#endif
   }
 }
 
 extern "C" void TIM8_CC_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_CC1IF) {
     TIM8->SR &= ~TIM_SR_CC1IF;
-#ifdef __NEW_DAC_ADC__
     FastGpio::digitalWrite(adc_sync, true);
-#else
-    TimingUtil::adcFlag = true;
-    __SEV();
-#endif
   }
 }

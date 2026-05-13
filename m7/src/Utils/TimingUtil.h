@@ -19,11 +19,9 @@ struct TimingUtil {
   static void disableDacInterrupt();
   static void disableAdcInterrupt();
 
-#ifdef __NEW_DAC_ADC__
   template <int boardIndex>
   static void adcSyncISR() {
     adcFlag |= 1 << boardIndex;
     __SEV();
   }
-#endif
 };

@@ -42,15 +42,7 @@ OperationResult UserIOHandler::nop() {
 }
 
 OperationResult UserIOHandler::getEnvironment() {
-  String env;
-#if defined(__NEW_DAC_ADC__) && defined(__NEW_SHIELD__)
-  env = "NEW_HARDWARE";
-#elif !defined(__NEW_DAC_ADC__) && defined(__NEW_SHIELD__)
-  env = "NEW_SHIELD_OLD_DAC_ADC";
-#else
-  env = "OLD_HARDWARE";
-#endif
-  return OperationResult::Success(env);
+  return OperationResult::Success("GATEKEEPER");
 }
 
 OperationResult UserIOHandler::id() {

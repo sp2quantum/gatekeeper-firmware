@@ -27,10 +27,8 @@ void ADCController::resetToPreviousConversionTimes() {
 }
 
 void ADCController::setup() {
-#ifdef __NEW_DAC_ADC__
   pinMode(adc_sync, OUTPUT);
   FastGpio::digitalWrite(adc_sync, false);
-#endif
 
   initializeRegistry();
   for (auto& board : adc_boards) {
@@ -109,12 +107,10 @@ OperationResult ADCController::readChannelVoltage(int channel_index) {
   return OperationResult::Failure("Invalid channel index");
 }
 
-#ifdef __NEW_DAC_ADC__
 void ADCController::toggleSync() {
   FastGpio::digitalWrite(adc_sync, true);
   FastGpio::digitalWrite(adc_sync, false);
 }
-#endif
 
 float ADCController::getVoltage(int channel_index) {
   return adc_boards[getBoardIndexFromGlobalIndex(channel_index)].readVoltage(

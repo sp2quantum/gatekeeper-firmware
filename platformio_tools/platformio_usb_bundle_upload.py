@@ -44,5 +44,5 @@ env.AddCustomTarget(
     dependencies=[env.subst("$BUILD_DIR/${PROGNAME}.bin")],
     actions=[_usb_bundle_upload],
     title="GateKeeper firmware bundle upload",
-    description="Upload USB gateway M4 and selected worker M7 through USB DFU.",
+    description="Upload USB gateway M4 and worker M7 through USB DFU.",
 )

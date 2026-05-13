@@ -15,34 +15,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 M4_PROJECT_DIR = ROOT_DIR / "m4"
 M7_PROJECT_DIR = ROOT_DIR / "m7"
 
-DEFAULT_HARDWARE_VARIANT = "new_hardware"
+DEFAULT_ROOT_BUILD_NAME = "gatekeeper_firmware"
 DEFAULT_M4_ENV = "gatekeeper_m4_usb_gateway"
-DEFAULT_M7_ENV = "gatekeeper_new_hardware"
-
-HARDWARE_VARIANTS = {
-    "new_hardware": {
-        "m4_env": DEFAULT_M4_ENV,
-        "m7_env": "gatekeeper_new_hardware",
-        "environment": "NEW_HARDWARE",
-    },
-    "old_hardware": {
-        "m4_env": DEFAULT_M4_ENV,
-        "m7_env": "gatekeeper_old_hardware",
-        "environment": "OLD_HARDWARE",
-    },
-    "new_shield_old_dac_adc": {
-        "m4_env": DEFAULT_M4_ENV,
-        "m7_env": "gatekeeper_new_shield_old_dac_adc",
-        "environment": "NEW_SHIELD_OLD_DAC_ADC",
-    },
-}
-
-M7_ENVIRONMENT_MAP = {
-    "giga_r1_m7": "NEW_HARDWARE",
-    "gatekeeper_new_hardware": "NEW_HARDWARE",
-    "gatekeeper_old_hardware": "OLD_HARDWARE",
-    "gatekeeper_new_shield_old_dac_adc": "NEW_SHIELD_OLD_DAC_ADC",
-}
+DEFAULT_M7_ENV = "gatekeeper_m7_worker"
+EXPECTED_ENVIRONMENT = "GATEKEEPER"
 
 ARDUINO_GIGA_DFU_DEVICE_ID = "2341:0366"
 M7_ADDRESS = "0x08040000"
@@ -170,26 +146,22 @@ def firmware_bin(project_dir, pioenv, build_dir=None):
 
 
 def resolve_upload_selection(args):
-    if args.hardware is None and args.m4_env is None and args.m7_env is None:
-        args.hardware = DEFAULT_HARDWARE_VARIANT
-
-    expected_environment = None
-    if args.hardware is not None:
-        variant = HARDWARE_VARIANTS[args.hardware]
-        args.m4_env = args.m4_env or variant["m4_env"]
-        args.m7_env = args.m7_env or variant["m7_env"]
-        expected_environment = variant["environment"]
-
     args.m4_env = args.m4_env or DEFAULT_M4_ENV
     args.m7_env = args.m7_env or DEFAULT_M7_ENV
-    return expected_environment or M7_ENVIRONMENT_MAP.get(args.m7_env)
+    if (
+        args.root_build_name is None
+        and args.m4_env == DEFAULT_M4_ENV
+        and args.m7_env == DEFAULT_M7_ENV
+    ):
+        args.root_build_name = DEFAULT_ROOT_BUILD_NAME
+    return EXPECTED_ENVIRONMENT
 
 
 def bundle_build_dirs(args):
-    if args.hardware is None:
+    if args.root_build_name is None:
         return None, None
 
-    root_build_dir = ROOT_DIR / ".pio" / "build" / args.hardware
+    root_build_dir = ROOT_DIR / ".pio" / "build" / args.root_build_name
     return (
         root_build_dir / "m4",
         root_build_dir / "m7",
@@ -203,7 +175,7 @@ def build_bundle(args):
             build_platformio_env(M4_PROJECT_DIR, args.m4_env, m4_build_dir)
         if not args.skip_real_m7_build:
             build_platformio_env(M7_PROJECT_DIR, args.m7_env, real_m7_build_dir)
-        refresh_intellisense(args.hardware)
+        refresh_intellisense()
 
     m4_bin = firmware_bin(M4_PROJECT_DIR, args.m4_env, m4_build_dir)
     real_m7_bin = firmware_bin(M7_PROJECT_DIR, args.m7_env, real_m7_build_dir)
@@ -216,10 +188,7 @@ def clean_bundle(args):
     clean_platformio_env(M7_PROJECT_DIR, args.m7_env, real_m7_build_dir)
 
 
-def refresh_intellisense(hardware):
-    if hardware is None:
-        return
-
+def refresh_intellisense():
     script_path = ROOT_DIR / "platformio_tools" / "update_compile_commands.py"
     if not script_path.exists():
         return
@@ -229,9 +198,6 @@ def refresh_intellisense(hardware):
             [
                 sys.executable,
                 str(script_path),
-                "--hardware",
-                hardware,
-                "--no-compiledb",
             ]
         )
     except subprocess.CalledProcessError as exc:
@@ -347,16 +313,13 @@ def parse_args():
         )
     )
     parser.add_argument(
-        "--hardware",
-        choices=sorted(HARDWARE_VARIANTS),
-        help=(
-            "GateKeeper hardware variant to build and upload. Defaults to "
-            f"{DEFAULT_HARDWARE_VARIANT} when no explicit M4/M7 env is given."
-        ),
-    )
-    parser.add_argument(
         "--port",
         help="Serial port to trigger DFU from. If omitted, a connected GIGA is detected.",
+    )
+    parser.add_argument(
+        "--root-build-name",
+        default=None,
+        help="Root .pio/build subdirectory name for bundled PlatformIO builds.",
     )
     parser.add_argument("--m4-env")
     parser.add_argument("--m7-env")

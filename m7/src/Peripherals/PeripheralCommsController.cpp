@@ -52,16 +52,12 @@ struct SpiBusState {
 };
 
 alignas(mbed::SPI) uint8_t dacSpiStorage[sizeof(mbed::SPI)];
-#ifdef __NEW_SHIELD__
 alignas(mbed::SPI) uint8_t adcSpiStorage[sizeof(mbed::SPI)];
-#endif
 
 mbed::SPI* dacSpi = nullptr;
 mbed::SPI* adcSpi = nullptr;
 SpiBusState dacBus{nullptr, 0, 0, false, false, false};
-#ifdef __NEW_SHIELD__
 SpiBusState adcBus{nullptr, 0, 0, false, false, false};
-#endif
 
 volatile bool asyncTransferDone = false;
 volatile int asyncTransferEvent = 0;
@@ -82,30 +78,19 @@ uint8_t transferMode(bool isDac) {
 }
 
 SpiBusState& busForTransfer(bool isDac) {
-#ifdef __NEW_SHIELD__
   return isDac ? dacBus : adcBus;
-#else
-  (void)isDac;
-  return dacBus;
-#endif
 }
 
 void constructSpiBuses() {
   if (dacSpi == nullptr) {
     dacSpi = new (dacSpiStorage) mbed::SPI(PD_7, PG_9, PB_3, NC);
     dacBus.spi = dacSpi;
-#ifndef __NEW_SHIELD__
-    adcSpi = dacSpi;
-    dacBus.shared = true;
-#endif
   }
 
-#ifdef __NEW_SHIELD__
   if (adcSpi == nullptr) {
     adcSpi = new (adcSpiStorage) mbed::SPI(PJ_10, PJ_11, PH_6, NC);
     adcBus.spi = adcSpi;
   }
-#endif
 }
 
 bool configureDmaUsage(SpiBusState& bus) {
@@ -373,9 +358,7 @@ void PeripheralCommsController::setup() {
 
   constructSpiBuses();
   bool initialized = configureBusForTransfer(true);
-#ifdef __NEW_SHIELD__
   initialized = configureBusForTransfer(false) && initialized;
-#endif
 
   spiInitialized = initialized;
   if (!initialized) {

@@ -28,9 +28,7 @@ class ADCController {
   static bool isChannelIndexValid(int channelIndex);
   static bool isSavedChannelIndexValid(int channelIndex);
   static OperationResult readChannelVoltage(int channel_index);
-#ifdef __NEW_DAC_ADC__
   static void toggleSync();
-#endif
   static float getVoltage(int channel_index);
   static OperationResult setChopping(bool chop);
   static OperationResult getChopping();

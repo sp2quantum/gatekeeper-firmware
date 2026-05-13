@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -11,12 +12,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 M4_PROJECT_DIR = ROOT_DIR / "m4"
 M7_PROJECT_DIR = ROOT_DIR / "m7"
 M4_ENV = "gatekeeper_m4_usb_gateway"
-
-HARDWARE_M7_ENV = {
-    "new_hardware": "gatekeeper_new_hardware",
-    "old_hardware": "gatekeeper_old_hardware",
-    "new_shield_old_dac_adc": "gatekeeper_new_shield_old_dac_adc",
-}
+M7_ENV = "gatekeeper_m7_worker"
 
 
 def log(message):
@@ -40,6 +36,66 @@ def run_compiledb(platformio, project_dir, env_name):
     )
 
 
+def _resolve_path(path, directory):
+    path = Path(path)
+    if path.is_absolute():
+        return path
+    return (directory / path).resolve()
+
+
+def _include_path_flag(path):
+    return "-I" + str(path)
+
+
+def _expand_response_file(path, directory, iprefix):
+    response_path = _resolve_path(path, directory)
+    tokens = shlex.split(response_path.read_text())
+    expanded = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.startswith("-iwithprefixbefore") and token != "-iwithprefixbefore":
+            include_suffix = token[len("-iwithprefixbefore"):]
+            expanded.append(_include_path_flag(str(iprefix).rstrip("/") + include_suffix))
+        elif token == "-iwithprefixbefore":
+            index += 1
+            include_suffix = tokens[index]
+            expanded.append(_include_path_flag(str(iprefix).rstrip("/") + include_suffix))
+        else:
+            expanded.append(token)
+        index += 1
+    return expanded
+
+
+def expand_compile_command(command, directory):
+    tokens = shlex.split(command)
+    expanded = []
+    iprefix = None
+    index = 0
+
+    while index < len(tokens):
+        token = tokens[index]
+
+        if token.startswith("-iprefix") and token != "-iprefix":
+            iprefix = token[len("-iprefix"):]
+            expanded.append(token)
+        elif token == "-iprefix":
+            expanded.append(token)
+            index += 1
+            iprefix = tokens[index]
+            expanded.append(tokens[index])
+        elif token.startswith("@"):
+            if iprefix is None:
+                expanded.append(token)
+            else:
+                expanded.extend(_expand_response_file(token[1:], directory, iprefix))
+        else:
+            expanded.append(token)
+        index += 1
+
+    return shlex.join(expanded)
+
+
 def normalized_entries(compile_db_path):
     data = json.loads(compile_db_path.read_text())
     entries = []
@@ -53,11 +109,15 @@ def normalized_entries(compile_db_path):
             output_path = Path(normalized["output"])
             if not output_path.is_absolute():
                 normalized["output"] = str((directory / output_path).resolve())
+        if "command" in normalized:
+            normalized["command"] = expand_compile_command(
+                normalized["command"], directory
+            )
         entries.append(normalized)
     return entries
 
 
-def merge_compile_databases(hardware):
+def merge_compile_databases():
     compile_databases = [
         M4_PROJECT_DIR / "compile_commands.json",
         M7_PROJECT_DIR / "compile_commands.json",
@@ -75,7 +135,7 @@ def merge_compile_databases(hardware):
     output_path.write_text(json.dumps(entries, indent=2) + "\n")
     log(
         "Wrote combined compile database "
-        f"{output_path} ({len(entries)} entries, hardware={hardware})."
+        f"{output_path} ({len(entries)} entries)."
     )
 
 
@@ -108,12 +168,6 @@ def parse_args():
         description="Build a root compile_commands.json for M4/M7 IntelliSense."
     )
     parser.add_argument(
-        "--hardware",
-        choices=sorted(HARDWARE_M7_ENV),
-        default="new_hardware",
-        help="Hardware target whose M7 defines should be used for IntelliSense.",
-    )
-    parser.add_argument(
         "--no-compiledb",
         action="store_true",
         help="Only merge existing M4/M7 compile databases.",
@@ -131,9 +185,9 @@ def main():
     if not args.no_compiledb:
         platformio = find_platformio()
         run_compiledb(platformio, M4_PROJECT_DIR, M4_ENV)
-        run_compiledb(platformio, M7_PROJECT_DIR, HARDWARE_M7_ENV[args.hardware])
+        run_compiledb(platformio, M7_PROJECT_DIR, M7_ENV)
 
-    merge_compile_databases(args.hardware)
+    merge_compile_databases()
     if not args.no_vscode_config:
         write_vscode_cpp_config()
 
