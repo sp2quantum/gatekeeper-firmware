@@ -1,19 +1,7 @@
 {
   "folders": [
     {
-      "path": "m4"
-    },
-    {
-      "path": "m7"
-    },
-    {
-      "path": "../../afyservers-py3"
-    },
-    {
-      "path": "../firmware_uploader"
-    },
-    {
-      "path": "tools"
+      "path": "."
     }
   ],
   "settings": {

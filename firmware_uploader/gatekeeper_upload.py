@@ -28,6 +28,8 @@ SERIAL_MARKER = b"__SERIAL_NUMBER__"
 SERIAL_FIELD_LENGTH = 12
 DEFAULT_SERIAL_SUFFIX = "ABC"
 DEFAULT_CALIBRATION_BACKUP_DIR_NAME = "calibration_backups"
+DEFAULT_CALIBRATION_PATH = Path("calibration_data.json")
+POST_FLASH_PORT_RETRY_COUNT = 30
 
 M4_ENVIRONMENT_MAP = {
     "giga_r1_m4_old_hardware": "OLD_HARDWARE",
@@ -188,6 +190,50 @@ def find_giga_port(env=None, expected_serial_number=None):
     return None
 
 
+def list_giga_ports():
+    return [port for port in serial.tools.list_ports.comports() if is_giga_port(port)]
+
+
+def format_port(port):
+    parts = [port.device]
+    if port.description:
+        parts.append(port.description)
+    if port.hwid:
+        parts.append(port.hwid)
+    return " | ".join(parts)
+
+
+def choose_giga_port(port=None, prompt="Select Arduino GIGA port"):
+    if port:
+        return port
+
+    ports = list_giga_ports()
+    if not ports:
+        available = [p.device for p in serial.tools.list_ports.comports()]
+        print(f"No Arduino GIGA serial ports found. Available ports: {available}")
+        return None
+
+    print("Detected Arduino GIGA serial ports:")
+    for index, candidate in enumerate(ports, start=1):
+        print(f"  {index}. {format_port(candidate)}")
+
+    if len(ports) == 1:
+        selected = ports[0].device
+        print(f"Using only detected Arduino GIGA port: {selected}")
+        return selected
+
+    while True:
+        selection = input(f"{prompt} [1-{len(ports)}]: ").strip()
+        try:
+            selected_index = int(selection)
+        except ValueError:
+            print("Please enter a number from the list.")
+            continue
+        if 1 <= selected_index <= len(ports):
+            return ports[selected_index - 1].device
+        print("Selection out of range.")
+
+
 def open_command_port(port, timeout=SERIAL_TIMEOUT_S):
     return serial.Serial(port, SERIAL_BAUD, timeout=timeout, write_timeout=timeout)
 
@@ -263,6 +309,21 @@ def wait_for_device_ready(env=None, port=None, expected_serial_number=None):
     if last_error is not None:
         raise RuntimeError(f"Device never became ready after upload: {last_error}")
     raise RuntimeError("Arduino GIGA not found after upload.")
+
+
+def wait_for_giga_port(expected_serial_number=None):
+    for _ in range(POST_FLASH_PORT_RETRY_COUNT):
+        ports = list_giga_ports()
+        if expected_serial_number:
+            for candidate in ports:
+                if port_matches_serial(candidate, expected_serial_number):
+                    return candidate.device
+        elif ports:
+            return ports[0].device
+        time.sleep(READY_RETRY_DELAY_S)
+    if expected_serial_number:
+        raise RuntimeError(f"Timed out waiting for serial port {expected_serial_number}.")
+    raise RuntimeError("Timed out waiting for Arduino GIGA serial port.")
 
 
 def get_dac_channel_count_for_environment(environment):
@@ -448,16 +509,42 @@ def remove_older_duplicate_calibration_files(backup_path, state):
     return removed_paths
 
 
-def write_calibration_backup_file(env, state):
+def get_available_path(path):
+    path = Path(path)
+    if not path.exists():
+        return path
+
+    parent = path.parent
+    stem = path.stem
+    suffix = path.suffix
+    index = 2
+    while True:
+        candidate = parent / f"{stem}{index}{suffix}"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def load_calibration_state(path):
+    state = json.loads(Path(path).read_text())
     validate_calibration_state(state)
-    backup_path = get_calibration_backup_path(env, state)
-    backup_path.parent.mkdir(parents=True, exist_ok=True)
-    backup_path.write_text(json.dumps(state, indent=2) + "\n")
-    saved_state = json.loads(backup_path.read_text())
+    return state
+
+
+def write_calibration_state_file(path, state):
+    validate_calibration_state(state)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2) + "\n")
+    saved_state = json.loads(path.read_text())
     if saved_state != state:
-        raise RuntimeError(
-            f"Calibration backup file verification failed: {backup_path}"
-        )
+        raise RuntimeError(f"Calibration backup file verification failed: {path}")
+    return path
+
+
+def write_calibration_backup_file(env, state):
+    backup_path = get_calibration_backup_path(env, state)
+    write_calibration_state_file(backup_path, state)
 
     removed_paths = remove_older_duplicate_calibration_files(backup_path, state)
     if removed_paths:
@@ -605,6 +692,7 @@ def patch_binary_serial(binary_path, serial_number):
     if not SERIAL_PATTERN.fullmatch(serial_number or ""):
         raise RuntimeError(f"Invalid serial number '{serial_number}'.")
 
+    binary_path = Path(binary_path)
     data = binary_path.read_bytes()
     index = data.find(SERIAL_MARKER)
     if index == -1:
@@ -618,8 +706,18 @@ def patch_binary_serial(binary_path, serial_number):
     binary_path.write_bytes(data)
 
 
+def read_binary_serial(binary_path):
+    data = Path(binary_path).read_bytes()
+    index = data.find(SERIAL_MARKER)
+    if index == -1:
+        return None
+    serial_start = index + len(SERIAL_MARKER)
+    serial_end = serial_start + SERIAL_FIELD_LENGTH
+    return data[serial_start:serial_end].rstrip(b"\x00").decode("ascii")
+
+
 def binary_contains_serial_marker(binary_path):
-    return SERIAL_MARKER in binary_path.read_bytes()
+    return SERIAL_MARKER in Path(binary_path).read_bytes()
 
 
 def save_state(env, state):

@@ -7,7 +7,7 @@ Import("env")
 
 def _usb_bundle_command(env):
     project_dir = Path(env.subst("$PROJECT_DIR"))
-    script_path = project_dir.parent / "tools" / "usb_bundle_upload.py"
+    script_path = project_dir.parent / "platformio_tools" / "usb_bundle_upload.py"
     command = [
         env.subst("$PYTHONEXE"),
         str(script_path),
@@ -33,7 +33,7 @@ def _usb_bundle_upload(source, target, env):
 
 
 if env.subst("$UPLOAD_PROTOCOL") == "custom":
-    env.Replace(DAC_ADC_USB_BUNDLE_UPLOAD="1")
+    env.Replace(GATEKEEPER_USB_BUNDLE_UPLOAD="1")
     env.Replace(
         UPLOADCMD=" ".join(shlex.quote(part) for part in _usb_bundle_command(env))
     )
@@ -43,6 +43,6 @@ env.AddCustomTarget(
     "usb_upload",
     dependencies=[env.subst("$BUILD_DIR/${PROGNAME}.bin")],
     actions=[_usb_bundle_upload],
-    title="USB bundle upload",
-    description="Upload guard M7, M4, and real M7 through USB DFU.",
+    title="GateKeeper firmware bundle upload",
+    description="Upload USB gateway M4 and selected worker M7 through USB DFU.",
 )

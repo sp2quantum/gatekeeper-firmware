@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -14,9 +15,34 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 M4_PROJECT_DIR = ROOT_DIR / "m4"
 M7_PROJECT_DIR = ROOT_DIR / "m7"
 
-DEFAULT_M4_ENV = "giga_r1_m4_new_hardware"
-DEFAULT_M7_ENV = "giga_r1_m7"
-DEFAULT_M7_GUARD_ENV = "giga_r1_m7_usb_upload_guard"
+DEFAULT_HARDWARE_VARIANT = "new_hardware"
+DEFAULT_M4_ENV = "gatekeeper_m4_usb_gateway"
+DEFAULT_M7_ENV = "gatekeeper_new_hardware"
+
+HARDWARE_VARIANTS = {
+    "new_hardware": {
+        "m4_env": DEFAULT_M4_ENV,
+        "m7_env": "gatekeeper_new_hardware",
+        "environment": "NEW_HARDWARE",
+    },
+    "old_hardware": {
+        "m4_env": DEFAULT_M4_ENV,
+        "m7_env": "gatekeeper_old_hardware",
+        "environment": "OLD_HARDWARE",
+    },
+    "new_shield_old_dac_adc": {
+        "m4_env": DEFAULT_M4_ENV,
+        "m7_env": "gatekeeper_new_shield_old_dac_adc",
+        "environment": "NEW_SHIELD_OLD_DAC_ADC",
+    },
+}
+
+M7_ENVIRONMENT_MAP = {
+    "giga_r1_m7": "NEW_HARDWARE",
+    "gatekeeper_new_hardware": "NEW_HARDWARE",
+    "gatekeeper_old_hardware": "OLD_HARDWARE",
+    "gatekeeper_new_shield_old_dac_adc": "NEW_SHIELD_OLD_DAC_ADC",
+}
 
 ARDUINO_GIGA_DFU_DEVICE_ID = "2341:0366"
 M7_ADDRESS = "0x08040000"
@@ -67,9 +93,9 @@ class UploadEnv:
 
 
 def load_upload_persistence():
-    helper_path = ROOT_DIR / "tools" / "platformio_upload_persistence.py"
+    helper_path = ROOT_DIR / "firmware_uploader" / "gatekeeper_upload.py"
     spec = importlib.util.spec_from_file_location(
-        "platformio_upload_persistence", helper_path
+        "gatekeeper_upload", helper_path
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -105,23 +131,111 @@ def find_dfu_util():
     return None
 
 
-def run(command, cwd=None):
+def run(command, cwd=None, env=None):
     log("$ " + " ".join(str(part) for part in command))
-    subprocess.run(command, cwd=cwd, check=True)
+    subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
-def build_platformio_env(project_dir, pioenv):
+def platformio_env(build_dir=None):
+    if build_dir is None:
+        return None
+    child_env = os.environ.copy()
+    child_env["PLATFORMIO_BUILD_DIR"] = str(build_dir)
+    return child_env
+
+
+def build_platformio_env(project_dir, pioenv, build_dir=None):
     pio = find_executable("pio", "platformio")
     if pio is None:
         raise RuntimeError("PlatformIO executable not found.")
-    run([pio, "run", "-e", pioenv], cwd=project_dir)
+    run([pio, "run", "-e", pioenv], cwd=project_dir, env=platformio_env(build_dir))
 
 
-def firmware_bin(project_dir, pioenv):
-    path = project_dir / ".pio" / "build" / pioenv / "firmware.bin"
+def clean_platformio_env(project_dir, pioenv, build_dir=None):
+    pio = find_executable("pio", "platformio")
+    if pio is None:
+        raise RuntimeError("PlatformIO executable not found.")
+    run(
+        [pio, "run", "-e", pioenv, "-t", "clean"],
+        cwd=project_dir,
+        env=platformio_env(build_dir),
+    )
+
+
+def firmware_bin(project_dir, pioenv, build_dir=None):
+    path = (build_dir or (project_dir / ".pio" / "build")) / pioenv / "firmware.bin"
     if not path.exists():
         raise RuntimeError(f"Built firmware binary not found: {path}")
     return path
+
+
+def resolve_upload_selection(args):
+    if args.hardware is None and args.m4_env is None and args.m7_env is None:
+        args.hardware = DEFAULT_HARDWARE_VARIANT
+
+    expected_environment = None
+    if args.hardware is not None:
+        variant = HARDWARE_VARIANTS[args.hardware]
+        args.m4_env = args.m4_env or variant["m4_env"]
+        args.m7_env = args.m7_env or variant["m7_env"]
+        expected_environment = variant["environment"]
+
+    args.m4_env = args.m4_env or DEFAULT_M4_ENV
+    args.m7_env = args.m7_env or DEFAULT_M7_ENV
+    return expected_environment or M7_ENVIRONMENT_MAP.get(args.m7_env)
+
+
+def bundle_build_dirs(args):
+    if args.hardware is None:
+        return None, None
+
+    root_build_dir = ROOT_DIR / ".pio" / "build" / args.hardware
+    return (
+        root_build_dir / "m4",
+        root_build_dir / "m7",
+    )
+
+
+def build_bundle(args):
+    m4_build_dir, real_m7_build_dir = bundle_build_dirs(args)
+    if not args.skip_build:
+        if not args.skip_m4_build:
+            build_platformio_env(M4_PROJECT_DIR, args.m4_env, m4_build_dir)
+        if not args.skip_real_m7_build:
+            build_platformio_env(M7_PROJECT_DIR, args.m7_env, real_m7_build_dir)
+        refresh_intellisense(args.hardware)
+
+    m4_bin = firmware_bin(M4_PROJECT_DIR, args.m4_env, m4_build_dir)
+    real_m7_bin = firmware_bin(M7_PROJECT_DIR, args.m7_env, real_m7_build_dir)
+    return m4_bin, real_m7_bin
+
+
+def clean_bundle(args):
+    m4_build_dir, real_m7_build_dir = bundle_build_dirs(args)
+    clean_platformio_env(M4_PROJECT_DIR, args.m4_env, m4_build_dir)
+    clean_platformio_env(M7_PROJECT_DIR, args.m7_env, real_m7_build_dir)
+
+
+def refresh_intellisense(hardware):
+    if hardware is None:
+        return
+
+    script_path = ROOT_DIR / "platformio_tools" / "update_compile_commands.py"
+    if not script_path.exists():
+        return
+
+    try:
+        run(
+            [
+                sys.executable,
+                str(script_path),
+                "--hardware",
+                hardware,
+                "--no-compiledb",
+            ]
+        )
+    except subprocess.CalledProcessError as exc:
+        log(f"IntelliSense refresh failed after build: {exc}")
 
 
 def dfu_list_output(dfu_util):
@@ -228,17 +342,24 @@ def verify_basic_firmware(persistence, upload_env, expected_serial_number):
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Upload M4 and M7 firmware to Arduino GIGA over USB DFU as one "
-            "safe bundle."
+            "Upload a complete GateKeeper firmware bundle to Arduino GIGA "
+            "over USB DFU."
         )
+    )
+    parser.add_argument(
+        "--hardware",
+        choices=sorted(HARDWARE_VARIANTS),
+        help=(
+            "GateKeeper hardware variant to build and upload. Defaults to "
+            f"{DEFAULT_HARDWARE_VARIANT} when no explicit M4/M7 env is given."
+        ),
     )
     parser.add_argument(
         "--port",
         help="Serial port to trigger DFU from. If omitted, a connected GIGA is detected.",
     )
-    parser.add_argument("--m4-env", default=DEFAULT_M4_ENV)
-    parser.add_argument("--m7-env", default=DEFAULT_M7_ENV)
-    parser.add_argument("--m7-guard-env", default=DEFAULT_M7_GUARD_ENV)
+    parser.add_argument("--m4-env")
+    parser.add_argument("--m7-env")
     parser.add_argument(
         "--skip-real-m7-build",
         action="store_true",
@@ -252,7 +373,17 @@ def parse_args():
     parser.add_argument(
         "--skip-build",
         action="store_true",
-        help="Use already-built M4, guard M7, and real M7 binaries.",
+        help="Use already-built M4 and M7 binaries.",
+    )
+    parser.add_argument(
+        "--build-only",
+        action="store_true",
+        help="Build the complete firmware bundle without uploading.",
+    )
+    parser.add_argument(
+        "--clean-only",
+        action="store_true",
+        help="Clean the complete firmware bundle without uploading.",
     )
     parser.add_argument(
         "--no-restore",
@@ -269,6 +400,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    expected_environment = resolve_upload_selection(args)
     persistence = load_upload_persistence()
     upload_env = UploadEnv(
         M7_PROJECT_DIR,
@@ -276,6 +408,22 @@ def main():
         upload_port=args.port,
         backup_dir=args.calibration_backup_dir,
     )
+
+    if args.build_only:
+        build_bundle(args)
+        log(
+            "Firmware bundle build complete "
+            f"(m4={args.m4_env}, m7={args.m7_env})."
+        )
+        return
+
+    if args.clean_only:
+        clean_bundle(args)
+        log(
+            "Firmware bundle clean complete "
+            f"(m4={args.m4_env}, m7={args.m7_env})."
+        )
+        return
 
     dfu_util = find_dfu_util()
     if dfu_util is None:
@@ -318,16 +466,18 @@ def main():
             "source_port": None,
         }
 
-    if not args.skip_build:
-        build_platformio_env(M7_PROJECT_DIR, args.m7_guard_env)
-        if not args.skip_m4_build:
-            build_platformio_env(M4_PROJECT_DIR, args.m4_env)
-        if not args.skip_real_m7_build:
-            build_platformio_env(M7_PROJECT_DIR, args.m7_env)
+    if (
+        expected_environment is not None
+        and not state.get("skip")
+        and state.get("source_environment") != expected_environment
+    ):
+        raise RuntimeError(
+            "Connected board environment "
+            f"{state['source_environment']} does not match requested upload "
+            f"environment {expected_environment}."
+        )
 
-    guard_m7_bin = firmware_bin(M7_PROJECT_DIR, args.m7_guard_env)
-    m4_bin = firmware_bin(M4_PROJECT_DIR, args.m4_env)
-    real_m7_bin = firmware_bin(M7_PROJECT_DIR, args.m7_env)
+    m4_bin, real_m7_bin = build_bundle(args)
 
     serial_number = upload_serial_number(persistence, state)
     state["serial_number"] = serial_number
@@ -341,11 +491,9 @@ def main():
     else:
         log("Using existing Arduino GIGA USB DFU device.")
 
-    log("Uploading guard M7 without leaving DFU...")
-    dfu_download(dfu_util, M7_ADDRESS, guard_m7_bin)
     log("Uploading M4 without leaving DFU...")
     dfu_download(dfu_util, M4_ADDRESS, m4_bin)
-    log("Uploading real M7 and leaving DFU...")
+    log("Uploading M7 and leaving DFU...")
     dfu_download(dfu_util, M7_LEAVE_ADDRESS, real_m7_bin)
 
     if args.no_restore:
