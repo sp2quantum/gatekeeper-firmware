@@ -10,6 +10,7 @@
 __pycache__/
 *.pyc
 calibration_backups/
+platformio_variants/generated/
 firmware_uploader/firmware/
 firmware_uploader/temp_firmware*.bin
 firmware_uploader/calibration_data*.json

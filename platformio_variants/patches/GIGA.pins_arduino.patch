@@ -1,0 +1,12 @@
+--- a/pins_arduino.h
++++ b/pins_arduino.h
+@@ -210,9 +210,6 @@
+ #define SERIAL4_TX			(14u)
+ #define SERIAL4_RX			(15u)
+ 
+-#if !defined(GATEKEEPER_DISABLE_M7_USB_CDC)
+-#define SERIAL_CDC			1
+-#endif
+ #define HAS_UNIQUE_ISERIAL_DESCRIPTOR
+ #define BOARD_VENDORID		0x2341
+ #define BOARD_PRODUCTID		0x0266
