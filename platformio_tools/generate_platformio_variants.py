@@ -2,15 +2,30 @@
 import argparse
 import hashlib
 import json
+import re
 import shutil
-import subprocess
 from pathlib import Path
 
 
 VARIANTS = {
-    "GIGA": ["GIGA.pins_arduino.patch"],
-    "GENERIC_STM32H747_M4": ["GENERIC_STM32H747_M4.pins_arduino.patch"],
+    "GIGA": "disable_m7_usb_cdc",
+    "GENERIC_STM32H747_M4": "disable_m4_usb_cdc",
 }
+
+SERIAL_CDC_DEFINE_RE = re.compile(r"(?m)^[ \t]*#define[ \t]+SERIAL_CDC\b.*\n?")
+SERIAL_CDC_UNDEF_RE = re.compile(r"(?m)^[ \t]*#undef[ \t]+SERIAL_CDC\b")
+M7_USB_CDC_BLOCK_RE = re.compile(
+    r"(?m)^[ \t]*#if[ \t]+!defined\(GATEKEEPER_DISABLE_M7_USB_CDC\)\n"
+    r"[ \t]*#define[ \t]+SERIAL_CDC\b.*\n"
+    r"[ \t]*#endif\n?"
+)
+M4_USB_CDC_BLOCK_RE = re.compile(
+    r"(?m)^[ \t]*#if[ \t]+defined\(GATEKEEPER_ENABLE_M4_USB_CDC\)\n"
+    r"[ \t]*#define[ \t]+SERIAL_CDC\b.*\n"
+    r"[ \t]*#else\n"
+    r"[ \t]*#undef[ \t]+SERIAL_CDC\n"
+    r"[ \t]*#endif\n?"
+)
 
 
 def _file_sha256(path):
@@ -33,14 +48,12 @@ def _tree_fingerprint(path):
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _metadata(source_variant, patch_paths):
+def _metadata(source_variant, transform_name):
     return {
         "source": str(source_variant.resolve()),
         "source_fingerprint": _tree_fingerprint(source_variant),
-        "patches": {
-            patch.name: _file_sha256(patch)
-            for patch in patch_paths
-        },
+        "generator": _file_sha256(Path(__file__)),
+        "transform": transform_name,
     }
 
 
@@ -53,12 +66,28 @@ def _metadata_matches(stamp_path, metadata):
         return False
 
 
-def _apply_patch(variant_dir, patch_path):
-    subprocess.run(
-        ["patch", "-p1", "--batch", "--silent", "-i", str(patch_path)],
-        cwd=variant_dir,
-        check=True,
-    )
+def _rewrite_pins(variant_dir, rewrite):
+    pins_path = variant_dir / "pins_arduino.h"
+    pins_path.write_text(rewrite(pins_path.read_text()))
+
+
+def _disable_m7_usb_cdc(text):
+    text = M7_USB_CDC_BLOCK_RE.sub("", text)
+    return SERIAL_CDC_DEFINE_RE.sub("", text)
+
+
+def _disable_m4_usb_cdc(text):
+    text = M4_USB_CDC_BLOCK_RE.sub("#undef SERIAL_CDC\n", text)
+    text = SERIAL_CDC_DEFINE_RE.sub("", text)
+    if not SERIAL_CDC_UNDEF_RE.search(text):
+        text = text.rstrip() + "\n\n#undef SERIAL_CDC\n"
+    return text
+
+
+TRANSFORMS = {
+    "disable_m7_usb_cdc": _disable_m7_usb_cdc,
+    "disable_m4_usb_cdc": _disable_m4_usb_cdc,
+}
 
 
 def generate_all(repo_root=None, framework_dir=None):
@@ -69,7 +98,6 @@ def generate_all(repo_root=None, framework_dir=None):
     upstream_variants = framework_dir / "variants"
     variant_root = repo_root / "platformio_variants"
     output_root = variant_root / "generated"
-    patch_root = variant_root / "patches"
 
     if not upstream_variants.exists():
         raise FileNotFoundError(f"Arduino-mbed variants not found: {upstream_variants}")
@@ -77,18 +105,14 @@ def generate_all(repo_root=None, framework_dir=None):
     output_root.mkdir(parents=True, exist_ok=True)
     updated = []
 
-    for variant, patch_names in VARIANTS.items():
+    for variant, transform_name in VARIANTS.items():
         source_variant = upstream_variants / variant
         output_variant = output_root / variant
-        patch_paths = [patch_root / name for name in patch_names]
 
         if not source_variant.exists():
             raise FileNotFoundError(f"Upstream variant not found: {source_variant}")
-        for patch_path in patch_paths:
-            if not patch_path.exists():
-                raise FileNotFoundError(f"Variant patch not found: {patch_path}")
 
-        metadata = _metadata(source_variant, patch_paths)
+        metadata = _metadata(source_variant, transform_name)
         stamp_path = output_variant / ".gatekeeper_variant.json"
         if output_variant.exists() and _metadata_matches(stamp_path, metadata):
             continue
@@ -96,8 +120,7 @@ def generate_all(repo_root=None, framework_dir=None):
         if output_variant.exists():
             shutil.rmtree(output_variant)
         shutil.copytree(source_variant, output_variant)
-        for patch_path in patch_paths:
-            _apply_patch(output_variant, patch_path)
+        _rewrite_pins(output_variant, TRANSFORMS[transform_name])
         stamp_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
         updated.append(variant)
 
