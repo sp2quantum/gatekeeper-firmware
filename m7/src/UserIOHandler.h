@@ -16,6 +16,5 @@ struct UserIOHandler {
   static const char serial_number[29];
 
   static OperationResult serialNumber();
-  static bool readCommandLine(String& out);
   static void handleUserIO();
 };

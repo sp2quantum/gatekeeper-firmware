@@ -1,5 +1,7 @@
 #include "Peripherals/DAC/DACChannel.h"
 
+#include <cmath>
+
 #include "Utils/FastGpio.h"
 
 DACChannel::DACChannel(int cs_pin, int channel_index) : commsController(cs_pin) {
@@ -22,6 +24,12 @@ DACChannel::DACChannel(int cs_pin, int channel_index) : commsController(cs_pin) 
   
   int DACChannel::getChannelIndex() const {
     return channel_index;
+  }
+
+
+
+  int DACChannel::getCsPin() const {
+    return cs_pin;
   }
 
 
@@ -72,6 +80,17 @@ DACChannel::DACChannel(int cs_pin, int channel_index) : commsController(cs_pin) 
 
 
   bool DACChannel::setVoltageNoTransactionNoLdac(float v) {
+    byte bytesToSend[3];
+    if (!encodeVoltagePacket(v, bytesToSend)) {
+      return false;
+    }
+
+    return writeVoltagePacketNoLdac(bytesToSend);
+  }
+
+
+
+  bool DACChannel::encodeVoltagePacket(float v, byte packet[3]) {
     byte b1;
     byte b2;
     byte b3;
@@ -82,16 +101,29 @@ DACChannel::DACChannel(int cs_pin, int channel_index) : commsController(cs_pin) 
 
     voltageToDecimal(v * gain_error_inverse - offset_error, &b1, &b2, &b3);
 
-    byte bytesToSend[3] = {b1, b2, b3};
+    packet[0] = b1;
+    packet[1] = b2;
+    packet[2] = b3;
+    return true;
+  }
 
-    return commsController.transferDACNoTransaction(bytesToSend,
-                             3);  // send command byte to DAC; MS data bits,
-                                  // DAC2; LS 8 data bits, DAC2
+
+
+  bool DACChannel::writeVoltagePacketNoLdac(const byte packet[3]) {
+    byte bytesToSend[3] = {packet[0], packet[1], packet[2]};
+    return commsController.transferDACNoTransaction(bytesToSend, 3);
   }
 
 
 
   void DACChannel::setCalibration(float offset, float gain) {
+    if (!std::isfinite(static_cast<double>(offset))) {
+      offset = 0.0f;
+    }
+    if (!std::isfinite(static_cast<double>(gain)) ||
+        std::fabs(static_cast<double>(gain)) < 1e-6) {
+      gain = 1.0f;
+    }
     this->offset_error = offset;
     this->gain_error = gain;
     this->gain_error_inverse = 1.0 / gain;

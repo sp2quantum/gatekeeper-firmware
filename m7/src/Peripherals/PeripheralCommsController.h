@@ -2,38 +2,13 @@
 
 #include <Arduino.h>
 
-#include "Peripherals/OperationResult.h"
-
 class PeripheralCommsController {
  public:
-  struct SpiDiagnostics {
-    uint32_t failure_stage;
-    uint32_t count;
-    uint32_t completed_transfers;
-    uint32_t failed_transfers;
-    uint32_t timeout_us;
-    int cs_pin;
-    int start_result;
-    int callback_event;
-    uint8_t spi_mode;
-    bool is_dac;
-    bool initialized;
-    bool transfer_ok;
-    bool timeout;
-    bool callback_seen;
-    bool deferred_errors;
-    bool sticky_error;
-    bool bus_shared;
-  };
+  static volatile bool dacSpiTransferInProgress;
+  static volatile bool adcSpiTransferInProgress;
 
  private:
   static bool spiInitialized;
-  static bool lastTransferOk;
-  static bool deferSpiErrors;
-  static bool stickySpiError;
-  static uint8_t deferSpiErrorDepth;
-  static SpiDiagnostics lastDiagnostics;
-  static SpiDiagnostics firstStickyDiagnostics;
   int cs_pin;
 
   static constexpr size_t kSpiBufferSize = 64;
@@ -55,12 +30,6 @@ class PeripheralCommsController {
   bool transferADCNoTransaction(void* buf, size_t count);
   uint8_t transferDACNoTransaction(uint8_t data);
   uint8_t transferADCNoTransaction(uint8_t data);
-  static bool lastTransferSucceeded();
-  static OperationResult getDiagnostics();
-  static void beginDeferredSpiErrors();
-  static OperationResult endDeferredSpiErrors();
-  static void cancelDeferredSpiErrors();
-  static bool hasDeferredSpiError();
   static void dataLedOn();
   static void dataLedOff();
 };

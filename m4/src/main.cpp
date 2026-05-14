@@ -19,7 +19,7 @@ constexpr uint8_t kUsbStringDescriptor = 0x03;
 volatile bool bootloader_touch_requested = false;
 
 constexpr uint8_t kManufacturerDescriptor[] = {
-    24, kUsbStringDescriptor, 's', 0, 'p', 0, '2', 0, ' ', 0, 'Q', 0,
+    24, kUsbStringDescriptor, 's', 0, 'p', 0, '2', 0, ' ', 0, 'q', 0,
     'u', 0, 'a', 0, 'n', 0, 't', 0, 'u', 0, 'm', 0};
 
 constexpr uint8_t kProductDescriptor[] = {
@@ -115,14 +115,113 @@ static void usbPrint(const char* data) {
   usbWrite(reinterpret_cast<const uint8_t*>(data), strlen(data));
 }
 
-static void handleHostCommand(const char* command) {
-  String command_lower = command;
-  command_lower.trim();
-  command_lower.toLowerCase();
-  if (command_lower == "stop") {
-    requestWorkerStop();
+static char lowerAscii(char c) {
+  if (c >= 'A' && c <= 'Z') {
+    return c + ('a' - 'A');
+  }
+  return c;
+}
+
+static bool normalizedStopMatch(const char* data, size_t length,
+                                bool allowPrefix) {
+  size_t start = 0;
+  while (start < length && (data[start] == ' ' || data[start] == '\t')) {
+    start++;
+  }
+
+  size_t end = length;
+  while (end > start &&
+         (data[end - 1] == ' ' || data[end - 1] == '\t' ||
+          data[end - 1] == '\r' || data[end - 1] == '\n')) {
+    end--;
+  }
+
+  const char stop[] = "stop";
+  const size_t normalizedLength = end - start;
+  if (normalizedLength > sizeof(stop) - 1) {
+    return false;
+  }
+  for (size_t i = 0; i < normalizedLength; i++) {
+    if (lowerAscii(data[start + i]) != stop[i]) {
+      return false;
+    }
+  }
+  return allowPrefix || normalizedLength == sizeof(stop) - 1;
+}
+
+static bool streamHostBytesToWorker(const char* data, size_t length) {
+  if (length == 0) {
+    return true;
+  }
+  if (!sendCommandBytesToWorker(data, length)) {
+    usbPrint("FAILURE: Gateway command stream full\r\n");
+    return false;
+  }
+  return true;
+}
+
+static void processHostByte(char c) {
+  constexpr size_t kStopDetectionBufferSize = 16;
+  static char pending[kStopDetectionBufferSize];
+  static size_t pendingLength = 0;
+  static bool streamingCommand = false;
+  static bool droppingUntilNewline = false;
+
+  if (c == '\r') {
+    return;
+  }
+
+  if (droppingUntilNewline) {
+    if (c == '\n') {
+      droppingUntilNewline = false;
+    }
+    return;
+  }
+
+  if (streamingCommand) {
+    if (!streamHostBytesToWorker(&c, 1)) {
+      streamingCommand = false;
+      droppingUntilNewline = true;
+      return;
+    }
+    if (c == '\n') {
+      streamingCommand = false;
+    }
+    return;
+  }
+
+  if (pendingLength < sizeof(pending)) {
+    pending[pendingLength++] = c;
   } else {
-    sendCommandToWorker(command, strlen(command));
+    if (!streamHostBytesToWorker(pending, pendingLength) ||
+        !streamHostBytesToWorker(&c, 1)) {
+      pendingLength = 0;
+      droppingUntilNewline = true;
+      return;
+    }
+    pendingLength = 0;
+    streamingCommand = c != '\n';
+    return;
+  }
+
+  if (c == '\n') {
+    if (normalizedStopMatch(pending, pendingLength, false)) {
+      requestWorkerStop();
+    } else if (!streamHostBytesToWorker(pending, pendingLength)) {
+      droppingUntilNewline = true;
+    }
+    pendingLength = 0;
+    return;
+  }
+
+  if (!normalizedStopMatch(pending, pendingLength, true)) {
+    if (!streamHostBytesToWorker(pending, pendingLength)) {
+      pendingLength = 0;
+      droppingUntilNewline = true;
+      return;
+    }
+    pendingLength = 0;
+    streamingCommand = true;
   }
 }
 
@@ -141,30 +240,15 @@ void loop() {
     resetToBootloaderDfu();
   }
 
-  static char command_buffer[4096];
-  static size_t command_length = 0;
-
   uint8_t input[64];
   uint32_t actual = 0;
   usb_cdc.receive_nb(input, sizeof(input), &actual);
   for (uint32_t i = 0; i < actual; ++i) {
-    const char c = static_cast<char>(input[i]);
-    if (c == '\r') {
-      continue;
-    }
-    if (c == '\n') {
-      command_buffer[command_length] = '\0';
-      handleHostCommand(command_buffer);
-      command_length = 0;
-      continue;
-    }
-    if (command_length < sizeof(command_buffer) - 1) {
-      command_buffer[command_length++] = c;
-    }
+    processHostByte(static_cast<char>(input[i]));
   }
 
   if (hasTextFromWorker()) {
-    char response[4096];
+    static char response[4096];
     size_t size = sizeof(response);
     if (receiveTextFromWorker(response, size)) {
       if (size > 0) {
@@ -176,7 +260,7 @@ void loop() {
   }
 
   if (hasFloatResponseFromWorker()) {
-    float response[FLOAT_BUFFER_SIZE];
+    static float response[FLOAT_BUFFER_SIZE];
     size_t size = FLOAT_BUFFER_SIZE;
     if (receiveFloatResponseFromWorker(response, size)) {
       for (size_t i = 0; i < size; ++i) {
@@ -189,7 +273,7 @@ void loop() {
   }
 
   if (hasVoltageFrameFromWorker()) {
-    double response[VOLTAGE_BUFFER_SIZE];
+    static double response[VOLTAGE_BUFFER_SIZE];
     size_t size = VOLTAGE_BUFFER_SIZE;
     if (receiveVoltageFrameFromWorker(response, size)) {
       for (size_t i = 0; i < size; ++i) {

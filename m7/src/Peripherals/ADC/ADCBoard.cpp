@@ -146,6 +146,10 @@
 
 
 
+  int ADCBoard::getCsPin() const { return cs_pin; }
+
+
+
   void ADCBoard::setReadyFlag() { data_ready = true; }
 
 
@@ -523,7 +527,9 @@
 
 
   bool ADCBoard::isMoreThanOneChannelActive() {
-    return (getADCStatus() & 0b00001111) != 0;
+    const uint8_t activeChannels =
+        getADCStatus() & ((1 << NUM_CHANNELS_PER_ADC_BOARD) - 1);
+    return (activeChannels & (activeChannels - 1)) != 0;
   }
 
 

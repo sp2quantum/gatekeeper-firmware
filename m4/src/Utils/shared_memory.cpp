@@ -10,19 +10,6 @@ bool initSharedMemory() {
 
 void requestWorkerStop() { shared_memory->stop_requested = true; }
 
-// ---------------------------------------------------------------------------
-//  Utilities to safely write/read a 32-bit length into the char buffer
-//  (avoids unaligned 32-bit access and handles wraparound cleanly).
-// ---------------------------------------------------------------------------
-static void writeUint32ToCharBuffer(CharCircularBuffer* buffer,
-                                    uint32_t& index,
-                                    uint32_t value) {
-  for (int i = 0; i < 4; i++) {
-    buffer->buffer[index] = static_cast<char>((value >> (8 * i)) & 0xFF);
-    index = (index + 1) % CHAR_BUFFER_SIZE; // advance by 1 byte
-  }
-}
-
 static uint32_t readUint32FromCharBuffer(CharCircularBuffer* buffer,
                                          uint32_t& index) {
   uint32_t value = 0;
@@ -31,40 +18,6 @@ static uint32_t readUint32FromCharBuffer(CharCircularBuffer* buffer,
     index = (index + 1) % CHAR_BUFFER_SIZE; // advance by 1 byte
   }
   return value;
-}
-
-// ---------------------------------------------------------------------------
-//  Char buffer operations
-// ---------------------------------------------------------------------------
-static bool charBufferSend(CharCircularBuffer* buffer, const char* data,
-                           size_t length) {
-  constexpr size_t kMaxCharPayload =
-      (CHAR_BUFFER_SIZE > 5) ? (CHAR_BUFFER_SIZE - 5) : 0;
-  if (length > kMaxCharPayload) return false;
-
-  // We need to store 4 bytes for 'length' + the actual payload
-  uint32_t available_space =
-      (buffer->read_index - buffer->write_index - 1 + CHAR_BUFFER_SIZE) %
-      CHAR_BUFFER_SIZE;
-
-  // If not enough space, fail
-  if (length + 4 > available_space) {
-    return false;
-  }
-
-  // Write the 4-byte message length, byte by byte
-  uint32_t write_index = buffer->write_index;
-  writeUint32ToCharBuffer(buffer, write_index, static_cast<uint32_t>(length));
-
-  // Write the actual message bytes
-  for (size_t i = 0; i < length; i++) {
-    buffer->buffer[write_index] = data[i];
-    write_index = (write_index + 1) % CHAR_BUFFER_SIZE;
-  }
-
-  // Update the official write_index
-  buffer->write_index = write_index;
-  return true;
 }
 
 static bool charBufferReceive(CharCircularBuffer* buffer, char* data,
@@ -105,77 +58,26 @@ static bool charBufferHasMessage(CharCircularBuffer* buffer) {
 }
 
 // ---------------------------------------------------------------------------
-//  Gateway command/response functions
+//  Gateway command stream functions
 // ---------------------------------------------------------------------------
-bool sendCommandToWorker(const char* data, size_t length) {
-  constexpr size_t kCharFrameMaxPayload =
-      (CHAR_BUFFER_SIZE > 5) ? (CHAR_BUFFER_SIZE - 5) : 0;
-  constexpr size_t kNormalFrameOverhead = 1;
+bool sendCommandBytesToWorker(const char* data, size_t length) {
+  CharCircularBuffer* buffer = &shared_memory->gateway_to_worker_char_buffer;
+  uint32_t last_progress_ms = millis();
 
-  auto write_le16 = [](uint8_t* p, uint16_t v) {
-    p[0] = static_cast<uint8_t>(v & 0xFF);
-    p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
-  };
-  auto write_le32 = [](uint8_t* p, uint32_t v) {
-    p[0] = static_cast<uint8_t>(v & 0xFF);
-    p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
-    p[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
-    p[3] = static_cast<uint8_t>((v >> 24) & 0xFF);
-  };
-
-  auto send_blocking = [&](const char* frame, size_t frame_len) -> bool {
-    uint32_t start_ms = millis();
-    while (!charBufferSend(&shared_memory->gateway_to_worker_char_buffer, frame,
-                           frame_len)) {
-      if (millis() - start_ms > 5000) {
+  for (size_t i = 0; i < length; i++) {
+    while (((buffer->write_index + 1) % CHAR_BUFFER_SIZE) ==
+           buffer->read_index) {
+      if (millis() - last_progress_ms > 5000) {
         return false;
       }
       delay(1);
     }
-    return true;
-  };
 
-  if (kCharFrameMaxPayload <= kNormalFrameOverhead) {
-    return false;
-  }
-
-  if (length <= (kCharFrameMaxPayload - kNormalFrameOverhead)) {
-    uint8_t frame[kCharFrameMaxPayload];
-    frame[0] = CHAR_FRAME_TYPE_NORMAL;
-    memcpy(&frame[1], data, length);
-    return send_blocking(reinterpret_cast<const char*>(frame), length + 1);
-  }
-
-  if (kCharFrameMaxPayload <= CHAR_FRAGMENT_HEADER_SIZE) {
-    return false;
-  }
-
-  const size_t max_chunk = kCharFrameMaxPayload - CHAR_FRAGMENT_HEADER_SIZE;
-  uint16_t seq = 0;
-  size_t offset = 0;
-
-  while (offset < length) {
-    const size_t remaining = length - offset;
-    const size_t chunk = (remaining < max_chunk) ? remaining : max_chunk;
-    const bool is_first = (offset == 0);
-    const bool is_last = (offset + chunk == length);
-
-    uint8_t frame[kCharFrameMaxPayload];
-    frame[0] = CHAR_FRAME_TYPE_FRAGMENT;
-    frame[1] = static_cast<uint8_t>((is_first ? 0x01 : 0x00) |
-                                    (is_last ? 0x02 : 0x00));
-    frame[2] = CHAR_FRAGMENT_VERSION;
-    write_le16(&frame[3], seq);
-    write_le32(&frame[5], static_cast<uint32_t>(length));
-    memcpy(&frame[CHAR_FRAGMENT_HEADER_SIZE], data + offset, chunk);
-
-    if (!send_blocking(reinterpret_cast<const char*>(frame),
-                       CHAR_FRAGMENT_HEADER_SIZE + chunk)) {
-      return false;
-    }
-
-    offset += chunk;
-    seq++;
+    const uint32_t write_index = buffer->write_index;
+    buffer->buffer[write_index] = data[i];
+    __DMB();
+    buffer->write_index = (write_index + 1) % CHAR_BUFFER_SIZE;
+    last_progress_ms = millis();
   }
 
   return true;
@@ -190,7 +92,7 @@ bool receiveTextFromWorker(char* data, size_t& length) {
   static CharReassemblyState state;
 
   const size_t output_capacity = length;
-  char frame[CHAR_BUFFER_SIZE];
+  static char frame[CHAR_BUFFER_SIZE];
   size_t frame_length = sizeof(frame);
   if (!charBufferReceive(&shared_memory->worker_to_gateway_char_buffer, frame,
                          frame_length)) {

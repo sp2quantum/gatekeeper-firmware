@@ -1,10 +1,16 @@
 #include "Utils/TimingUtil.h"
 
 #include "Config.h"
+#include "Peripherals/PeripheralCommsController.h"
 #include "Utils/FastGpio.h"
 
 volatile uint8_t TimingUtil::adcFlag = 0;
 volatile bool TimingUtil::dacFlag = false;
+volatile uint32_t TimingUtil::dacSpiMisstepEvents = 0;
+volatile uint32_t TimingUtil::adcSpiMisstepEvents = 0;
+volatile uint32_t TimingUtil::adcConversionMisstepEvents = 0;
+volatile uint8_t TimingUtil::adcConversionInProgressMask = 0;
+volatile uint8_t TimingUtil::adcConversionWatchMask = 0;
 
 namespace {
 void enableTimerClock(uint32_t clock_enable_bits) {
@@ -12,6 +18,18 @@ void enableTimerClock(uint32_t clock_enable_bits) {
   const uint32_t apb2enr = RCC->APB2ENR;
   (void)apb2enr;
   __DMB();
+}
+
+bool spiStillClocking(SPI_TypeDef* spi, volatile bool& inProgress) {
+  if (!inProgress) {
+    return false;
+  }
+  const uint32_t status = spi->SR;
+  if ((status & SPI_SR_EOT) != 0 || (status & SPI_SR_TXC) != 0) {
+    inProgress = false;
+    return false;
+  }
+  return true;
 }
 }
 
@@ -35,9 +53,21 @@ void TimingUtil::resetTimers() {
 
   adcFlag = 0;
   dacFlag = false;
+  adcConversionInProgressMask = 0;
+  adcConversionWatchMask = 0;
 
   __enable_irq();
   delayMicroseconds(5);
+}
+
+void TimingUtil::resetTimingWatchdog(uint8_t adc_watch_mask) {
+  __disable_irq();
+  dacSpiMisstepEvents = 0;
+  adcSpiMisstepEvents = 0;
+  adcConversionMisstepEvents = 0;
+  adcConversionInProgressMask = 0;
+  adcConversionWatchMask = adc_watch_mask;
+  __enable_irq();
 }
 
 void TimingUtil::stopAndResetAdcTimer() {
@@ -51,6 +81,7 @@ void TimingUtil::startAdcTimer() {
 
 void TimingUtil::setupTimerOnlyDac(uint32_t period_us) {
   resetTimers();
+  resetTimingWatchdog();
 
   enableTimerClock(RCC_APB2ENR_TIM1EN);
 
@@ -75,7 +106,7 @@ void TimingUtil::setupTimerOnlyDac(uint32_t period_us) {
   TIM1->CR1 = TIM_CR1_ARPE;
   TIM1->DIER |= TIM_DIER_UIE;
 
-  NVIC_SetPriority(TIM1_UP_IRQn, 2);
+  NVIC_SetPriority(TIM1_UP_IRQn, 0);
   NVIC_EnableIRQ(TIM1_UP_IRQn);
 
   TIM1->CR1 |= TIM_CR1_CEN;
@@ -83,6 +114,7 @@ void TimingUtil::setupTimerOnlyDac(uint32_t period_us) {
 
 void TimingUtil::setupTimersOnlyADC(uint32_t adc_period_us) {
   resetTimers();
+  resetTimingWatchdog();
 
   enableTimerClock(RCC_APB2ENR_TIM8EN);
 
@@ -117,8 +149,10 @@ void TimingUtil::setupTimersOnlyADC(uint32_t adc_period_us) {
 }
 
 void TimingUtil::setupTimersTimeSeries(uint32_t dac_period_us,
-                                       uint32_t adc_period_us) {
+                                       uint32_t adc_period_us,
+                                       uint8_t adc_watch_mask) {
   resetTimers();
+  resetTimingWatchdog(adc_watch_mask);
 
   enableTimerClock(RCC_APB2ENR_TIM1EN | RCC_APB2ENR_TIM8EN);
 
@@ -169,7 +203,7 @@ void TimingUtil::setupTimersTimeSeries(uint32_t dac_period_us,
   TIM8->EGR |= 0x01;
   TIM8->SR &= ~TIM_SR_UIF;
 
-  NVIC_SetPriority(TIM1_UP_IRQn, 2);
+  NVIC_SetPriority(TIM1_UP_IRQn, 0);
   NVIC_EnableIRQ(TIM1_UP_IRQn);
   NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 3);
   NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
@@ -179,8 +213,10 @@ void TimingUtil::setupTimersTimeSeries(uint32_t dac_period_us,
 }
 
 void TimingUtil::setupTimersDacLed(uint64_t period_us,
-                                   uint64_t phase_shift_us) {
+                                   uint64_t phase_shift_us,
+                                   uint8_t adc_watch_mask) {
   resetTimers();
+  resetTimingWatchdog(adc_watch_mask);
 
   enableTimerClock(RCC_APB2ENR_TIM1EN | RCC_APB2ENR_TIM8EN);
 
@@ -240,7 +276,7 @@ void TimingUtil::setupTimersDacLed(uint64_t period_us,
   TIM8->EGR |= 0x02;
   TIM8->SR &= ~TIM_SR_CC1IF;
 
-  NVIC_SetPriority(TIM1_UP_IRQn, 2);
+  NVIC_SetPriority(TIM1_UP_IRQn, 0);
   NVIC_EnableIRQ(TIM1_UP_IRQn);
 
   NVIC_SetPriority(TIM8_CC_IRQn, 3);
@@ -261,9 +297,53 @@ void TimingUtil::disableAdcInterrupt() {
   NVIC_DisableIRQ(TIM8_CC_IRQn);
 }
 
+bool TimingUtil::consumeDacFlag() {
+  if (!dacFlag) {
+    return false;
+  }
+  __disable_irq();
+  const bool pending = dacFlag;
+  dacFlag = false;
+  __enable_irq();
+  return pending;
+}
+
+bool TimingUtil::consumeAdcFlag(uint8_t expectedMask) {
+  if (adcFlag != expectedMask) {
+    return false;
+  }
+  __disable_irq();
+  const bool pending = adcFlag == expectedMask;
+  if (pending) {
+    adcFlag = 0;
+  }
+  __enable_irq();
+  return pending;
+}
+
+bool TimingUtil::consumeAnyAdcFlag() {
+  if (!adcFlag) {
+    return false;
+  }
+  __disable_irq();
+  const bool pending = adcFlag != 0;
+  if (pending) {
+    adcFlag = 0;
+  }
+  __enable_irq();
+  return pending;
+}
+
 extern "C" void TIM1_UP_IRQHandler(void) {
   if (TIM1->SR & TIM_SR_UIF) {
     TIM1->SR &= ~TIM_SR_UIF;
+    if (spiStillClocking(SPI1,
+                         PeripheralCommsController::dacSpiTransferInProgress)) {
+      TimingUtil::dacSpiMisstepEvents++;
+    }
+    if (TimingUtil::adcConversionInProgressMask != 0) {
+      TimingUtil::adcConversionMisstepEvents++;
+    }
     FastGpio::pulseLowHigh(ldac);
     TimingUtil::dacFlag = true;
     __SEV();
@@ -273,6 +353,15 @@ extern "C" void TIM1_UP_IRQHandler(void) {
 extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
+    if (spiStillClocking(SPI5,
+                         PeripheralCommsController::adcSpiTransferInProgress)) {
+      TimingUtil::adcSpiMisstepEvents++;
+    }
+    if (TimingUtil::adcConversionInProgressMask != 0) {
+      TimingUtil::adcConversionMisstepEvents++;
+    }
+    TimingUtil::adcConversionInProgressMask =
+        TimingUtil::adcConversionWatchMask;
     FastGpio::digitalWrite(adc_sync, true);
   }
 }
@@ -280,6 +369,15 @@ extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
 extern "C" void TIM8_CC_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_CC1IF) {
     TIM8->SR &= ~TIM_SR_CC1IF;
+    if (spiStillClocking(SPI5,
+                         PeripheralCommsController::adcSpiTransferInProgress)) {
+      TimingUtil::adcSpiMisstepEvents++;
+    }
+    if (TimingUtil::adcConversionInProgressMask != 0) {
+      TimingUtil::adcConversionMisstepEvents++;
+    }
+    TimingUtil::adcConversionInProgressMask =
+        TimingUtil::adcConversionWatchMask;
     FastGpio::digitalWrite(adc_sync, true);
   }
 }

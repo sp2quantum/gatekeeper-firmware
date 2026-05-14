@@ -18,11 +18,11 @@ public:
     }
 
     static OperationResult Failure(const String& message) {
-        return OperationResult(Status::Failure, String("FAILURE: ") + message + "\x00");
+        return OperationResult(Status::Failure, String("FAILURE: ") + message);
     }
 
     static OperationResult Failure() {
-        return OperationResult(Status::Failure, String("FAILURE: Something went wrong!\x00"));
+        return OperationResult(Status::Failure, "FAILURE: Something went wrong!");
     }
 
     // Check if the operation was successful

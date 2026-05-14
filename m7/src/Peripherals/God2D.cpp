@@ -4,15 +4,21 @@
 #include "Peripherals/God.h"
 
 namespace {
-constexpr int kMaxDacChannels = NUM_DAC_CHANNELS;
-constexpr int kMaxAdcChannels = NUM_ADC_BOARDS * NUM_CHANNELS_PER_ADC_BOARD;
-
 bool isValidDacChannelCount(int count) {
-  return count >= 1 && count <= kMaxDacChannels;
+  return count >= 1 && count <= NUM_DAC_CHANNELS;
 }
 
 bool isValidAdcChannelCount(int count) {
-  return count >= 1 && count <= kMaxAdcChannels;
+  return count >= 1 && count <= NUM_ADC_CHANNELS;
+}
+
+bool isUint32AtLeast(float value, uint32_t minimum) {
+  return value >= static_cast<float>(minimum) &&
+         static_cast<double>(value) <= 4294967295.0;
+}
+
+bool isBooleanArg(float value) {
+  return value == 0.0f || value == 1.0f;
 }
 
 OperationResult validateDacChannels(const int* channels, int count) {
@@ -35,32 +41,26 @@ OperationResult validateAdcChannels(const int* channels, int count) {
   return OperationResult::Success();
 }
 
-class DeferredSpiErrorScope {
- public:
-  DeferredSpiErrorScope() { PeripheralCommsController::beginDeferredSpiErrors(); }
-
-  ~DeferredSpiErrorScope() {
-    if (active_) {
-      PeripheralCommsController::cancelDeferredSpiErrors();
-    }
+OperationResult finishRampTimingWatchdog(
+    bool includeAdcConversionMissteps = true) {
+  const uint32_t dacSpiMissteps = TimingUtil::dacSpiMisstepEvents;
+  const uint32_t adcSpiMissteps = TimingUtil::adcSpiMisstepEvents;
+  const uint32_t adcConversionMissteps =
+      TimingUtil::adcConversionMisstepEvents;
+  if (dacSpiMissteps == 0 && adcSpiMissteps == 0 &&
+      (!includeAdcConversionMissteps || adcConversionMissteps == 0)) {
+    return OperationResult::Success();
   }
-
-  OperationResult finish() {
-    active_ = false;
-    return PeripheralCommsController::endDeferredSpiErrors();
+  String message =
+      "Ramp timing misstep during ramp dac_spi_missteps=" +
+      String(dacSpiMissteps) + " adc_spi_missteps=" +
+      String(adcSpiMissteps);
+  if (includeAdcConversionMissteps) {
+    message += " adc_conversion_missteps=" + String(adcConversionMissteps);
   }
-
- private:
-  bool active_ = true;
-};
-
-OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
-  OperationResult spiResult = spiErrors.finish();
-  if (!spiResult.isSuccess()) {
-    return spiResult;
-  }
-  return OperationResult::Success();
+  return OperationResult::Failure(message);
 }
+
 }
 
   void God2D::setup() { initializeRegistry(); }
@@ -86,7 +86,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
   // [adcChannelID] * numAdcChannels
   //
   // The fast/slow axis vectors define a 2D plane in the N-dimensional DAC phase space.
-  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f ∈ [0,1]
+  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f is in [0,1]
   // This allows probing arbitrary 2D planar subspaces anywhere in the full DAC phase space.
   OperationResult God2D::timeSeriesBufferRamp2D(
       const std::vector<float> &args) {
@@ -104,23 +104,29 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     int numAdcChannels = static_cast<int>(args[currentIndex++]);
     int numStepsFast = static_cast<int>(args[currentIndex++]);
     int numStepsSlow = static_cast<int>(args[currentIndex++]);
-    uint32_t dac_interval_us = static_cast<uint32_t>(args[currentIndex++]);
-    uint32_t adc_interval_us = static_cast<uint32_t>(args[currentIndex++]);
-    bool retrace =
-        static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
-    bool snake =
-        static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
+    const float dacIntervalArg = args[currentIndex++];
+    const float adcIntervalArg = args[currentIndex++];
+    const float retraceArg = args[currentIndex++];
+    const float snakeArg = args[currentIndex++];
 
     if (!isValidDacChannelCount(numDacChannels) ||
         !isValidAdcChannelCount(numAdcChannels)) {
       return OperationResult::Failure("Invalid number of channels");
     }
-    if (adc_interval_us < 1 || dac_interval_us < 1) {
+    if (!isUint32AtLeast(adcIntervalArg, 1) ||
+        !isUint32AtLeast(dacIntervalArg, 1)) {
       return OperationResult::Failure("Invalid interval");
+    }
+    if (!isBooleanArg(retraceArg) || !isBooleanArg(snakeArg)) {
+      return OperationResult::Failure("Invalid 2D scan boolean argument");
     }
     if (numStepsFast < 1 || numStepsSlow < 1) {
       return OperationResult::Failure("Invalid number of steps");
     }
+    uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
+    uint32_t adc_interval_us = static_cast<uint32_t>(adcIntervalArg);
+    bool retrace = retraceArg != 0.0f;
+    bool snake = snakeArg != 0.0f;
 
     const size_t expected =
         currentIndex + static_cast<size_t>(numDacChannels) +
@@ -131,25 +137,25 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     // Parse DAC channel IDs
-    int dacChannels[kMaxDacChannels] = {};
+    int dacChannels[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       dacChannels[i] = static_cast<int>(args[currentIndex++]);
     }
 
     // Parse start point
-    float startPoint[kMaxDacChannels] = {};
+    float startPoint[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       startPoint[i] = args[currentIndex++];
     }
 
     // Parse fast axis vector
-    float fastAxisVector[kMaxDacChannels] = {};
+    float fastAxisVector[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       fastAxisVector[i] = args[currentIndex++];
     }
 
     // Parse slow axis vector
-    float slowAxisVector[kMaxDacChannels] = {};
+    float slowAxisVector[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       slowAxisVector[i] = args[currentIndex++];
     }
@@ -159,7 +165,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("Not enough arguments for ADC channels");
     }
 
-    int adcChannels[kMaxAdcChannels] = {};
+    int adcChannels[NUM_ADC_CHANNELS] = {};
     for (int i = 0; i < numAdcChannels; ++i) {
       adcChannels[i] = static_cast<int>(args[currentIndex++]);
     }
@@ -200,21 +206,20 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     // Calculate slow axis step sizes for each DAC channel
-    float slowStepSize[kMaxDacChannels] = {};
+    float slowStepSize[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; i++) {
       slowStepSize[i] =
           numStepsSlow > 1 ? slowAxisVector[i] / (numStepsSlow - 1) : 0.0f;
     }
 
     // Track current position in phase space (starting at startPoint)
-    float currentSlowPosition[kMaxDacChannels] = {};
+    float currentSlowPosition[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; i++) {
       currentSlowPosition[i] = startPoint[i];
     }
 
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
-    DeferredSpiErrorScope spiErrors;
 
     uint8_t adcMask = 0u;
     God::BoardUsage boardUsage{0, std::vector<uint8_t>()};
@@ -238,8 +243,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
       // Calculate start and end voltages for fast axis ramp
       // Position = currentSlowPosition + t * fastAxisVector (where t goes from 0 to 1)
-      float fastV0s[kMaxDacChannels] = {};
-      float fastVfs[kMaxDacChannels] = {};
+      float fastV0s[NUM_DAC_CHANNELS] = {};
+      float fastVfs[NUM_DAC_CHANNELS] = {};
       
       for (int i = 0; i < numDacChannels; ++i) {
         if (isReverse) {
@@ -302,7 +307,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("2D RAMPING_STOPPED");
     }
 
-    return finishRampOrSpiFailure(spiErrors);
+    return finishRampTimingWatchdog(false);
   }
 
 
@@ -320,7 +325,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
   // [adcChannelID] * numAdcChannels
   //
   // The fast/slow axis vectors define a 2D plane in the N-dimensional DAC phase space.
-  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f ∈ [0,1]
+  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f is in [0,1]
   // This allows probing arbitrary 2D planar subspaces anywhere in the full DAC phase space.
   OperationResult God2D::dacLedBufferRamp2D(const std::vector<float> &args) {
     // Minimum required arguments:
@@ -337,21 +342,23 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     int numAdcChannels = static_cast<int>(args[currentIndex++]);
     int numStepsFast = static_cast<int>(args[currentIndex++]);
     int numStepsSlow = static_cast<int>(args[currentIndex++]);
-    uint32_t dac_interval_us = static_cast<uint32_t>(args[currentIndex++]);
-    uint32_t dac_settling_time_us = static_cast<uint32_t>(args[currentIndex++]);
-    bool retrace =
-        static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
-    bool snake =
-        static_cast<bool>(args[currentIndex++]);  // 0.0f = false, 1.0f = true
+    const float dacIntervalArg = args[currentIndex++];
+    const float dacSettlingTimeArg = args[currentIndex++];
+    const float retraceArg = args[currentIndex++];
+    const float snakeArg = args[currentIndex++];
     int numAdcAverages = static_cast<int>(args[currentIndex++]);
 
     if (!isValidDacChannelCount(numDacChannels) ||
         !isValidAdcChannelCount(numAdcChannels)) {
       return OperationResult::Failure("Invalid number of channels");
     }
-    if (dac_settling_time_us < 1 || dac_interval_us < 1 ||
-        dac_settling_time_us >= dac_interval_us) {
+    if (!isUint32AtLeast(dacSettlingTimeArg, 1) ||
+        !isUint32AtLeast(dacIntervalArg, 1) ||
+        dacSettlingTimeArg >= dacIntervalArg) {
       return OperationResult::Failure("Invalid interval or settling time");
+    }
+    if (!isBooleanArg(retraceArg) || !isBooleanArg(snakeArg)) {
+      return OperationResult::Failure("Invalid 2D scan boolean argument");
     }
     if (numAdcAverages < 1) {
       return OperationResult::Failure("Invalid number of ADC averages");
@@ -359,6 +366,11 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     if (numStepsFast < 1 || numStepsSlow < 1) {
       return OperationResult::Failure("Invalid number of steps");
     }
+    uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
+    uint32_t dac_settling_time_us =
+        static_cast<uint32_t>(dacSettlingTimeArg);
+    bool retrace = retraceArg != 0.0f;
+    bool snake = snakeArg != 0.0f;
 
     const size_t expected =
         currentIndex + static_cast<size_t>(numDacChannels) +
@@ -369,25 +381,25 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     // Parse DAC channel IDs
-    int dacChannels[kMaxDacChannels] = {};
+    int dacChannels[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       dacChannels[i] = static_cast<int>(args[currentIndex++]);
     }
 
     // Parse start point
-    float startPoint[kMaxDacChannels] = {};
+    float startPoint[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       startPoint[i] = args[currentIndex++];
     }
 
     // Parse fast axis vector
-    float fastAxisVector[kMaxDacChannels] = {};
+    float fastAxisVector[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       fastAxisVector[i] = args[currentIndex++];
     }
 
     // Parse slow axis vector
-    float slowAxisVector[kMaxDacChannels] = {};
+    float slowAxisVector[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       slowAxisVector[i] = args[currentIndex++];
     }
@@ -397,7 +409,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("Not enough arguments for ADC channels");
     }
 
-    int adcChannels[kMaxAdcChannels] = {};
+    int adcChannels[NUM_ADC_CHANNELS] = {};
     for (int i = 0; i < numAdcChannels; ++i) {
       adcChannels[i] = static_cast<int>(args[currentIndex++]);
     }
@@ -438,24 +450,23 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     // Calculate slow axis step sizes for each DAC channel
-    float slowStepSize[kMaxDacChannels] = {};
+    float slowStepSize[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; i++) {
       slowStepSize[i] =
           numStepsSlow > 1 ? slowAxisVector[i] / (numStepsSlow - 1) : 0.0f;
     }
 
     // Track current position in phase space (starting at startPoint)
-    float currentSlowPosition[kMaxDacChannels] = {};
+    float currentSlowPosition[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; i++) {
       currentSlowPosition[i] = startPoint[i];
     }
 
-    float fastV0s[kMaxDacChannels] = {};
-    float fastVfs[kMaxDacChannels] = {};
+    float fastV0s[NUM_DAC_CHANNELS] = {};
+    float fastVfs[NUM_DAC_CHANNELS] = {};
 
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
-    DeferredSpiErrorScope spiErrors;
 
     uint8_t adcMask = 0u;
     God::BoardUsage boardUsage{0, std::vector<uint8_t>()};
@@ -540,5 +551,5 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("2D RAMPING_STOPPED");
     }
 
-    return finishRampOrSpiFailure(spiErrors);
+    return finishRampTimingWatchdog();
   }

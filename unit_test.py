@@ -1,15 +1,20 @@
-import os,sys,inspect
+import inspect
+import os
+import sys
 import labrad
 import labrad.units as U
 import numpy as np
 import matplotlib.pyplot as plt
 
+NUM_CHANNELS_PER_CARD = 4
 NUM_DAC_CARDS = 2
 NUM_ADC_CARDS = 2
+NUM_DAC_CHANNELS = NUM_DAC_CARDS * NUM_CHANNELS_PER_CARD
+NUM_ADC_CHANNELS = NUM_ADC_CARDS * NUM_CHANNELS_PER_CARD
 
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
-sys.path.insert(0,parentdir)
+sys.path.insert(0, parentdir)
 
 def test1():
     cxn = labrad.connect()
@@ -48,7 +53,7 @@ def test3(da):
         id = da.id()
         serial = da.query('SERIAL_NUMBER')
         env = da.query('GET_ENVIRONMENT')
-        if id == 'DAC-ADC_AD7734-AD5791':
+        if id == 'GateKeeper':
             print("DEVICE SERIAL NUMBER: ", serial)
             print("DEVICE ENVIRONMENT: ", env)
             print("TEST 3: ID PASSED\n")
@@ -86,7 +91,7 @@ def test5(da):
             exit()
         
         #Check if DACs are all within 5mV of 0V
-        for i in range(4*NUM_ADC_CARDS):
+        for i in range(NUM_ADC_CHANNELS):
             voltage = float(da.read_voltage(i))
             if abs(voltage) >= 0.1:
                 print(voltage)
@@ -95,7 +100,7 @@ def test5(da):
          
         #Check if DACs are within 10mV of setpt
         for val in np.linspace(-9.5, 9.5, 21):
-            for j in range(4*NUM_DAC_CARDS):
+            for j in range(NUM_DAC_CHANNELS):
                 da.set_voltage(j, val)
                 output = float(da.read_voltage(j))
                 #print(abs(output - val))
@@ -119,14 +124,14 @@ def test6(da):
             exit()
         
         #Check if DACs are all within 5mV of 0V
-        for i in range(4*NUM_ADC_CARDS):
+        for i in range(NUM_ADC_CHANNELS):
             voltage = float(da.read_voltage(i))
             if abs(voltage) >= 0.005:
                 print("TEST 6: " + testname + " FAILED")
                 exit()
          
         #change the conversion time for each ADC
-        for i in range(4*NUM_ADC_CARDS):
+        for i in range(NUM_ADC_CHANNELS):
             convTime = int(da.set_conversiontime(i, 2600))
             if convTime != 2602:
                 print("TEST 6: " + testname + " FAILED")
@@ -138,14 +143,14 @@ def test6(da):
             exit()
          
         #Check if DACs are all within 50uV of 0V
-        for i in range(4*NUM_ADC_CARDS):
+        for i in range(NUM_ADC_CHANNELS):
             voltage = float(da.read_voltage(i))
             if abs(voltage) >= 0.00005:
                 print("TEST 6: " + testname + " FAILED")
                 exit()
          
         #Check if DACs are within 10mV of 10V -- includes negative values from non clipped overrange 
-        for i in range(4*NUM_DAC_CARDS):
+        for i in range(NUM_DAC_CHANNELS):
             da.set_voltage(i, 10.0)
             output = float(da.read_voltage(i))
             if abs(abs(output) - 10) >= 0.1:
@@ -159,7 +164,7 @@ def test6(da):
             exit()
                 
         #Check if DACs are within 100uV of 10V -- includes negative values from non clipped overrange 
-        for i in range(4*NUM_DAC_CARDS):
+        for i in range(NUM_DAC_CHANNELS):
             da.set_voltage(i, 10.0)
             output = float(da.read_voltage(i))
             if abs(abs(output) - 10) >= 0.0001:
@@ -177,7 +182,7 @@ def test7(da):
         testname = "SINGLE CHANNEL DAC LED BUFFER RAMP"
         print("TEST 7: " + testname)
         
-        for dacNum in range(NUM_DAC_CARDS*4):
+        for dacNum in range(NUM_DAC_CHANNELS):
             fig, axes = plt.subplots(2,4, figsize=(12,6))
             fig2,axes2 = plt.subplots(2,4, figsize=(12,6))
             
@@ -195,7 +200,7 @@ def test7(da):
             
             for j, convTime in enumerate(convTimes):
                 print("Running ramp for DAC"+str(dacNum)+" with conversion time "+str(convTime))
-                for i in range(4*NUM_ADC_CARDS):
+                for i in range(NUM_ADC_CHANNELS):
                     da.set_conversiontime(i, convTime)
                 
                 print(f"da.dac_led_buffer_ramp([{dacNum}], [{dacNum}], [-9.999], [9.999], 1001, {rampTimes[j]}, 100)")
@@ -209,14 +214,14 @@ def test7(da):
             for k, ax in enumerate(axes):
                 ax.plot(x_errs[k][0])
                 convTimeString = format(convTimes[k], "0.3f")
-                ax.set_title("Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+                ax.set_title("Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
                 ax.set_xlabel("Data Index [i]", size = 12)
                 ax.set_ylabel("Error [16-bit LSB]", size=12)
                 
             for k, ax in enumerate(axes2):
                 ax.plot(x_dat[k][0])
                 convTimeString = format(convTimes[k], "0.3f")
-                ax.set_title("Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+                ax.set_title("Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
                 ax.set_xlabel("Data Index [i]", size = 12)
                 ax.set_ylabel("ADC0 [V]", size=12)
             
@@ -249,7 +254,7 @@ def test8(da):
         
         for j, convTime in enumerate(convTimes):
             realConvTime = 0
-            for i in range(4*NUM_ADC_CARDS):
+            for i in range(NUM_ADC_CHANNELS):
                 if i == 0:
                     realConvTime = float(da.set_conversiontime(i, convTime))
                     realConvTimes.append(realConvTime)
@@ -267,7 +272,7 @@ def test8(da):
                 ax.plot(dataset, label = 'ADC'+str(l))
             rampTimeString = format(delays[k], "0.3f")
             convTimeString = format(realConvTimes[k], "0.1f")
-            ax.set_title("DAC Delay: " + str(rampTimeString) + "$\mu$s, Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+            ax.set_title("DAC Delay: " + str(rampTimeString) + "$\\mu$s, Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
             ax.set_xlabel("Data Index [i]", size = 12)
             ax.set_ylabel("ADC [V]", size=12)
             ax.legend()
@@ -288,7 +293,7 @@ def test9(da):
         testname = "SINGLE CHANNEL TIME SERIES  BUFFER RAMP"
         print("TEST 9: " + testname)
         
-        for dacNum in range(NUM_DAC_CARDS*4):
+        for dacNum in range(NUM_DAC_CHANNELS):
             fig, axes = plt.subplots(2,4, figsize=(18,10))
             
             axes = axes.flatten()
@@ -300,7 +305,7 @@ def test9(da):
             
             for j, convTime in enumerate(convTimes):
                 realConvTime = 0
-                for i in range(4*NUM_ADC_CARDS):
+                for i in range(NUM_ADC_CHANNELS):
                     if i == 0:
                         realConvTime = float(da.set_conversiontime(i, convTime))
                         realConvTimes.append(realConvTime)
@@ -315,12 +320,12 @@ def test9(da):
             for k, ax in enumerate(axes):
                 ax.plot(datas[k][0])
                 convTimeString = format(realConvTimes[k], "0.3f")
-                ax.set_title("Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+                ax.set_title("Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
                 ax.set_xlabel("Data Index [i]", size = 12)
                 ax.set_ylabel("ADC [V]", size=12)
                 ax.set_ylim(-9.5,9.5)
                 
-            fig.suptitle("DAC Update Period: 60$\mu$s, Total Ramp Time = 600ms, $\Delta V$ = 1.8mV", fontsize=18)
+            fig.suptitle("DAC Update Period: 60$\\mu$s, Total Ramp Time = 600ms, $\\Delta V$ = 1.8mV", fontsize=18)
             fig.tight_layout()
             
             #plt.show()
@@ -347,7 +352,7 @@ def test10(da):
         
         for j, convTime in enumerate(convTimes):
             realConvTime = 0
-            for i in range(4*NUM_ADC_CARDS):
+            for i in range(NUM_ADC_CHANNELS):
                 if i == 0:
                     realConvTime = float(da.set_conversiontime(i, convTime))
                     realConvTimes.append(realConvTime)
@@ -361,12 +366,12 @@ def test10(da):
             for l, dataset in enumerate(datas[k]):
                 ax.plot(dataset, label = 'ADC'+str(l))
             convTimeString = format(realConvTimes[k], "0.1f")
-            ax.set_title("Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+            ax.set_title("Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
             ax.set_xlabel("Data Index [i]", size = 12)
             ax.set_ylabel("ADC [V]", size=12)
             ax.legend()
-          
-        fig.suptitle("DAC Update Period: 250$\mu$s, Total Ramp Time = 2.5s, $\Delta V$ = 1.8mV", fontsize=18)  
+
+        fig.suptitle("DAC Update Period: 250$\\mu$s, Total Ramp Time = 2.5s, $\\Delta V$ = 1.8mV", fontsize=18)
         fig.tight_layout()
         #plt.show()
        
@@ -394,7 +399,7 @@ def test11(da):
         
         for j, convTime in enumerate(convTimes):
             realConvTime = 0
-            for i in range(4*NUM_ADC_CARDS):
+            for i in range(NUM_ADC_CHANNELS):
                 if i == 0:
                     realConvTime = float(da.set_conversiontime(i, convTime))
                     realConvTimes.append(realConvTime)
@@ -413,7 +418,7 @@ def test11(da):
                 ax.plot(dataset, label = 'ADC'+str(adc_nums[l]))
             rampTimeString = format(delays[k], "0.3f")
             convTimeString = format(realConvTimes[k], "0.1f")
-            ax.set_title("DAC Delay: " + str(rampTimeString) + "$\mu$s, Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+            ax.set_title("DAC Delay: " + str(rampTimeString) + "$\\mu$s, Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
             ax.set_xlabel("Data Index [i]", size = 12)
             ax.set_ylabel("ADC [V]", size=12)
             ax.legend()
@@ -446,7 +451,7 @@ def test12(da):
         
         for j, convTime in enumerate(convTimes):
             realConvTime = 0
-            for i in range(4*NUM_ADC_CARDS):
+            for i in range(NUM_ADC_CHANNELS):
                 if i == 0:
                     realConvTime = float(da.set_conversiontime(i, convTime))
                     realConvTimes.append(realConvTime)
@@ -465,7 +470,7 @@ def test12(da):
                 ax.plot(dataset, label = 'ADC'+str(adc_nums[l]))
             rampTimeString = format(delays[k], "0.3f")
             convTimeString = format(realConvTimes[k], "0.1f")
-            ax.set_title("DAC Delay: " + str(rampTimeString) + "$\mu$s, Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+            ax.set_title("DAC Delay: " + str(rampTimeString) + "$\\mu$s, Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
             ax.set_xlabel("Data Index [i]", size = 12)
             ax.set_ylabel("ADC [V]", size=12)
             ax.legend()
@@ -498,7 +503,7 @@ def test13(da):
         
         for j, convTime in enumerate(convTimes):
             realConvTime = 0
-            for i in range(4*NUM_ADC_CARDS):
+            for i in range(NUM_ADC_CHANNELS):
                 if i == 0:
                     realConvTime = float(da.set_conversiontime(i, convTime))
                     realConvTimes.append(realConvTime)
@@ -517,7 +522,7 @@ def test13(da):
                 ax.plot(dataset, label = 'ADC'+str(adc_nums[l]))
             rampTimeString = format(delays[k], "0.3f")
             convTimeString = format(realConvTimes[k], "0.1f")
-            ax.set_title("DAC Delay: " + str(rampTimeString) + "$\mu$s, Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+            ax.set_title("DAC Delay: " + str(rampTimeString) + "$\\mu$s, Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
             ax.set_xlabel("Data Index [i]", size = 12)
             ax.set_ylabel("ADC [V]", size=12)
             ax.legend()
@@ -550,7 +555,7 @@ def test14(da):
         
         for j, convTime in enumerate(convTimes):
             realConvTime = 0
-            for i in range(4*NUM_ADC_CARDS):
+            for i in range(NUM_ADC_CHANNELS):
                 if i == 0:
                     realConvTime = float(da.set_conversiontime(i, convTime))
                     realConvTimes.append(realConvTime)
@@ -569,7 +574,7 @@ def test14(da):
                 ax.plot(dataset, label = 'ADC'+str(adc_nums[l]))
             rampTimeString = format(delays[k], "0.3f")
             convTimeString = format(realConvTimes[k], "0.1f")
-            ax.set_title("Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+            ax.set_title("Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
             ax.set_xlabel("Data Index [i]", size = 12)
             ax.set_ylabel("ADC [V]", size=12)
             ax.legend()
@@ -602,7 +607,7 @@ def test15(da):
         
         for j, convTime in enumerate(convTimes):
             realConvTime = 0
-            for i in range(4*NUM_ADC_CARDS):
+            for i in range(NUM_ADC_CHANNELS):
                 if i == 0:
                     realConvTime = float(da.set_conversiontime(i, convTime))
                     realConvTimes.append(realConvTime)
@@ -621,7 +626,7 @@ def test15(da):
                 ax.plot(dataset, label = 'ADC'+str(adc_nums[l]))
             rampTimeString = format(delays[k], "0.3f")
             convTimeString = format(realConvTimes[k], "0.1f")
-            ax.set_title("Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+            ax.set_title("Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
             ax.set_xlabel("Data Index [i]", size = 12)
             ax.set_ylabel("ADC [V]", size=12)
             ax.legend()
@@ -654,7 +659,7 @@ def test16(da):
         
         for j, convTime in enumerate(convTimes):
             realConvTime = 0
-            for i in range(4*NUM_ADC_CARDS):
+            for i in range(NUM_ADC_CHANNELS):
                 if i == 0:
                     realConvTime = float(da.set_conversiontime(i, convTime))
                     realConvTimes.append(realConvTime)
@@ -673,7 +678,7 @@ def test16(da):
                 ax.plot(dataset, label = 'ADC'+str(adc_nums[l]))
             rampTimeString = format(delays[k], "0.3f")
             convTimeString = format(realConvTimes[k], "0.1f")
-            ax.set_title("Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+            ax.set_title("Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
             ax.set_xlabel("Data Index [i]", size = 12)
             ax.set_ylabel("ADC [V]", size=12)
             ax.legend()
@@ -692,13 +697,13 @@ def test17(da):
     testname = "DAC READ BACK"
     print("TEST 17: " + testname)
     try:
-        for i in range(NUM_ADC_CARDS*4):
+        for i in range(NUM_ADC_CHANNELS):
             da.set_conversiontime(i, 2600)
         
         test_voltages = np.linspace(-9.9, 9.9, 101)
         
         for voltage in test_voltages:
-            for channel in range(NUM_DAC_CARDS*4):
+            for channel in range(NUM_DAC_CHANNELS):
                 da.set_voltage(channel, voltage)
                 dac_set = float(da.read_dac_voltage(channel))
                 if abs(dac_set - voltage) >= 1e-4:
@@ -723,10 +728,10 @@ def test18(da):
         testname = "ADC NOISE TEST"
         print("TEST 18: " + testname)
         
-        for i in range(4*NUM_DAC_CARDS):
+        for i in range(NUM_DAC_CHANNELS):
             da.set_voltage(i, 0)
         
-        for adcNum in range(NUM_ADC_CARDS*4):
+        for adcNum in range(NUM_ADC_CHANNELS):
             fig, axes = plt.subplots(2,4, figsize=(15,12))
             axes = axes.flatten()
             
@@ -745,7 +750,7 @@ def test18(da):
                 ax.plot(1e6*adc_spectra[k][0])
                 convTimeString = format(convTimes[k], "0.3f")
                 stdString = format(std, "0.3f")
-                ax.set_title("Conversion Time: " + str(convTimeString) + "$\mu$s, $\sigma$ = "+str(stdString)+"$\mu$V" , size = 12)
+                ax.set_title("Conversion Time: " + str(convTimeString) + "$\\mu$s, $\\sigma$ = "+str(stdString)+"$\\mu$V" , size = 12)
                 ax.set_xlabel("Data Index [i]", size = 12)
                 ax.set_ylabel("ADC"+str(adcNum)+" [V]", size=12)
                 
@@ -765,7 +770,7 @@ def test18(da):
         testname = "Spectrum Analyzer"
         print("TEST 15: " + testname)
         
-        for dacNum in range(NUM_DAC_CARDS*4):
+        for dacNum in range(NUM_DAC_CHANNELS):
             fig, axes = plt.subplots(2,2, figsize=(12,8))
             
             axes = axes.flatten()
@@ -810,12 +815,12 @@ def test18(da):
             for k, ax in enumerate(axes):
                 ax.plot(freqs[k],datas[k])
                 convTimeString = format(realConvTimes[k], "0.3f")
-                ax.set_title("Conversion Time: " + str(convTimeString) + "$\mu$s", size = 12)
+                ax.set_title("Conversion Time: " + str(convTimeString) + "$\\mu$s", size = 12)
                 ax.set_xlabel("Frequency [Hz]", size = 12)
                 ax.set_ylabel("Voltage Spectral Density [nV/Sqrt(Hz)]", size=12)
                 #ax.set_xlim(0.2,3000)
                 
-            #fig.suptitle("DAC Update Period: 50$\mu$s, Total Ramp Time = 500ms, $\Delta V$ = 1.8mV", fontsize=18)
+            #fig.suptitle("DAC Update Period: 50$\\mu$s, Total Ramp Time = 500ms, $\\Delta V$ = 1.8mV", fontsize=18)
             fig.tight_layout()
             
             #plt.show()
@@ -849,5 +854,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-    

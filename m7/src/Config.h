@@ -1,11 +1,14 @@
 #pragma once
 #include <Arduino.h>
 
-#define NUM_CHANNELS_PER_DAC_BOARD 4
-#define NUM_CHANNELS_PER_ADC_BOARD 4
-#define NUM_ADC_BOARDS 2
-
-#define NUM_DAC_CHANNELS 8
+constexpr int NUM_CHANNELS_PER_DAC_BOARD = 4;
+constexpr int NUM_CHANNELS_PER_ADC_BOARD = 4;
+constexpr int NUM_DAC_BOARDS = 2;
+constexpr int NUM_ADC_BOARDS = 2;
+constexpr int NUM_DAC_CHANNELS = NUM_DAC_BOARDS * NUM_CHANNELS_PER_DAC_BOARD;
+constexpr int NUM_ADC_CHANNELS = NUM_ADC_BOARDS * NUM_CHANNELS_PER_ADC_BOARD;
+constexpr int NUM_DAC_CALIBRATION_CHANNELS = NUM_DAC_CHANNELS;
+constexpr int NUM_ADC_CALIBRATION_CHANNELS = NUM_ADC_CHANNELS;
 const int adc_cs_pins[NUM_ADC_BOARDS] = {39, 40};
 const int dac_cs_pins[NUM_DAC_CHANNELS] = {23, 24, 25, 26, 27, 28, 29, 30};
 #define ldac 22
@@ -22,9 +25,9 @@ const int drdy[NUM_ADC_BOARDS] = {47, 48};
 #define led 7 // indicator LED
 #define data_pin 6 // data indicator LED
 #define err 11 // error indicator LED
-constexpr uint32_t DAC_SPI_FREQUENCY_HZ = 22000000;
+constexpr uint32_t DAC_SPI_FREQUENCY_HZ = 35000000; // max is 35MHz
 constexpr uint8_t DAC_SPI_MODE = 1;
-constexpr uint32_t ADC_SPI_FREQUENCY_HZ = 8000000;
+constexpr uint32_t ADC_SPI_FREQUENCY_HZ = 13000000; // max is 8MHz
 constexpr uint8_t ADC_SPI_MODE = 0;
 
 // Global DAC voltage limits - channel specific arrays

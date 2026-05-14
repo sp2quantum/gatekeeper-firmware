@@ -105,6 +105,7 @@ class ADCBoard {
 
   int getDataReadyPin() const;
   int getBoardIndex() const;
+  int getCsPin() const;
 
   void setReadyFlag();
   void clearReadyFlag();

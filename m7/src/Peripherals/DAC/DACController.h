@@ -33,6 +33,11 @@ class DACController {
   static bool isChannelIndexValid(int channelIndex);
   static OperationResult setVoltage(int channel_index, float voltage);
   static bool setVoltageNoTransactionNoLdac(int channel_index, float voltage);
+  static bool encodeVoltagePacket(int channel_index, float voltage,
+                                  byte packet[3]);
+  static bool writeVoltagePacketNoLdac(int channel_index,
+                                       const byte packet[3]);
+  static int getCsPin(int channel_index);
   static OperationResult toggleLdacTest();
   static void toggleLdac();
   static OperationResult getVoltage(int channel_index);

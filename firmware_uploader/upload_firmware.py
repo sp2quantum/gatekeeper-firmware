@@ -1,17 +1,21 @@
 import argparse
 import shutil
-import subprocess
 import tempfile
-import time
 from pathlib import Path
 
 from gatekeeper_upload import (
     DEFAULT_CALIBRATION_PATH,
+    DFU_MANUAL_WAIT_S,
+    M4_ADDRESS,
+    M7_LEAVE_ADDRESS,
     SERIAL_PATTERN,
     backup_device_state,
     binary_contains_serial_marker,
     choose_giga_port,
     default_serial_with_current_year,
+    dfu_device_present,
+    dfu_download,
+    find_dfu_util,
     get_available_path,
     load_calibration_state,
     open_command_port,
@@ -19,19 +23,14 @@ from gatekeeper_upload import (
     restore_calibration,
     send_command,
     serial_with_current_year,
+    trigger_dfu_mode,
     verify_calibration,
+    wait_for_dfu_device,
     wait_for_giga_port,
     wait_for_ready,
     write_calibration_state_file,
 )
 
-
-ARDUINO_GIGA_DFU_DEVICE_ID = "2341:0366"
-DFU_AUTO_WAIT_S = 8
-DFU_MANUAL_WAIT_S = 60
-M4_ADDRESS = "0x08100000"
-M7_ADDRESS = "0x08040000"
-M7_LEAVE_ADDRESS = f"{M7_ADDRESS}:leave"
 
 M4_FIRMWARE_NAME = "firmwareM4.bin"
 M7_FIRMWARE_NAME = "firmwareM7.bin"
@@ -39,70 +38,6 @@ M7_FIRMWARE_NAME = "firmwareM7.bin"
 
 def log(message):
     print(f"[upload-firmware] {message}")
-
-
-def find_dfu_util():
-    return shutil.which("dfu-util")
-
-
-def dfu_list_output(dfu_util):
-    result = subprocess.run(
-        [dfu_util, "-l", "-d", ARDUINO_GIGA_DFU_DEVICE_ID],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return f"{result.stdout}\n{result.stderr}"
-
-
-def dfu_device_present(dfu_util):
-    return "Found DFU" in dfu_list_output(dfu_util)
-
-
-def wait_for_dfu_device(dfu_util, timeout_s):
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if dfu_device_present(dfu_util):
-            return True
-        time.sleep(0.5)
-    return False
-
-
-def trigger_dfu_mode(dfu_util, port):
-    log(f"Triggering DFU mode from {port}...")
-    try:
-        import serial
-
-        with serial.Serial(port, 1200, timeout=1):
-            pass
-    except Exception as exc:  # noqa: BLE001
-        log(f"1200-baud touch failed: {exc}")
-
-    if wait_for_dfu_device(dfu_util, DFU_AUTO_WAIT_S):
-        return
-
-    log(
-        "DFU did not appear after the 1200-baud touch. "
-        "Double-tap reset now to enter the bootloader."
-    )
-    if not wait_for_dfu_device(dfu_util, DFU_MANUAL_WAIT_S):
-        raise RuntimeError("Timed out waiting for USB DFU mode.")
-
-
-def dfu_download(dfu_util, address, firmware_path):
-    command = [
-        dfu_util,
-        "-d",
-        ARDUINO_GIGA_DFU_DEVICE_ID,
-        "-a",
-        "0",
-        "-s",
-        address,
-        "-D",
-        str(firmware_path),
-    ]
-    log("$ " + " ".join(command))
-    subprocess.run(command, check=True)
 
 
 def resolve_serial_number(port, serial_suffix):
@@ -154,9 +89,9 @@ def prepare_patched_firmware(source_path, serial_number, output_dir):
 
 def upload_bundle(dfu_util, m4_path, m7_path):
     log("Uploading M4 without leaving DFU...")
-    dfu_download(dfu_util, M4_ADDRESS, m4_path)
+    dfu_download(dfu_util, M4_ADDRESS, m4_path, log_func=log)
     log("Uploading M7 and leaving DFU...")
-    dfu_download(dfu_util, M7_LEAVE_ADDRESS, m7_path)
+    dfu_download(dfu_util, M7_LEAVE_ADDRESS, m7_path, log_func=log)
 
 
 def nop_test(port, expected_serial_number):
@@ -230,7 +165,7 @@ def main():
         patched_m4 = prepare_patched_firmware(firmware_path_m4, serial_number, temp_dir)
 
         if port is not None:
-            trigger_dfu_mode(dfu_util, port)
+            trigger_dfu_mode(dfu_util, port, log_func=log)
         elif not dfu_device_present(dfu_util):
             raise RuntimeError("Arduino GIGA USB DFU device disappeared before upload.")
         else:

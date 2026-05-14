@@ -26,7 +26,7 @@ class God2D {
   // [adcChannelID] * numAdcChannels
   //
   // The fast/slow axis vectors define a 2D plane in the N-dimensional DAC phase space.
-  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f ∈ [0,1]
+  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f is in [0,1]
   // This allows probing arbitrary 2D planar subspaces anywhere in the full DAC phase space.
   static OperationResult timeSeriesBufferRamp2D(
       const std::vector<float> &args);
@@ -44,7 +44,7 @@ class God2D {
   // [adcChannelID] * numAdcChannels
   //
   // The fast/slow axis vectors define a 2D plane in the N-dimensional DAC phase space.
-  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f ∈ [0,1]
+  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f is in [0,1]
   // This allows probing arbitrary 2D planar subspaces anywhere in the full DAC phase space.
   static OperationResult dacLedBufferRamp2D(const std::vector<float> &args);
 

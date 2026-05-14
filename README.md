@@ -121,17 +121,10 @@ The two modes we have for precise timings are Time Series, and DAC-Led. Time Ser
 
 When two events occur at the same time, the following behavior occurs:
 
-- **No matter what, DAC SPI gets sent before all ADC SPIs.**
-- *Note: if you travel faster than the speed of light, you could observe the opposite*
-
-- **For fully upgraded 16x16 DAC/ADC Hardware:**
-- ADCs are read in channel-ascending order, with simultaneous measurements taken on channels on separate cards with the same index (of active channels).
-- For example, if channels 0 and 3 are converting then channel 0 will convert before channel 3
-- If, instead, channels 0, 1, 5, and 6 were active then channels 0 and 5 would convert simultaneously and channels 1 and 6 would convert simultaneously. Even though these channels aren't "vertical" on the ADC panel, they will still convert simultaneously since they are the only active channels and will be treated as "vertical".
-- **For drop-in Giga+Firmware upgraded DAC/ADC Hardware:**
-- ADCs convert in ascending order by index, with no simultaneity *guaranteed*
-- Simultaneity can, in principle, occur with the same schema as described for the fully upgraded DAC/ADC hardware if the conversion time of the ADCs is longer than the SPI clock speed of the ADC.
-- However, exactly when the ADCs convert is still *undefined behavior* and simultaneity is not guaranteed.
+- DAC SPI is sent before ADC SPI.
+- ADC channels on separate ADC boards can convert simultaneously.
+- ADC channels on the same ADC board are serviced sequentially in channel order.
+- Timing checks should be based on the slowest active ADC board: sum the conversion times for channels selected on each board, then use the maximum board total plus firmware/SPI overhead.
 
 ### Dual Core Comms
 

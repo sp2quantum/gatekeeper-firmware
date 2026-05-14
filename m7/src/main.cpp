@@ -104,9 +104,11 @@ void enableM4() {
 static CalibrationData loadCalibrationData() {
   CalibrationData calibration_data;
   if (!readCalibrationFromFlash(calibration_data)) {
-    for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i) {
+    for (size_t i = 0; i < NUM_DAC_CALIBRATION_CHANNELS; ++i) {
       calibration_data.gain[i] = 1.0f;
       calibration_data.offset[i] = 0.0f;
+    }
+    for (size_t i = 0; i < NUM_ADC_CALIBRATION_CHANNELS; ++i) {
       calibration_data.adc_offset[i] = 0x800000;
       calibration_data.adc_gain[i] = 0x200000;
     }
@@ -114,7 +116,7 @@ static CalibrationData loadCalibrationData() {
     return calibration_data;
   }
 
-  for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i) {
+  for (size_t i = 0; i < NUM_DAC_CALIBRATION_CHANNELS; ++i) {
     if (calibration_data.gain[i] < 0.5f || calibration_data.gain[i] > 1.5f) {
       calibration_data.gain[i] = 1.0f;
     }
@@ -160,7 +162,7 @@ static void setupWorker() {
 
   if (!calibration_data.adcCalibrated) {
     ADCController::hardResetAllADCBoards();
-    for (int i = 0; i < NUM_ADC_BOARDS * NUM_CHANNELS_PER_ADC_BOARD; i++) {
+    for (int i = 0; i < NUM_ADC_CHANNELS; i++) {
       uint32_t zeroScaleCalibration =
           ADCController::getChZeroScaleCalibration(i).getMessage().toInt();
       uint32_t fullScaleCalibration =
@@ -172,7 +174,7 @@ static void setupWorker() {
     }
     updateCalibrationData(calibration_data);
   } else {
-    for (int i = 0; i < NUM_ADC_BOARDS * NUM_CHANNELS_PER_ADC_BOARD; i++) {
+    for (int i = 0; i < NUM_ADC_CHANNELS; i++) {
       ADCController::applyChZeroScaleCalibration(i,
                                                  calibration_data.adc_offset[i]);
 

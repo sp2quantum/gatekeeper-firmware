@@ -50,7 +50,10 @@ class ADCController {
   static OperationResult applyChFullScaleCalibration(int channel_index,
                                                      uint32_t value);
   static OperationResult resetToPreviousConversionTimesSerial();
-  static float getDataReadyPin(int board_index);
+  static int getDataReadyPin(int board_index);
+  static int getCsPin(int adc_channel);
+  static bool buildConversionDataRead(int adc_channel, byte packet[4]);
+  static double conversionDataPacketToVoltage(const byte packet[4]);
   static uint32_t getConversionData(int adc_channel);
   static OperationResult setRDYFN(int adc_channel);
   static OperationResult unsetRDYFN(int adc_channel);

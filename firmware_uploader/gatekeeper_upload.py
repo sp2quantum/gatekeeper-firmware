@@ -1,6 +1,8 @@
 import json
 import re
 import signal
+import shutil
+import subprocess
 import threading
 import time
 from contextlib import contextmanager
@@ -13,6 +15,15 @@ import serial.tools.list_ports
 
 SERIAL_BAUD = 115200
 SERIAL_TIMEOUT_S = 2
+ARDUINO_GIGA_DFU_DEVICE_ID = "2341:0366"
+M7_ADDRESS = "0x08040000"
+M4_ADDRESS = "0x08100000"
+M7_READ_ADDRESS = f"{M7_ADDRESS}:"
+M4_READ_ADDRESS = f"{M4_ADDRESS}:"
+M7_LEAVE_ADDRESS = f"{M7_ADDRESS}:leave"
+M4_LEAVE_ADDRESS = f"{M4_ADDRESS}:leave"
+DFU_AUTO_WAIT_S = 8
+DFU_MANUAL_WAIT_S = 60
 READY_RETRY_COUNT = 60
 READY_RETRY_DELAY_S = 0.5
 CALIBRATION_WRITE_DELAY_S = 0.05
@@ -20,8 +31,12 @@ CALIBRATION_DOWNLOAD_TIMEOUT_S = 10
 CALIBRATION_UPLOAD_TIMEOUT_S = 10
 CALIBRATION_VERIFY_TIMEOUT_S = 10
 FLOAT_VERIFY_ABS_TOL = 1e-6
-ADC_CHANNEL_COUNT = 8
-DAC_CHANNEL_COUNT = 8
+CHANNELS_PER_DAC_BOARD = 4
+CHANNELS_PER_ADC_BOARD = 4
+DAC_BOARD_COUNT = 2
+ADC_BOARD_COUNT = 2
+DAC_CHANNEL_COUNT = DAC_BOARD_COUNT * CHANNELS_PER_DAC_BOARD
+ADC_CHANNEL_COUNT = ADC_BOARD_COUNT * CHANNELS_PER_ADC_BOARD
 SUPPORTED_ENVIRONMENT = "GATEKEEPER"
 SERIAL_PATTERN = re.compile(r"DA_\d{4}_.{3}$")
 NO_CALIBRATION_UPLOAD_SERIAL_PATTERN = re.compile(r"DA_\d{4}____$")
@@ -40,6 +55,111 @@ M4_ENVIRONMENTS = {
 
 def log(message):
     print(f"[upload-persistence] {message}")
+
+
+def find_executable(*names):
+    for name in names:
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def find_dfu_util():
+    path = find_executable("dfu-util")
+    if path:
+        return path
+
+    candidates = [
+        Path.home() / ".platformio" / "packages" / "tool-dfuutil" / "bin" / "dfu-util",
+        Path.home() / ".platformio" / "packages" / "tool-dfuutil-arduino" / "dfu-util",
+        Path.home()
+        / ".platformio"
+        / "packages"
+        / "tool-stm32duino"
+        / "dfu-util"
+        / "dfu-util",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def dfu_list_output(dfu_util):
+    result = subprocess.run(
+        [dfu_util, "-l", "-d", ARDUINO_GIGA_DFU_DEVICE_ID],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return f"{result.stdout}\n{result.stderr}"
+
+
+def dfu_device_present(dfu_util):
+    return "Found DFU" in dfu_list_output(dfu_util)
+
+
+def wait_for_dfu_device(dfu_util, timeout_s):
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if dfu_device_present(dfu_util):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def trigger_dfu_mode(
+    dfu_util,
+    port,
+    log_func=log,
+    manual_prompt="Double-tap reset now to enter the bootloader.",
+):
+    log_func(f"Triggering DFU mode from {port}...")
+    try:
+        with serial.Serial(port, 1200, timeout=1):
+            pass
+    except (serial.SerialException, OSError) as exc:
+        log_func(f"1200-baud touch failed: {exc}")
+
+    if wait_for_dfu_device(dfu_util, DFU_AUTO_WAIT_S):
+        return
+
+    log_func(f"DFU did not appear after the 1200-baud touch. {manual_prompt}")
+    if not wait_for_dfu_device(dfu_util, DFU_MANUAL_WAIT_S):
+        raise RuntimeError("Timed out waiting for USB DFU mode.")
+
+
+def dfu_download(dfu_util, address, firmware_path, log_func=log):
+    command = [
+        dfu_util,
+        "-d",
+        ARDUINO_GIGA_DFU_DEVICE_ID,
+        "-a",
+        "0",
+        "-s",
+        address,
+        "-D",
+        str(firmware_path),
+    ]
+    log_func("$ " + " ".join(command))
+    subprocess.run(command, check=True)
+
+
+def dfu_upload(dfu_util, address, output_path, log_func=log):
+    command = [
+        dfu_util,
+        "-d",
+        ARDUINO_GIGA_DFU_DEVICE_ID,
+        "-a",
+        "0",
+        "-s",
+        address,
+        "-U",
+        str(output_path),
+    ]
+    log_func("$ " + " ".join(command))
+    subprocess.run(command, check=True)
 
 
 class CalibrationOperationTimeout(RuntimeError):

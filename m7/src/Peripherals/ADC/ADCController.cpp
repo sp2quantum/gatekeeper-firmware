@@ -97,7 +97,7 @@ bool ADCController::isChannelIndexValid(int channelIndex) {
 
 bool ADCController::isSavedChannelIndexValid(int channelIndex) {
   return channelIndex >= 0 &&
-         channelIndex < NUM_ADC_BOARDS * NUM_CHANNELS_PER_ADC_BOARD;
+         channelIndex < NUM_ADC_CHANNELS;
 }
 
 OperationResult ADCController::readChannelVoltage(int channel_index) {
@@ -125,6 +125,9 @@ OperationResult ADCController::setChopping(bool chop) {
 }
 
 OperationResult ADCController::getChopping() {
+  if (adc_boards.empty()) {
+    return OperationResult::Failure("No ADC boards configured");
+  }
   return adc_boards[0].chopEnabled ? OperationResult::Success("true")
                                    : OperationResult::Success("false");
 }
@@ -139,6 +142,9 @@ OperationResult ADCController::getRevisionRegister(int board_index) {
 }
 
 OperationResult ADCController::getChZeroScaleCalibration(int channel_index) {
+  if (!isChannelIndexValid(channel_index)) {
+    return OperationResult::Failure("Invalid channel index");
+  }
   uint32_t data = adc_boards[getBoardIndexFromGlobalIndex(channel_index)]
                       .getZeroScaleCalibration(
                           getChannelIndexFromGlobalIndex(channel_index));
@@ -146,6 +152,9 @@ OperationResult ADCController::getChZeroScaleCalibration(int channel_index) {
 }
 
 OperationResult ADCController::getChFullScaleCalibration(int channel_index) {
+  if (!isChannelIndexValid(channel_index)) {
+    return OperationResult::Failure("Invalid channel index");
+  }
   uint32_t data = adc_boards[getBoardIndexFromGlobalIndex(channel_index)]
                       .getFullScaleCalibration(
                           getChannelIndexFromGlobalIndex(channel_index));
@@ -259,8 +268,38 @@ OperationResult ADCController::resetToPreviousConversionTimesSerial() {
   return OperationResult::Success("Reset to previous conversion times");
 }
 
-float ADCController::getDataReadyPin(int board_index) {
+int ADCController::getDataReadyPin(int board_index) {
+  if (board_index < 0 ||
+      static_cast<size_t>(board_index) >= adc_boards.size()) {
+    return NC;
+  }
   return adc_boards[board_index].getDataReadyPin();
+}
+
+int ADCController::getCsPin(int adc_channel) {
+  if (!isChannelIndexValid(adc_channel)) {
+    return NC;
+  }
+  return adc_boards[getBoardIndexFromGlobalIndex(adc_channel)].getCsPin();
+}
+
+bool ADCController::buildConversionDataRead(int adc_channel, byte packet[4]) {
+  if (!isChannelIndexValid(adc_channel)) {
+    return false;
+  }
+  packet[0] = READ | ADDR_CHANNELDATA(getChannelIndexFromGlobalIndex(adc_channel));
+  packet[1] = 0;
+  packet[2] = 0;
+  packet[3] = 0;
+  return true;
+}
+
+double ADCController::conversionDataPacketToVoltage(const byte packet[4]) {
+  const uint32_t upper = packet[1];
+  const uint32_t lower = packet[2];
+  const uint32_t last = packet[3];
+  const uint32_t raw = (upper << 16) | (lower << 8) | last;
+  return ADC2DOUBLE(raw);
 }
 
 uint32_t ADCController::getConversionData(int adc_channel) {
@@ -269,11 +308,17 @@ uint32_t ADCController::getConversionData(int adc_channel) {
 }
 
 OperationResult ADCController::setRDYFN(int adc_channel) {
+  if (!isChannelIndexValid(adc_channel)) {
+    return OperationResult::Failure("Invalid channel index");
+  }
   adc_boards[getBoardIndexFromGlobalIndex(adc_channel)].setRDYFN();
   return OperationResult::Success("Set RDYFN");
 }
 
 OperationResult ADCController::unsetRDYFN(int adc_channel) {
+  if (!isChannelIndexValid(adc_channel)) {
+    return OperationResult::Failure("Invalid channel index");
+  }
   adc_boards[getBoardIndexFromGlobalIndex(adc_channel)].unsetRDYFN();
   return OperationResult::Success("Unset RDYFN");
 }
@@ -323,6 +368,9 @@ OperationResult ADCController::continuousConvertRead(int channel_index,
 }
 
 OperationResult ADCController::idleMode(int adc_channel) {
+  if (!isChannelIndexValid(adc_channel)) {
+    return OperationResult::Failure("Invalid channel index");
+  }
   adc_boards[getBoardIndexFromGlobalIndex(adc_channel)].idleMode(
       getChannelIndexFromGlobalIndex(adc_channel));
   return OperationResult::Success("Returned ADC " + String(adc_channel) +
@@ -334,7 +382,8 @@ OperationResult ADCController::getChannelsActive() {
   for (auto& board : adc_boards) {
     for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
       if (board.isChannelActive(i)) {
-        statuses.push_back(i);
+        statuses.push_back(board.getBoardIndex() * NUM_CHANNELS_PER_ADC_BOARD +
+                           i);
       }
     }
   }

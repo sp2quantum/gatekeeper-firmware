@@ -10,7 +10,10 @@
       "array": "cpp",
       "string": "cpp",
       "string_view": "cpp",
-      "vector": "cpp"
+      "vector": "cpp",
+      "*.tcc": "cpp",
+      "mutex": "cpp",
+      "thread": "cpp"
     }
   }
 }

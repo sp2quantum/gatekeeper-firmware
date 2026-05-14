@@ -1,6 +1,8 @@
 #include "UserIOHandler.h"
 
+#include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #include "FunctionRegistry/FunctionRegistry.h"
@@ -18,6 +20,167 @@
 
 __attribute__((section(".serial_number")))
 const char UserIOHandler::serial_number[29] = "__SERIAL_NUMBER__DA_2025_ABC";
+
+namespace {
+constexpr size_t COMMAND_NAME_CAPACITY = 64;
+constexpr size_t NUMBER_TOKEN_CAPACITY = 64;
+constexpr size_t COMMAND_READ_CHUNK_SIZE = 128;
+constexpr size_t MAX_COMMAND_ARGS = 100000;
+
+struct StreamingCommandParser {
+  char command[COMMAND_NAME_CAPACITY];
+  char token[NUMBER_TOKEN_CAPACITY];
+  size_t commandLength;
+  size_t tokenLength;
+  bool parsingArgs;
+  const char* error;
+  std::vector<float> args;
+};
+
+StreamingCommandParser parser = {};
+
+void resetParser() {
+  parser.commandLength = 0;
+  parser.tokenLength = 0;
+  parser.parsingArgs = false;
+  parser.error = nullptr;
+  parser.args.clear();
+}
+
+void sendText(const char* message) {
+  sendTextToGateway(message, strlen(message) + 1);
+}
+
+bool finishToken() {
+  parser.token[parser.tokenLength] = '\0';
+
+  char* tokenStart = parser.token;
+  while (*tokenStart == ' ' || *tokenStart == '\t') {
+    tokenStart++;
+  }
+
+  char* tokenEnd = parser.token + parser.tokenLength;
+  while (tokenEnd > tokenStart &&
+         (tokenEnd[-1] == ' ' || tokenEnd[-1] == '\t')) {
+    tokenEnd--;
+  }
+  *tokenEnd = '\0';
+
+  if (*tokenStart == '\0') {
+    parser.error = "FAILURE: Invalid arguments";
+    return false;
+  }
+
+  char* endPtr = nullptr;
+  const double value = strtod(tokenStart, &endPtr);
+  if (endPtr == tokenStart || !std::isfinite(value)) {
+    parser.error = "FAILURE: Invalid arguments";
+    return false;
+  }
+  while (*endPtr == ' ' || *endPtr == '\t') {
+    endPtr++;
+  }
+  if (*endPtr != '\0') {
+    parser.error = "FAILURE: Invalid arguments";
+    return false;
+  }
+
+  if (parser.args.size() >= MAX_COMMAND_ARGS) {
+    parser.error = "FAILURE: Command has too many arguments";
+    return false;
+  }
+  parser.args.push_back(static_cast<float>(value));
+  parser.tokenLength = 0;
+  return true;
+}
+
+void executeParsedCommand() {
+  parser.command[parser.commandLength] = '\0';
+  String command(parser.command);
+  command.trim();
+  if (command.length() == 0) {
+    resetParser();
+    return;
+  }
+
+  OperationResult result = OperationResult::Failure("Something went wrong!");
+  FunctionRegistry::ExecuteResult executeResult =
+      FunctionRegistry::execute(command, parser.args, result);
+
+  switch (executeResult) {
+    case FunctionRegistry::ExecuteResult::Success:
+      if (result.hasMessage()) {
+        const size_t messageSize = result.getMessage().length() + 1;
+        char* message = new char[messageSize];
+        result.getMessage().toCharArray(message, messageSize);
+        sendTextToGateway(message, messageSize);
+        delete[] message;
+      }
+      break;
+    case FunctionRegistry::ExecuteResult::ArgumentError:
+      sendText("FAILURE: Argument error");
+      break;
+    case FunctionRegistry::ExecuteResult::FunctionNotFound:
+      sendText("FAILURE: Function not found");
+      break;
+  }
+
+  resetParser();
+}
+
+void finishCommand() {
+  if (parser.error) {
+    sendText(parser.error);
+    resetParser();
+    return;
+  }
+  if (parser.parsingArgs && parser.tokenLength > 0 && !finishToken()) {
+    sendText(parser.error);
+    resetParser();
+    return;
+  }
+  if (parser.error) {
+    sendText(parser.error);
+    resetParser();
+    return;
+  }
+  executeParsedCommand();
+}
+
+void consumeCommandByte(char c) {
+  if (c == '\r') {
+    return;
+  }
+  if (c == '\n') {
+    finishCommand();
+    return;
+  }
+  if (parser.error) {
+    return;
+  }
+  if (!parser.parsingArgs) {
+    if (c == ',') {
+      parser.parsingArgs = true;
+      return;
+    }
+    if (parser.commandLength >= sizeof(parser.command) - 1) {
+      parser.error = "FAILURE: Command name too long";
+      return;
+    }
+    parser.command[parser.commandLength++] = c;
+    return;
+  }
+  if (c == ',') {
+    finishToken();
+    return;
+  }
+  if (parser.tokenLength >= sizeof(parser.token) - 1) {
+    parser.error = "FAILURE: Numeric argument too long";
+    return;
+  }
+  parser.token[parser.tokenLength++] = c;
+}
+}  // namespace
 
 void UserIOHandler::setup() {
   registerMemberFunction(nop, "NOP");
@@ -46,7 +209,7 @@ OperationResult UserIOHandler::getEnvironment() {
 }
 
 OperationResult UserIOHandler::id() {
-  return OperationResult::Success("DAC-ADC_AD7734-AD5791");
+  return OperationResult::Success("GateKeeper 1.0");
 }
 
 OperationResult UserIOHandler::rdy() {
@@ -57,99 +220,16 @@ OperationResult UserIOHandler::serialNumber() {
   return OperationResult::Success(serial_number + 17);
 }
 
-bool UserIOHandler::readCommandLine(String& out) {
-  out = "";
-  if (!hasCommandFromGateway()) {
-    return false;
-  }
-
-  char buffer[4096];
-  size_t size = sizeof(buffer);
-  if (!receiveCommandFromGateway(buffer, size)) {
-    return false;
-  }
-  out = String(buffer, size);
-  return true;
-}
-
 void UserIOHandler::handleUserIO() {
+  char bytes[COMMAND_READ_CHUNK_SIZE];
   while (hasCommandFromGateway()) {
-    String commandLine;
-    if (!readCommandLine(commandLine)) {
-      return;
+    const size_t count =
+        receiveCommandBytesFromGateway(bytes, sizeof(bytes));
+    if (count == 0) {
+      break;
     }
-
-    commandLine.trim();
-    if (commandLine.length() == 0) {
-      return;
+    for (size_t i = 0; i < count; i++) {
+      consumeCommandByte(bytes[i]);
     }
-
-    int commaPos = commandLine.indexOf(',');
-    String command =
-        (commaPos == -1) ? commandLine : commandLine.substring(0, commaPos);
-    command.trim();
-
-    std::vector<float> args;
-    if (commaPos != -1) {
-      const char* p = commandLine.c_str() + commaPos + 1;
-      while (*p != '\0') {
-        while (*p == ' ' || *p == '\t') {
-          p++;
-        }
-        if (*p == '\0') {
-          break;
-        }
-
-        char* endPtr = nullptr;
-        double v = strtod(p, &endPtr);
-        if (endPtr == p) {
-          sendTextToGateway("Invalid arguments!", sizeof("Invalid arguments!"));
-          return;
-        }
-        args.push_back(static_cast<float>(v));
-
-        p = endPtr;
-        while (*p == ' ' || *p == '\t') {
-          p++;
-        }
-
-        if (*p == ',') {
-          p++;
-          continue;
-        }
-        if (*p == '\0' || *p == '\r' || *p == '\n') {
-          break;
-        }
-
-        sendTextToGateway("Invalid arguments!", sizeof("Invalid arguments!"));
-        return;
-      }
-    }
-
-    OperationResult result = OperationResult::Failure("Something went wrong!");
-    FunctionRegistry::ExecuteResult executeResult =
-        FunctionRegistry::execute(command, args, result);
-
-    switch (executeResult) {
-      case FunctionRegistry::ExecuteResult::Success:
-        if (result.hasMessage()) {
-          size_t messageSize = result.getMessage().length() + 1;
-          char* message = new char[messageSize];
-          result.getMessage().toCharArray(message, messageSize);
-          sendTextToGateway(message, messageSize);
-          delete[] message;
-        }
-        break;
-      case FunctionRegistry::ExecuteResult::ArgumentError:
-        sendTextToGateway("FAILURE: Argument error",
-                          sizeof("FAILURE: Argument error"));
-        break;
-      case FunctionRegistry::ExecuteResult::FunctionNotFound:
-        sendTextToGateway("FAILURE: Function not found",
-                          sizeof("FAILURE: Function not found"));
-        break;
-    }
-
-    return;
   }
 }

@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include "Utils/CalibrationData.h"
 
-#define CHAR_BUFFER_SIZE 256
+#define CHAR_BUFFER_SIZE 4096
 #define FLOAT_BUFFER_SIZE 256
 #define VOLTAGE_BUFFER_SIZE 2048
 #define MAX_MESSAGE_SIZE 256
@@ -69,7 +69,7 @@ void clearWorkerStopRequest();
 bool isWorkerStopRequested();
 
 bool sendTextToGateway(const char* data, size_t length);
-bool receiveCommandFromGateway(char* data, size_t& length);
+size_t receiveCommandBytesFromGateway(char* data, size_t capacity);
 bool hasCommandFromGateway();
 
 bool sendFloatResponseToGateway(const float* data, size_t length);

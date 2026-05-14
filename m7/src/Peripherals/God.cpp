@@ -1,12 +1,10 @@
 #include "Peripherals/God.h"
 
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
+#include "Peripherals/PeripheralCommsController.h"
 #include "Utils/FastGpio.h"
 
 namespace {
-constexpr int kMaxDacChannels = NUM_DAC_CHANNELS;
-constexpr int kMaxAdcChannels = NUM_ADC_BOARDS * NUM_CHANNELS_PER_ADC_BOARD;
-
 using AdcIsr = void (*)();
 
 AdcIsr kAdcSyncIsrFunctions[] = {
@@ -18,16 +16,22 @@ AdcIsr kAdcSyncIsrFunctions[] = {
 
 void attachAdcSyncInterrupts(const God::BoardUsage& boardUsage) {
   for (int i = 0; i < boardUsage.numBoards; i++) {
-    attachInterrupt(digitalPinToInterrupt(
-                        ADCController::getDataReadyPin(boardUsage.idx[i])),
-                    kAdcSyncIsrFunctions[i], FALLING);
+    const int pin = ADCController::getDataReadyPin(boardUsage.idx[i]);
+    if (pin == NC) {
+      continue;
+    }
+    attachInterrupt(digitalPinToInterrupt(pin), kAdcSyncIsrFunctions[i],
+                    FALLING);
   }
 }
 
 void detachAdcSyncInterrupts(const God::BoardUsage& boardUsage) {
   for (int i = 0; i < boardUsage.numBoards; i++) {
-    detachInterrupt(digitalPinToInterrupt(
-        ADCController::getDataReadyPin(boardUsage.idx[i])));
+    const int pin = ADCController::getDataReadyPin(boardUsage.idx[i]);
+    if (pin == NC) {
+      continue;
+    }
+    detachInterrupt(digitalPinToInterrupt(pin));
   }
 }
 
@@ -40,11 +44,47 @@ uint8_t adcMaskForBoardUsage(const God::BoardUsage& boardUsage) {
 }
 
 bool isValidDacChannelCount(int count) {
-  return count >= 1 && count <= kMaxDacChannels;
+  return count >= 1 && count <= NUM_DAC_CHANNELS;
 }
 
 bool isValidAdcChannelCount(int count) {
-  return count >= 1 && count <= kMaxAdcChannels;
+  return count >= 1 && count <= NUM_ADC_CHANNELS;
+}
+
+bool isUint32AtLeast(float value, uint32_t minimum) {
+  return value >= static_cast<float>(minimum) &&
+         static_cast<double>(value) <= 4294967295.0;
+}
+
+uint8_t adcBoardForChannel(int channel) {
+  return static_cast<uint8_t>(channel / NUM_CHANNELS_PER_ADC_BOARD);
+}
+
+int maxSelectedAdcChannelsPerBoard(const int* adcChannels, int numAdcChannels) {
+  int boardDepth[NUM_ADC_BOARDS] = {};
+  for (int i = 0; i < numAdcChannels; i++) {
+    const int channel = adcChannels[i];
+    if (channel < 0 || channel >= NUM_ADC_CHANNELS) {
+      continue;
+    }
+    boardDepth[adcBoardForChannel(channel)]++;
+  }
+  return *std::max_element(boardDepth, boardDepth + NUM_ADC_BOARDS);
+}
+
+float maxAdcConversionTimePerBoard(const int* adcChannels,
+                                   int numAdcChannels) {
+  float boardConversionTimeUs[NUM_ADC_BOARDS] = {};
+  for (int i = 0; i < numAdcChannels; i++) {
+    const int channel = adcChannels[i];
+    if (channel < 0 || channel >= NUM_ADC_CHANNELS) {
+      continue;
+    }
+    boardConversionTimeUs[adcBoardForChannel(channel)] +=
+        ADCController::getConversionTimeFloat(channel);
+  }
+  return *std::max_element(boardConversionTimeUs,
+                           boardConversionTimeUs + NUM_ADC_BOARDS);
 }
 
 OperationResult dacWriteFailure(int channel, double voltage) {
@@ -63,13 +103,11 @@ OperationResult dacWriteFailure(int channel, double voltage) {
     return OperationResult::Failure(message);
   }
 
-  message += " source=spi ";
-  message += PeripheralCommsController::getDiagnostics().getMessage();
-  return OperationResult::Failure(message);
+  return OperationResult::Failure(message + " source=spi");
 }
 
 OperationResult validateDacChannels(const int* channels, int count) {
-  bool seen[kMaxDacChannels] = {};
+  bool seen[NUM_DAC_CHANNELS] = {};
   for (int i = 0; i < count; i++) {
     if (!DACController::isChannelIndexValid(channels[i])) {
       return OperationResult::Failure("Invalid DAC channel index " +
@@ -85,7 +123,7 @@ OperationResult validateDacChannels(const int* channels, int count) {
 }
 
 OperationResult validateAdcChannels(const int* channels, int count) {
-  bool seen[kMaxAdcChannels] = {};
+  bool seen[NUM_ADC_CHANNELS] = {};
   for (int i = 0; i < count; i++) {
     if (!ADCController::isChannelIndexValid(channels[i])) {
       return OperationResult::Failure("Invalid ADC channel index " +
@@ -100,62 +138,32 @@ OperationResult validateAdcChannels(const int* channels, int count) {
   return OperationResult::Success();
 }
 
-OperationResult validateDacLedBufferRampTiming(
-    int numAdcChannels, uint32_t dacIntervalUs, uint32_t dacSettlingTimeUs,
-    const int* adcChannels) {
-  bool selectedAdcChannels[kMaxAdcChannels] = {};
+OperationResult validateDacLedBufferRampAdcConversionTimes(
+    int numAdcChannels, const int* adcChannels) {
+  bool selectedAdcChannels[NUM_ADC_CHANNELS] = {};
   uint8_t boardDepth[NUM_ADC_BOARDS] = {};
-  float boardConversionTimeUs[NUM_ADC_BOARDS] = {};
 
   for (int i = 0; i < numAdcChannels; i++) {
     const int channel = adcChannels[i];
-    if (channel < 0 || channel >= kMaxAdcChannels ||
+    if (channel < 0 || channel >= NUM_ADC_CHANNELS ||
         selectedAdcChannels[channel]) {
       continue;
     }
     selectedAdcChannels[channel] = true;
-    boardDepth[channel / NUM_CHANNELS_PER_ADC_BOARD]++;
+    boardDepth[adcBoardForChannel(channel)]++;
   }
 
-  for (int channel = 0; channel < kMaxAdcChannels; channel++) {
+  for (int channel = 0; channel < NUM_ADC_CHANNELS; channel++) {
     if (!selectedAdcChannels[channel]) {
       continue;
     }
-    const uint8_t board = channel / NUM_CHANNELS_PER_ADC_BOARD;
+    const uint8_t board = adcBoardForChannel(channel);
     const bool multiChannelScan = boardDepth[board] > 1;
     const float conversionTimeUs =
         ADCController::getConversionTimeFloat(channel, multiChannelScan);
     if (conversionTimeUs < 0.0f) {
       return OperationResult::Failure("Invalid ADC conversion time");
     }
-    boardConversionTimeUs[board] += conversionTimeUs;
-  }
-
-  float criticalAdcTimeUs = 0.0f;
-  uint8_t maxBoardDepth = 0;
-  bool allBoardsFull = NUM_ADC_BOARDS > 1;
-  for (uint8_t board = 0; board < NUM_ADC_BOARDS; board++) {
-    if (boardConversionTimeUs[board] > criticalAdcTimeUs) {
-      criticalAdcTimeUs = boardConversionTimeUs[board];
-    }
-    if (boardDepth[board] > maxBoardDepth) {
-      maxBoardDepth = boardDepth[board];
-    }
-    allBoardsFull =
-        allBoardsFull && boardDepth[board] == NUM_CHANNELS_PER_ADC_BOARD;
-  }
-
-  const float marginUs =
-      allBoardsFull ? 30.0f : (maxBoardDepth <= 2 ? 10.0f : 15.0f);
-  const float minimumIntervalUsFloat =
-      static_cast<float>(dacSettlingTimeUs) + criticalAdcTimeUs + marginUs;
-  const uint32_t minimumIntervalUs =
-      static_cast<uint32_t>(minimumIntervalUsFloat + 0.999f);
-
-  if (dacIntervalUs < minimumIntervalUs) {
-    return OperationResult::Failure(
-        "DAC interval too short, please increase it (minimum " +
-        String(minimumIntervalUs) + " us)");
   }
 
   return OperationResult::Success();
@@ -169,37 +177,79 @@ bool sendVoltageFrame(const double* packets, size_t length) {
   return false;
 }
 
-class DeferredSpiErrorScope {
- public:
-  DeferredSpiErrorScope() { PeripheralCommsController::beginDeferredSpiErrors(); }
-
-  ~DeferredSpiErrorScope() {
-    if (active_) {
-      PeripheralCommsController::cancelDeferredSpiErrors();
+bool encodeDacVoltagePackets(int numDacChannels, const int* dacChannels,
+                             const double* voltages,
+                             byte packets[NUM_DAC_CHANNELS][3]) {
+  for (int i = 0; i < numDacChannels; i++) {
+    if (!DACController::encodeVoltagePacket(
+            dacChannels[i], static_cast<float>(voltages[i]), packets[i])) {
+      return false;
     }
   }
-
-  OperationResult finish() {
-    active_ = false;
-    return PeripheralCommsController::endDeferredSpiErrors();
-  }
-
- private:
-  bool active_ = true;
-};
-
-OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
-  OperationResult spiResult = spiErrors.finish();
-  if (!spiResult.isSuccess()) {
-    return spiResult;
-  }
-  return OperationResult::Success();
+  return true;
 }
+
+bool writeDacPackets(int numDacChannels, const int* dacChannels,
+                     byte packets[NUM_DAC_CHANNELS][3]) {
+  for (int i = 0; i < numDacChannels; i++) {
+    if (!DACController::writeVoltagePacketNoLdac(dacChannels[i],
+                                                 packets[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool readAdcPackets(int numAdcChannels, const int* adcChannels,
+                    double* packets, int startIndex = 0) {
+  for (int i = startIndex; i < numAdcChannels; i++) {
+    packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+  }
+  return true;
+}
+
+uint32_t adcTimerElapsedUs(uint32_t adcIntervalUs) {
+  const uint32_t periodTicks = TIM8->ARR + 1;
+  if (periodTicks == 0) {
+    return 0;
+  }
+  return static_cast<uint32_t>(
+      (static_cast<uint64_t>(TIM8->CNT) * adcIntervalUs) / periodTicks);
+}
+
+bool shouldHoldDacForImminentAdc(uint32_t adcIntervalUs, float adcReadyUs) {
+  constexpr float kAdcReadyGuardUs = 15.0f;
+  if (TimingUtil::adcConversionInProgressMask == 0 || adcReadyUs <= 0.0f) {
+    return false;
+  }
+  const uint32_t elapsedUs = adcTimerElapsedUs(adcIntervalUs);
+  return static_cast<float>(elapsedUs) + kAdcReadyGuardUs >= adcReadyUs &&
+         elapsedUs < adcIntervalUs;
+}
+
+OperationResult finishRampTimingWatchdog(
+    bool includeAdcConversionMissteps = true) {
+  const uint32_t dacSpiMissteps = TimingUtil::dacSpiMisstepEvents;
+  const uint32_t adcSpiMissteps = TimingUtil::adcSpiMisstepEvents;
+  const uint32_t adcConversionMissteps =
+      TimingUtil::adcConversionMisstepEvents;
+  if (dacSpiMissteps == 0 && adcSpiMissteps == 0 &&
+      (!includeAdcConversionMissteps || adcConversionMissteps == 0)) {
+    return OperationResult::Success();
+  }
+  String message =
+      "Ramp timing misstep during ramp dac_spi_missteps=" +
+      String(dacSpiMissteps) + " adc_spi_missteps=" +
+      String(adcSpiMissteps);
+  if (includeAdcConversionMissteps) {
+    message += " adc_conversion_missteps=" + String(adcConversionMissteps);
+  }
+  return OperationResult::Failure(message);
+}
+
 }
 
   void God::setup() {
-    pinMode(GPIO_0, OUTPUT);
-    FastGpio::digitalWrite(GPIO_0, false);
     initializeRegistry();
   }
 
@@ -227,14 +277,14 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     return OperationResult::Success("INITIALIZATION COMPLETE");
   }
 
-
-
   OperationResult God::hardResetCalibrationToDefaults() {
     CalibrationData calibrationData;
     readCalibrationData(calibrationData);
-    for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    for (int i = 0; i < NUM_DAC_CALIBRATION_CHANNELS; i++) {
       calibrationData.gain[i] = 1.0f;
       calibrationData.offset[i] = 0.0f;
+    }
+    for (int i = 0; i < NUM_ADC_CALIBRATION_CHANNELS; i++) {
       calibrationData.adc_offset[i] = 0x800000; // Default ADC offset
       calibrationData.adc_gain[i] = 0x200000; // Default ADC gain
     }
@@ -247,19 +297,22 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
 
   God::BoardUsage God::getUsedBoards(const int *adcChannels, int numAdcChannels) {
-      std::vector<uint8_t> boards;
+    std::vector<uint8_t> boards;
 
-      for (int i = 0; i < numAdcChannels; ++i) {
-          int ch = adcChannels[i];
-          if (ch < 0) continue;          // skip invalid values
-          uint8_t board = ch / 4;        // 0‑based board index
-          if (std::find(boards.begin(), boards.end(), board) == boards.end())
-              boards.push_back(board);   // keep only unique board numbers
+    for (int i = 0; i < numAdcChannels; ++i) {
+      const int ch = adcChannels[i];
+      if (ch < 0 || ch >= NUM_ADC_CHANNELS) {
+        continue;
       }
+      uint8_t board = adcBoardForChannel(ch);
+      if (std::find(boards.begin(), boards.end(), board) == boards.end()) {
+        boards.push_back(board);
+      }
+    }
 
-      std::sort(boards.begin(), boards.end());
+    std::sort(boards.begin(), boards.end());
 
-      return BoardUsage{ static_cast<uint8_t>(boards.size()), boards };
+    return BoardUsage{ static_cast<uint8_t>(boards.size()), boards };
   }
 
 
@@ -303,11 +356,14 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     // Check to see if the total duration is valid (needs to be at least 82 microseconds)
-    uint32_t conversion_time = static_cast<uint32_t>(args[numAdcChannels + 1]);
-    uint32_t totalDuration = static_cast<uint32_t>(args[numAdcChannels + 2]);
-    if (totalDuration < 82) {
+    const float conversionTimeArg = args[numAdcChannels + 1];
+    const float totalDurationArg = args[numAdcChannels + 2];
+    if (!isUint32AtLeast(conversionTimeArg, 1) ||
+        !isUint32AtLeast(totalDurationArg, 82)) {
       return OperationResult::Failure("Invalid total duration");
     }
+    uint32_t conversion_time = static_cast<uint32_t>(conversionTimeArg);
+    uint32_t totalDuration = static_cast<uint32_t>(totalDurationArg);
 
     //Set conversion time for each channel (same conversion time for all channels)
     float realConversionTime = 0;
@@ -316,16 +372,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
     realConversionTime = ADCController::getConversionTimeFloat(adcChannels[0]);
 
-    // Determine the maximum number of independent ADCs used
-    int adc_usage[4] = {0, 0, 0, 0};
-    for (int i = 0; i < numAdcChannels; ++i) {
-      int ch = adcChannels[i];
-      if (ch < 0) continue;          // skip invalid values
-      uint8_t board = ch / 4;        // 0‑based board index
-      adc_usage[board]++;
-    }
-
-    int max_indep_ADCs = *std::max_element(adc_usage, adc_usage + 4);
+    const int max_indep_ADCs =
+        maxSelectedAdcChannelsPerBoard(adcChannels, numAdcChannels);
     
     //set sampling rate based on +5% conversion time and the number of ADC channels
     const double sample_rate_float = max_indep_ADCs * realConversionTime * 1.5f;
@@ -371,20 +419,18 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     //Begin main loop
     while (x < saved_data_size && !isWorkerStopRequested()) {
       __WFE(); // Wait for event (WFE) to reduce CPU usage
-      if (TimingUtil::adcFlag == adcMask) {
-        double packets[kMaxAdcChannels] = {};
+      if (TimingUtil::consumeAdcFlag(adcMask)) {
+        double packets[NUM_ADC_CHANNELS] = {};
         for (int i = 0; i < numAdcChannels; i++) {
           double v = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
           packets[i] = v;
         }
+        FastGpio::digitalWrite(adc_sync, false);
         if (!sendVoltageFrame(packets, numAdcChannels)) {
           voltageOverflow = true;
           break;
         }
         x++;
-        TimingUtil::adcFlag = 0;
-
-        FastGpio::digitalWrite(adc_sync, false);
       }
     }
 
@@ -434,16 +480,19 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     int numDacChannels = static_cast<int>(args[index++]);
     int numAdcChannels = static_cast<int>(args[index++]);
     int numSteps = static_cast<int>(args[index++]);
-    uint32_t dac_interval_us = static_cast<uint32_t>(args[index++]);
-    uint32_t adc_interval_us = static_cast<uint32_t>(args[index++]);
+    const float dacIntervalArg = args[index++];
+    const float adcIntervalArg = args[index++];
 
     if (!isValidDacChannelCount(numDacChannels) ||
         !isValidAdcChannelCount(numAdcChannels)) {
       return OperationResult::Failure("Invalid number of channels");
     }
-    if (adc_interval_us < 1 || dac_interval_us < 1) {
+    if (!isUint32AtLeast(adcIntervalArg, 1) ||
+        !isUint32AtLeast(dacIntervalArg, 1)) {
       return OperationResult::Failure("Invalid interval");
     }
+    uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
+    uint32_t adc_interval_us = static_cast<uint32_t>(adcIntervalArg);
     if (numSteps < 1) {
       return OperationResult::Failure("Invalid number of steps");
     }
@@ -455,10 +504,10 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     // Allocate memory for DAC and ADC channel information
-    int dacChannels[kMaxDacChannels] = {};
-    float dacV0s[kMaxDacChannels] = {};
-    float dacVfs[kMaxDacChannels] = {};
-    int adcChannels[kMaxAdcChannels] = {};
+    int dacChannels[NUM_DAC_CHANNELS] = {};
+    float dacV0s[NUM_DAC_CHANNELS] = {};
+    float dacVfs[NUM_DAC_CHANNELS] = {};
+    int adcChannels[NUM_ADC_CHANNELS] = {};
 
     // Parse DAC channel information
     for (int i = 0; i < numDacChannels; ++i) {
@@ -506,7 +555,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     BoardUsage boardUsage{0, std::vector<uint8_t>()};
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
-    DeferredSpiErrorScope spiErrors;
 
     OperationResult prepareResult = prepareTimeSeriesBufferRampHardware(
         numAdcChannels, dac_interval_us, adc_interval_us, adcChannels, adcMask,
@@ -535,7 +583,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("RAMPING_STOPPED");
     }
 
-    return finishRampOrSpiFailure(spiErrors);
+    return finishRampTimingWatchdog(false);
   }
 
 
@@ -548,48 +596,30 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     FastGpio::digitalWrite(adc_sync, false);
 
-    // Prevent user from setting the DAC update rate too fast.
-    int adc_usage[4] = {0, 0, 0, 0};
-    for (int i = 0; i < numAdcChannels; ++i) {
-      int ch = adcChannels[i];
-      if (ch < 0) continue;
-      uint8_t board = ch / 4;
-      adc_usage[board]++;
-    }
+    // if (maxConvTime + 300 >= adc_interval_us) {
+    //   return OperationResult::Failure(
+    //       "ADC delay time is too short, please increase it");
+    // }
 
-    int max_indep_ADCs = *std::max_element(adc_usage, adc_usage + 4);
-
-    float convTimeSum[4] = {0.0, 0.0, 0.0, 0.0};
-    for (int i = 0; i < numAdcChannels; i++) {
-      int chNum = adcChannels[i];
-      uint8_t board_num = chNum / 4;
-      convTimeSum[board_num] += ADCController::getConversionTimeFloat(chNum);
-    }
-    float maxConvTime =
-        *std::max_element(std::begin(convTimeSum), std::end(convTimeSum));
-    if (maxConvTime + 300 >= adc_interval_us) {
-      return OperationResult::Failure("ADC delay time is too short, please increase it");
-    }
-
-    if (max_indep_ADCs <= 0) {
-      return OperationResult::Failure("No ADC channels provided");
-    } else if (max_indep_ADCs == 1) {
-      if (dac_interval_us < 60) {
-        return OperationResult::Failure("DAC interval too short, please increase it");
-      }
-    } else if (max_indep_ADCs == 2) {
-      if (dac_interval_us < 120) {
-        return OperationResult::Failure("DAC interval too short, please increase it");
-      }
-    } else if (max_indep_ADCs == 3) {
-      if (dac_interval_us < 180) {
-        return OperationResult::Failure("DAC interval too short, please increase it");
-      }
-    } else if (max_indep_ADCs == 4) {
-      if (dac_interval_us < 250) {
-        return OperationResult::Failure("DAC interval too short, please increase it");
-      }
-    }
+    // if (max_indep_ADCs <= 0) {
+    //   return OperationResult::Failure("No ADC channels provided");
+    // } else if (max_indep_ADCs == 1) {
+    //   if (dac_interval_us < 60) {
+    //     return OperationResult::Failure("DAC interval too short, please increase it");
+    //   }
+    // } else if (max_indep_ADCs == 2) {
+    //   if (dac_interval_us < 120) {
+    //     return OperationResult::Failure("DAC interval too short, please increase it");
+    //   }
+    // } else if (max_indep_ADCs == 3) {
+    //   if (dac_interval_us < 180) {
+    //     return OperationResult::Failure("DAC interval too short, please increase it");
+    //   }
+    // } else if (max_indep_ADCs == 4) {
+    //   if (dac_interval_us < 250) {
+    //     return OperationResult::Failure("DAC interval too short, please increase it");
+    //   }
+    // }
 
     boardUsage = getUsedBoards(adcChannels, numAdcChannels);
     attachAdcSyncInterrupts(boardUsage);
@@ -601,7 +631,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       ADCController::setRDYFN(adcChannels[i]);
     }
 
-    TimingUtil::setupTimersTimeSeries(dac_interval_us, adc_interval_us);
+    TimingUtil::setupTimersTimeSeries(dac_interval_us, adc_interval_us,
+                                      adcMask);
     TimingUtil::dacFlag = false;
     TimingUtil::adcFlag = 0;
 
@@ -619,18 +650,28 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     const int saved_data_size = numSteps * dac_interval_us / adc_interval_us;
     bool voltageOverflow = false;
 
-    double voltageStepSize[kMaxDacChannels] = {};
+    double voltageStepSize[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] =
           numSteps > 1 ? (dacVfs[i] - dacV0s[i]) / (numSteps - 1) : 0.0;
     }
 
-    double nextVoltageSet[kMaxDacChannels] = {};
+    double nextVoltageSet[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; i++) {
       nextVoltageSet[i] = dacV0s[i];
     }
-
-    DeferredSpiErrorScope spiErrors;
+    byte nextDacPackets[NUM_DAC_CHANNELS][3] = {};
+    bool nextDacPacketsReady = false;
+    auto prepareNextDacPackets = [&]() {
+      if (steps >= numSteps) {
+        nextDacPacketsReady = false;
+        return true;
+      }
+      nextDacPacketsReady =
+          encodeDacVoltagePackets(numDacChannels, dacChannels, nextVoltageSet,
+                                  nextDacPackets);
+      return nextDacPacketsReady;
+    };
 
     for (int i = 0; i < numDacChannels; i++) {
       if (!DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
@@ -640,40 +681,54 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       nextVoltageSet[i] += voltageStepSize[i];
     }
     steps++;
+    if (!prepareNextDacPackets()) {
+      return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+    }
     FastGpio::digitalWrite(adc_sync, false);
     TimingUtil::dacFlag = false;
     TimingUtil::adcFlag = 0;
+    const float adcReadyUs =
+        maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
 
     while ((x < saved_data_size || steps < numSteps) && !isWorkerStopRequested()) {
       __WFE();
-      if (TimingUtil::dacFlag && steps < numSteps) {
-        if (steps < numSteps - 1) {
-          for (int i = 0; i < numDacChannels; i++) {
-            if (!DACController::setVoltageNoTransactionNoLdac(
-                    dacChannels[i], nextVoltageSet[i])) {
-              return dacWriteFailure(dacChannels[i], nextVoltageSet[i]);
-            }
-            nextVoltageSet[i] += voltageStepSize[i];
-          }
+      const bool adcPending =
+          x < saved_data_size && TimingUtil::consumeAdcFlag(adcMask);
+      bool dacPending = false;
+      if (steps < numSteps && TimingUtil::dacFlag) {
+        if (!adcPending && shouldHoldDacForImminentAdc(adc_interval_us,
+                                                       adcReadyUs)) {
+          continue;
         }
-
-        steps++;
-        TimingUtil::dacFlag = false;
+        dacPending = TimingUtil::consumeDacFlag();
       }
-      if (TimingUtil::adcFlag == adcMask && x < saved_data_size) {
-        double packets[kMaxAdcChannels] = {};
-        for (int i = 0; i < numAdcChannels; i++) {
-          packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+
+      double packets[NUM_ADC_CHANNELS] = {};
+      bool haveAdcPackets = false;
+      if (adcPending) {
+        readAdcPackets(numAdcChannels, adcChannels, packets);
+        FastGpio::digitalWrite(adc_sync, false);
+        haveAdcPackets = true;
+      }
+      if (dacPending) {
+        if (!nextDacPacketsReady ||
+            !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
+          return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
         }
+        for (int i = 0; i < numDacChannels; i++) {
+          nextVoltageSet[i] += voltageStepSize[i];
+        }
+        steps++;
+        if (!prepareNextDacPackets()) {
+          return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+        }
+      }
+      if (haveAdcPackets) {
         if (!sendVoltageFrame(packets, numAdcChannels)) {
           voltageOverflow = true;
           break;
         }
-
-        FastGpio::digitalWrite(adc_sync, false);
-
         x++;
-        TimingUtil::adcFlag = 0;
       }
     }
 
@@ -687,7 +742,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("Voltage output buffer overflow");
     }
 
-    return finishRampOrSpiFailure(spiErrors);
+    return OperationResult::Success();
   }
 
 
@@ -727,17 +782,21 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     int numAdcChannels = static_cast<int>(args[index++]);
     int numSteps = static_cast<int>(args[index++]);
     int numAdcAverages = static_cast<int>(args[index++]);
-    uint32_t dac_interval_us = static_cast<uint32_t>(args[index++]);
-    uint32_t dac_settling_time_us = static_cast<uint32_t>(args[index++]);
+    const float dacIntervalArg = args[index++];
+    const float dacSettlingTimeArg = args[index++];
 
     if (!isValidDacChannelCount(numDacChannels) ||
         !isValidAdcChannelCount(numAdcChannels)) {
       return OperationResult::Failure("Invalid number of channels");
     }
-    if (dac_settling_time_us < 1 || dac_interval_us < 1 ||
-        dac_settling_time_us >= dac_interval_us) {
+    if (!isUint32AtLeast(dacSettlingTimeArg, 1) ||
+        !isUint32AtLeast(dacIntervalArg, 1) ||
+        dacSettlingTimeArg >= dacIntervalArg) {
       return OperationResult::Failure("Invalid interval or settling time");
     }
+    uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
+    uint32_t dac_settling_time_us =
+        static_cast<uint32_t>(dacSettlingTimeArg);
     if (numAdcAverages < 1) {
       return OperationResult::Failure("Invalid number of ADC averages");
     }
@@ -752,10 +811,10 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     // Allocate memory for DAC and ADC channel information
-    int dacChannels[kMaxDacChannels] = {};
-    float dacV0s[kMaxDacChannels] = {};
-    float dacVfs[kMaxDacChannels] = {};
-    int adcChannels[kMaxAdcChannels] = {};
+    int dacChannels[NUM_DAC_CHANNELS] = {};
+    float dacV0s[NUM_DAC_CHANNELS] = {};
+    float dacVfs[NUM_DAC_CHANNELS] = {};
+    int adcChannels[NUM_ADC_CHANNELS] = {};
 
     // Parse DAC channel information
     for (int i = 0; i < numDacChannels; ++i) {
@@ -803,7 +862,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     BoardUsage boardUsage{0, std::vector<uint8_t>()};
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
-    DeferredSpiErrorScope spiErrors;
 
     OperationResult prepareResult = prepareDacLedBufferRampHardware(
         numAdcChannels, numAdcAverages, dac_interval_us, dac_settling_time_us,
@@ -832,7 +890,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("RAMPING_STOPPED");
     }
 
-    return finishRampOrSpiFailure(spiErrors);
+    return finishRampTimingWatchdog();
   }
 
 
@@ -848,8 +906,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     FastGpio::digitalWrite(adc_sync, false);
 
-    OperationResult timingValidation = validateDacLedBufferRampTiming(
-        numAdcChannels, dac_interval_us, dac_settling_time_us, adcChannels);
+    OperationResult timingValidation =
+        validateDacLedBufferRampAdcConversionTimes(numAdcChannels, adcChannels);
     if (!timingValidation.isSuccess()) {
       return timingValidation;
     }
@@ -865,7 +923,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       ADCController::setRDYFN(adcChannels[i]);
     }
 
-    TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us);
+    TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us,
+                                  adcMask);
     TimingUtil::dacFlag = false;
     TimingUtil::adcFlag = 0;
 
@@ -878,22 +937,31 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       int numDacChannels, int numAdcChannels, int numSteps, int numAdcAverages,
       int* dacChannels, float* dacV0s, float* dacVfs, int* adcChannels,
       uint8_t adcMask) {
-    double packets[kMaxAdcChannels] = {};
-    double voltageStepSize[kMaxDacChannels] = {};
+    double packets[NUM_ADC_CHANNELS] = {};
+    double voltageStepSize[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSize[i] =
           numSteps > 1 ? (dacVfs[i] - dacV0s[i]) / (numSteps - 1) : 0.0;
     }
 
-    double nextVoltageSet[kMaxDacChannels] = {};
+    double numAdcAveragesInv = 1.0 / static_cast<double>(numAdcAverages);
+    int dacIncrements = 0;
+    double nextVoltageSet[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; i++) {
       nextVoltageSet[i] = dacV0s[i];
     }
-
-    double numAdcAveragesInv = 1.0 / static_cast<double>(numAdcAverages);
-    int dacIncrements = 0;
-
-    DeferredSpiErrorScope spiErrors;
+    byte nextDacPackets[NUM_DAC_CHANNELS][3] = {};
+    bool nextDacPacketsReady = false;
+    auto prepareNextDacPackets = [&]() {
+      if (dacIncrements >= numSteps) {
+        nextDacPacketsReady = false;
+        return true;
+      }
+      nextDacPacketsReady =
+          encodeDacVoltagePackets(numDacChannels, dacChannels, nextVoltageSet,
+                                  nextDacPackets);
+      return nextDacPacketsReady;
+    };
 
     for (int i = 0; i < numDacChannels; i++) {
       if (!DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
@@ -903,28 +971,34 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       nextVoltageSet[i] += voltageStepSize[i];
     }
     dacIncrements++;
+    if (!prepareNextDacPackets()) {
+      return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+    }
     FastGpio::digitalWrite(adc_sync, false);
-    int maxDiff = 0;
     int x = 0;
     bool voltageOverflow = false;
 
     while (x < numSteps && !isWorkerStopRequested()) {
       __WFE();
 
-      if (TimingUtil::dacFlag && dacIncrements < numSteps) {
-        FastGpio::digitalWrite(GPIO_0, false);
+      const bool dacPending =
+          dacIncrements < numSteps && TimingUtil::consumeDacFlag();
+      const bool adcPending = TimingUtil::consumeAdcFlag(adcMask);
+
+      if (dacPending) {
+        if (!nextDacPacketsReady ||
+            !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
+          return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+        }
         for (int i = 0; i < numDacChannels; i++) {
-          if (!DACController::setVoltageNoTransactionNoLdac(
-                  dacChannels[i], nextVoltageSet[i])) {
-            return dacWriteFailure(dacChannels[i], nextVoltageSet[i]);
-          }
           nextVoltageSet[i] += voltageStepSize[i];
         }
-        TimingUtil::dacFlag = false;
         dacIncrements++;
+        if (!prepareNextDacPackets()) {
+          return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+        }
       }
-      if (TimingUtil::adcFlag == adcMask) {
-        FastGpio::digitalWrite(GPIO_0, true);
+      if (adcPending) {
         x++;
         for (int i = 0; i < numAdcChannels; i++) {
           double total = 0.0;
@@ -933,18 +1007,11 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
           }
           packets[i] = total * numAdcAveragesInv;
         }
+        FastGpio::digitalWrite(adc_sync, false);
         if (!sendVoltageFrame(packets, numAdcChannels)) {
           voltageOverflow = true;
           break;
         }
-
-        int diff = dacIncrements - x;
-        if (diff < 0) diff = -diff;
-        if (diff > maxDiff) {
-          maxDiff = diff;
-        }
-        FastGpio::digitalWrite(adc_sync, false);
-        TimingUtil::adcFlag = 0;
       }
     }
 
@@ -958,13 +1025,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("Voltage output buffer overflow");
     }
 
-    if (maxDiff > 1) {
-      String message = "DAC and ADC are not synchronized. maxDiff: " +
-                       String(maxDiff);
-      return OperationResult::Failure(message);
-    }
-
-    return finishRampOrSpiFailure(spiErrors);
+    return OperationResult::Success();
   }
 
 
@@ -1003,14 +1064,16 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     int numLoops = static_cast<int>(args[idx++]);
     int numDacStepsPerLoop = static_cast<int>(args[idx++]);
     int numAdcAverages = static_cast<int>(args[idx++]);
-    uint32_t dac_interval_us = static_cast<uint32_t>(args[idx++]);
+    const float dacIntervalArg = args[idx++];
 
     // Check for valid channel counts
     if (!isValidDacChannelCount(numDacChannels) ||
         !isValidAdcChannelCount(numAdcChannels) ||
-        numLoops < 1 || numDacStepsPerLoop < 1 || numAdcAverages < 1) {
+        numLoops < 1 || numDacStepsPerLoop < 1 || numAdcAverages < 1 ||
+        !isUint32AtLeast(dacIntervalArg, 1)) {
       return OperationResult::Failure("Invalid channel or loop/step/average count");
     }
+    uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
 
     const size_t expected =
         6u + static_cast<size_t>(numDacChannels) +
@@ -1023,13 +1086,13 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     // Parse DAC channel indices
-    int dacChannels[kMaxDacChannels] = {};
+    int dacChannels[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       dacChannels[i] = static_cast<int>(args[idx++]);
     }
 
     // Parse ADC channel indices
-    int adcChannels[kMaxAdcChannels] = {};
+    int adcChannels[NUM_ADC_CHANNELS] = {};
     for (int i = 0; i < numAdcChannels; ++i) {
       adcChannels[i] = static_cast<int>(args[idx++]);
     }
@@ -1049,7 +1112,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     std::vector<float> dacVoltageStorage(
         static_cast<size_t>(numDacChannels) *
         static_cast<size_t>(numDacStepsPerLoop));
-    float* dacVoltageLists[kMaxDacChannels] = {};
+    float* dacVoltageLists[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       dacVoltageLists[i] =
           &dacVoltageStorage[static_cast<size_t>(i) *
@@ -1068,11 +1131,11 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("Invalid Owen special ramp parameters");
     }
 
-    float specialDacV0s[kMaxDacChannels] = {};
+    float specialDacV0s[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       specialDacV0s[i] = args[idx++];
     }
-    float specialDacVfs[kMaxDacChannels] = {};
+    float specialDacVfs[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < numDacChannels; ++i) {
       specialDacVfs[i] = args[idx++];
     }
@@ -1134,12 +1197,11 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
         }
       }
       
-      double packets[kMaxAdcChannels] = {};
+      double packets[NUM_ADC_CHANNELS] = {};
       double numAdcAveragesInv = 1.0 / static_cast<double>(numAdcAverages);
   
       clearWorkerStopRequest();
       PeripheralCommsController::dataLedOn();
-      DeferredSpiErrorScope spiErrors;
   
       ADCController::resetToPreviousConversionTimes();
   
@@ -1147,20 +1209,14 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
   
       BoardUsage boardUsage = getUsedBoards(adcChannels, numAdcChannels);
   
-      //check to see if buffer ramp is compatible with the current ADC configuration
-      float convTimeSum[4] = {0.0, 0.0, 0.0, 0.0};
-      uint8_t board_num = 0;
-      int chNum = 0;
-      for (int i = 0; i < numAdcChannels; i++) {
-        chNum = adcChannels[i];
-        board_num = chNum / 4; // 0-based board index
-        convTimeSum[board_num] += ADCController::getConversionTimeFloat(adcChannels[i]);
-      }
-      float maxConvTime = *std::max_element(std::begin(convTimeSum), std::end(convTimeSum));
+      const float maxConvTime =
+          maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
       uint32_t totalDacSweepTime = numDacStepsPerLoop * dac_interval_us;
-      if(maxConvTime*numAdcAverages + 180 >= totalDacSweepTime) {
+      if (maxConvTime * numAdcAverages + 180 >= totalDacSweepTime) {
         PeripheralCommsController::dataLedOff();
-        return OperationResult::Failure("DAC sweep time is too short for specified ADC conversion time, please increase dac_interval_us or reduce numDacStepsPerLoop");
+        return OperationResult::Failure(
+            "DAC sweep time is too short for specified ADC conversion time, "
+            "please increase dac_interval_us or reduce numDacStepsPerLoop");
       }
   
       attachAdcSyncInterrupts(boardUsage);
@@ -1176,8 +1232,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       int currentAdcReads = 0;
       bool voltageOverflow = false;
 
-      float currentSpecialDacVoltages[kMaxDacChannels] = {};
-      float specialDacVoltageStep[kMaxDacChannels] = {};
+      float currentSpecialDacVoltages[NUM_DAC_CHANNELS] = {};
+      float specialDacVoltageStep[NUM_DAC_CHANNELS] = {};
 
       for (int i = 0; i < numDacChannels; i++) {
         currentSpecialDacVoltages[i] = specialDacV0s[i];
@@ -1213,7 +1269,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
         __WFE(); // Wait for event (interrupt)
         
         // Handle DAC flag - time to set next DAC voltage
-        if (TimingUtil::dacFlag && currentDacStep < totalDacSteps) {
+        if (currentDacStep < totalDacSteps && TimingUtil::consumeDacFlag()) {
 
           if (currentDacStep == specialIndex) {
             for (int i = 0; i < numDacChannels; i++) {
@@ -1242,7 +1298,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
             done = true; // Mark that we need to read ADC after settling
           }
           
-          TimingUtil::dacFlag = false;
         }
         
         // Handle ADC flag - time to read ADC after settling
@@ -1260,7 +1315,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
           }
           
           FastGpio::digitalWrite(adc_sync, false);
-          TimingUtil::adcFlag = 0;
           currentAdcReads++;
           currentLoop++; // Each ADC read marks completion of one loop
         }
@@ -1291,7 +1345,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
         return OperationResult::Failure("RAMPING_STOPPED");
       }
   
-      return finishRampOrSpiFailure(spiErrors);
+      return finishRampTimingWatchdog();
     }
 
 
@@ -1309,11 +1363,13 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     int idx = 0;
     const int dacN = static_cast<int>(args[idx++]);
     const int numSteps = static_cast<int>(args[idx++]);
-    const uint32_t dac_interval_us = static_cast<uint32_t>(args[idx++]);
+    const float dacIntervalArg = args[idx++];
 
-    if (!isValidDacChannelCount(dacN) || numSteps < 1) {
+    if (!isValidDacChannelCount(dacN) || numSteps < 1 ||
+        !isUint32AtLeast(dacIntervalArg, 1)) {
       return OperationResult::Failure("Invalid number of channels or steps");
     }
+    const uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
 
     const size_t expected =
         3u + static_cast<size_t>(dacN) +
@@ -1323,7 +1379,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("Invalid argument count for AWG_BUFFER_RAMP");
     }
 
-    int dacChannels[kMaxDacChannels] = {};
+    int dacChannels[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < dacN; ++i) {
       dacChannels[i] = static_cast<int>(args[idx++]);
     }
@@ -1358,6 +1414,9 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
 
     // Bounds check before starting
+    std::vector<uint8_t> dacPackets(
+        static_cast<size_t>(numDacChannels) * static_cast<size_t>(numSteps) *
+        3u);
     for (int i = 0; i < numDacChannels; i++) {
       int ch = dacChannels[i];
       float lowerBound = DACController::getLowerBound(ch);
@@ -1371,17 +1430,25 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
                                           "V out of bounds [" + String(lowerBound, 6) +
                                           ", " + String(upperBound, 6) + "]");
         }
+        uint8_t* packet =
+            &dacPackets[(static_cast<size_t>(i) * static_cast<size_t>(numSteps) +
+                         static_cast<size_t>(j)) *
+                        3u];
+        if (!DACController::encodeVoltagePacket(ch, v, packet)) {
+          return dacWriteFailure(ch, v);
+        }
       }
     }
 
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
-    DeferredSpiErrorScope spiErrors;
 
     // Apply initial step immediately; first LDAC edge will latch these values.
     for (int i = 0; i < numDacChannels; i++) {
-      const float v0 = channelMajorVoltages[static_cast<size_t>(i) * static_cast<size_t>(numSteps)];
-      DACController::setVoltageNoTransactionNoLdac(dacChannels[i], v0);
+      const uint8_t* packet =
+          &dacPackets[static_cast<size_t>(i) * static_cast<size_t>(numSteps) *
+                      3u];
+      DACController::writeVoltagePacketNoLdac(dacChannels[i], packet);
     }
 
     TimingUtil::setupTimerOnlyDac(dac_interval_us);
@@ -1391,13 +1458,15 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     int step = 1; // step 0 already written
     while (!isWorkerStopRequested()) {
       __WFE();
-      if (TimingUtil::dacFlag) {
+      if (TimingUtil::consumeDacFlag()) {
         for (int i = 0; i < numDacChannels; i++) {
-          const float v = channelMajorVoltages[static_cast<size_t>(i) * static_cast<size_t>(numSteps) +
-                                               static_cast<size_t>(step)];
-          DACController::setVoltageNoTransactionNoLdac(dacChannels[i], v);
+          const uint8_t* packet =
+              &dacPackets[(static_cast<size_t>(i) *
+                               static_cast<size_t>(numSteps) +
+                           static_cast<size_t>(step)) *
+                          3u];
+          DACController::writeVoltagePacketNoLdac(dacChannels[i], packet);
         }
-        TimingUtil::dacFlag = false;
         step++;
         if (step >= numSteps) {
           step = 0;
@@ -1413,7 +1482,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       clearWorkerStopRequest();
       return OperationResult::Failure("RAMPING_STOPPED");
     }
-    return finishRampOrSpiFailure(spiErrors);
+    return OperationResult::Success();
   }
 
 
@@ -1430,26 +1499,28 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     const int dacN = static_cast<int>(args[idx++]);
     const int adcN = static_cast<int>(args[idx++]);
     const int numSteps = static_cast<int>(args[idx++]);
-    const uint32_t dac_interval_us = static_cast<uint32_t>(args[idx++]);
+    const float dacIntervalArg = args[idx++];
     const int numCycles = static_cast<int>(args[idx++]);
 
     if (!isValidDacChannelCount(dacN) ||
         !isValidAdcChannelCount(adcN) ||
-        numSteps < 1 || numCycles < 1) {
+        numSteps < 1 || numCycles < 1 ||
+        !isUint32AtLeast(dacIntervalArg, 1)) {
       return OperationResult::Failure("Invalid channel counts or step/cycle count");
     }
+    const uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
 
     const size_t expected = 5u + dacN + adcN + (static_cast<size_t>(dacN) * numSteps);
     if (args.size() != expected) {
       return OperationResult::Failure("Invalid argument count for AWG_WITH_ADC");
     }
 
-    int dacChannels[kMaxDacChannels] = {};
+    int dacChannels[NUM_DAC_CHANNELS] = {};
     for (int i = 0; i < dacN; ++i) {
       dacChannels[i] = static_cast<int>(args[idx++]);
     }
 
-    int adcChannels[kMaxAdcChannels] = {};
+    int adcChannels[NUM_ADC_CHANNELS] = {};
     for (int i = 0; i < adcN; ++i) {
       adcChannels[i] = static_cast<int>(args[idx++]);
     }
@@ -1517,10 +1588,9 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
-    DeferredSpiErrorScope spiErrors;
     ADCController::resetToPreviousConversionTimes();
 
-    double packets[kMaxAdcChannels] = {};
+    double packets[NUM_ADC_CHANNELS] = {};
     bool voltageOverflow = false;
 
     // Start ADC continuous conversion
@@ -1546,9 +1616,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       while (step < numSteps && !isWorkerStopRequested()) {
         // Wait for timer flag
         __WFE();
-        if (TimingUtil::dacFlag) {
-          TimingUtil::dacFlag = false;
-
+        if (TimingUtil::consumeDacFlag()) {
           // Set DAC voltages for this step
           for (int i = 0; i < numDacChannels; i++) {
             const float v = channelMajorVoltages[static_cast<size_t>(i) * static_cast<size_t>(numSteps) +
@@ -1559,7 +1627,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
           step++;
         }
 
-        if (TimingUtil::adcFlag) {
+        if (TimingUtil::consumeAnyAdcFlag()) {
           // Read ADC channels (data already converted, just read it)
           FastGpio::digitalWrite(adc_sync, false);
           for (int i = 0; i < numAdcChannels; i++) {
@@ -1571,7 +1639,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
             voltageOverflow = true;
             break;
           }
-          TimingUtil::adcFlag = 0;
         }
       }
     }
@@ -1597,7 +1664,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       }
       return OperationResult::Failure("RAMPING_STOPPED");
     }
-    return finishRampOrSpiFailure(spiErrors);
+    return finishRampTimingWatchdog();
   }
 
 
@@ -1638,12 +1705,11 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       }
     }
     
-    double packets[kMaxAdcChannels] = {};
+    double packets[NUM_ADC_CHANNELS] = {};
     double numAdcAveragesInv = 1.0 / static_cast<double>(numAdcAverages);
 
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
-    DeferredSpiErrorScope spiErrors;
 
     ADCController::resetToPreviousConversionTimes();
 
@@ -1651,20 +1717,14 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     BoardUsage boardUsage = getUsedBoards(adcChannels, numAdcChannels);
 
-    //check to see if buffer ramp is compatible with the current ADC configuration
-    float convTimeSum[4] = {0.0, 0.0, 0.0, 0.0};
-    uint8_t board_num = 0;
-    int chNum = 0;
-    for (int i = 0; i < numAdcChannels; i++) {
-      chNum = adcChannels[i];
-      board_num = chNum / 4; // 0-based board index
-      convTimeSum[board_num] += ADCController::getConversionTimeFloat(adcChannels[i]);
-    }
-    float maxConvTime = *std::max_element(std::begin(convTimeSum), std::end(convTimeSum));
+    const float maxConvTime =
+        maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
     uint32_t totalDacSweepTime = numDacStepsPerLoop * dac_interval_us;
-    if(maxConvTime*numAdcAverages + 180 >= totalDacSweepTime) {
+    if (maxConvTime * numAdcAverages + 180 >= totalDacSweepTime) {
       PeripheralCommsController::dataLedOff();
-      return OperationResult::Failure("DAC sweep time is too short for specified ADC conversion time, please increase dac_interval_us or reduce numDacStepsPerLoop");
+      return OperationResult::Failure(
+          "DAC sweep time is too short for specified ADC conversion time, "
+          "please increase dac_interval_us or reduce numDacStepsPerLoop");
     }
 
     attachAdcSyncInterrupts(boardUsage);
@@ -1703,7 +1763,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       __WFE(); // Wait for event (interrupt)
       
       // Handle DAC flag - time to set next DAC voltage
-      if (TimingUtil::dacFlag && currentDacStep < totalDacSteps) {
+      if (currentDacStep < totalDacSteps && TimingUtil::consumeDacFlag()) {
         for (int i = 0; i < numDacChannels; i++) {
           float voltage = dacVoltageLists[i][currentDacStep];
           DACController::setVoltageNoTransactionNoLdac(dacChannels[i], voltage);
@@ -1718,7 +1778,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
           done = true; // Mark that we need to read ADC after settling
         }
         
-        TimingUtil::dacFlag = false;
       }
       
       // Handle ADC flag - time to read ADC after settling
@@ -1736,7 +1795,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
         }
         
         FastGpio::digitalWrite(adc_sync, false);
-        TimingUtil::adcFlag = 0;
         currentAdcReads++;
         currentLoop++; // Each ADC read marks completion of one loop
       }
@@ -1767,7 +1825,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("RAMPING_STOPPED");
     }
 
-    return finishRampOrSpiFailure(spiErrors);
+    return finishRampTimingWatchdog();
   }
 
 
@@ -1814,7 +1872,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     int numAdcMeasuresPerDacStep = static_cast<int>(args[currentIndex++]);
     int numAdcAverages = static_cast<int>(args[currentIndex++]);
     int numAdcConversionSkips = static_cast<int>(args[currentIndex++]);
-    uint32_t adcConversionTime_us = static_cast<uint32_t>(args[currentIndex++]);
+    const float adcConversionTimeArg = args[currentIndex++];
 
     if (!isValidDacChannelCount(numDacChannels) ||
         !isValidAdcChannelCount(numAdcChannels)) {
@@ -1822,9 +1880,11 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     }
     if (numDacSteps < 1 || numAdcMeasuresPerDacStep < 1 ||
         numAdcAverages < 1 || numAdcConversionSkips < 0 ||
-        adcConversionTime_us < 1) {
+        !isUint32AtLeast(adcConversionTimeArg, 1)) {
       return OperationResult::Failure("Invalid boxcar timing/count argument");
     }
+    uint32_t adcConversionTime_us =
+        static_cast<uint32_t>(adcConversionTimeArg);
 
     const size_t expected =
         7u + static_cast<size_t>(numDacChannels) * 5u +
@@ -1833,11 +1893,11 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("Incorrect number of arguments");
     }
 
-    int dacChannels[kMaxDacChannels] = {};
-    float dacV0_1[kMaxDacChannels] = {};
-    float dacVf_1[kMaxDacChannels] = {};
-    float dacV0_2[kMaxDacChannels] = {};
-    float dacVf_2[kMaxDacChannels] = {};
+    int dacChannels[NUM_DAC_CHANNELS] = {};
+    float dacV0_1[NUM_DAC_CHANNELS] = {};
+    float dacVf_1[NUM_DAC_CHANNELS] = {};
+    float dacV0_2[NUM_DAC_CHANNELS] = {};
+    float dacVf_2[NUM_DAC_CHANNELS] = {};
 
     for (int i = 0; i < numDacChannels; ++i) {
       dacChannels[i] = static_cast<int>(args[currentIndex++]);
@@ -1847,7 +1907,7 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       dacVf_2[i] = args[currentIndex++];
     }
 
-    int adcChannels[kMaxAdcChannels] = {};
+    int adcChannels[NUM_ADC_CHANNELS] = {};
 
     for (int i = 0; i < numAdcChannels; ++i) {
       adcChannels[i] = static_cast<int>(args[currentIndex++]);
@@ -1916,10 +1976,9 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
 
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
-    DeferredSpiErrorScope spiErrors;
 
-    double voltageStepSizeLow[kMaxDacChannels] = {};
-    double voltageStepSizeHigh[kMaxDacChannels] = {};
+    double voltageStepSizeLow[NUM_DAC_CHANNELS] = {};
+    double voltageStepSizeHigh[NUM_DAC_CHANNELS] = {};
 
     for (int i = 0; i < numDacChannels; i++) {
       voltageStepSizeLow[i] =
@@ -1932,8 +1991,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
                           : 0.0;
     }
 
-    double previousVoltageSetLow[kMaxDacChannels] = {};
-    double previousVoltageSetHigh[kMaxDacChannels] = {};
+    double previousVoltageSetLow[NUM_DAC_CHANNELS] = {};
+    double previousVoltageSetHigh[NUM_DAC_CHANNELS] = {};
 
     for (int i = 0; i < numDacChannels; i++) {
       previousVoltageSetLow[i] = dacV0_1[i];
@@ -1975,12 +2034,13 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
     DACController::toggleLdac();
     steps++;
 
-    TimingUtil::setupTimersTimeSeries(dacPeriod_us, actualConversionTime_us);
+    TimingUtil::setupTimersTimeSeries(dacPeriod_us, actualConversionTime_us,
+                                      adcMask);
 
     while (x < total_data_size && !isWorkerStopRequested()) {
-      if (TimingUtil::adcFlag == adcMask) {
+      if (TimingUtil::consumeAdcFlag(adcMask)) {
         if (adcGetsSinceLastDacSet >= numAdcConversionSkips) {
-          double packets[kMaxAdcChannels] = {};
+          double packets[NUM_ADC_CHANNELS] = {};
           for (int i = 0; i < numAdcChannels; i++) {
             packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
           }
@@ -1991,9 +2051,8 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
           x++;
         }
         adcGetsSinceLastDacSet++;
-        TimingUtil::adcFlag = 0;
       }
-      if (TimingUtil::dacFlag && steps < totalSteps) {
+      if (steps < totalSteps && TimingUtil::consumeDacFlag()) {
         for (int i = 0; i < numDacChannels; i++) {
           double currentVoltage;
           if (steps % (2 * numAdcAverages) != 0) {
@@ -2016,7 +2075,6 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
         }
         steps++;
         adcGetsSinceLastDacSet = 0;
-        TimingUtil::dacFlag = false;
         TIM8->CNT = 0;
       }
     }
@@ -2041,5 +2099,5 @@ OperationResult finishRampOrSpiFailure(DeferredSpiErrorScope& spiErrors) {
       return OperationResult::Failure("RAMPING_STOPPED");
     }
 
-    return finishRampOrSpiFailure(spiErrors);
+    return finishRampTimingWatchdog();
   }

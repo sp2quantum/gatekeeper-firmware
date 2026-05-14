@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include "Utils/CalibrationData.h"
 
-#define CHAR_BUFFER_SIZE 256
+#define CHAR_BUFFER_SIZE 4096
 #define FLOAT_BUFFER_SIZE 256
 #define VOLTAGE_BUFFER_SIZE 2048
 #define MAX_MESSAGE_SIZE 256
@@ -58,7 +58,7 @@ bool initSharedMemory();
 
 void requestWorkerStop();
 
-bool sendCommandToWorker(const char* data, size_t length);
+bool sendCommandBytesToWorker(const char* data, size_t length);
 bool receiveTextFromWorker(char* data, size_t& length);
 bool hasTextFromWorker();
 

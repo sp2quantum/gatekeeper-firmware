@@ -25,6 +25,7 @@ class DACChannel {
   void setChannelIndex(int index);
   
   int getChannelIndex() const;
+  int getCsPin() const;
 
   // initialize is the command INITIALIZE, setup is called in main::setup
   void initialize();
@@ -35,6 +36,8 @@ class DACChannel {
   float setVoltage(float v);
 
   bool setVoltageNoTransactionNoLdac(float v);
+  bool encodeVoltagePacket(float v, byte packet[3]);
+  bool writeVoltagePacketNoLdac(const byte packet[3]);
 
   void setCalibration(float offset, float gain);
 

@@ -77,16 +77,6 @@ static void writeUint32ToCharBuffer(CharCircularBuffer* buffer,
   }
 }
 
-static uint32_t readUint32FromCharBuffer(CharCircularBuffer* buffer,
-                                         uint32_t& index) {
-  uint32_t value = 0;
-  for (int i = 0; i < 4; i++) {
-    value |= (static_cast<unsigned char>(buffer->buffer[index]) << (8 * i));
-    index = (index + 1) % CHAR_BUFFER_SIZE; // advance by 1 byte
-  }
-  return value;
-}
-
 // ---------------------------------------------------------------------------
 //  Char buffer operations
 // ---------------------------------------------------------------------------
@@ -114,32 +104,6 @@ static bool charBufferSend(CharCircularBuffer* buffer, const char* data,
   }
 
   buffer->write_index = write_index;
-  return true;
-}
-
-static bool charBufferReceive(CharCircularBuffer* buffer, char* data,
-                              size_t& length) {
-  if (buffer->read_index == buffer->write_index) {
-    length = 0;
-    return false;
-  }
-
-  uint32_t read_index = buffer->read_index;
-  uint32_t msg_length = readUint32FromCharBuffer(buffer, read_index);
-
-  if (msg_length > length) {
-    length = msg_length;
-    return false;
-  }
-
-  for (size_t i = 0; i < msg_length; i++) {
-    data[i] = buffer->buffer[read_index];
-    read_index = (read_index + 1) % CHAR_BUFFER_SIZE;
-  }
-
-  buffer->read_index = read_index;
-
-  length = msg_length;
   return true;
 }
 
@@ -239,7 +203,7 @@ bool sendTextToGateway(const char* data, size_t length) {
     return false;
   }
   if (length <= (kCharFrameMaxPayload - kNormalFrameOverhead)) {
-    uint8_t frame[kCharFrameMaxPayload];
+    static uint8_t frame[kCharFrameMaxPayload];
     frame[0] = CHAR_FRAME_TYPE_NORMAL;
     memcpy(&frame[1], data, length);
     return send_blocking(reinterpret_cast<const char*>(frame), length + 1);
@@ -262,7 +226,7 @@ bool sendTextToGateway(const char* data, size_t length) {
     const bool is_first = (offset == 0);
     const bool is_last = (offset + chunk == length);
 
-    uint8_t frame[kCharFrameMaxPayload];
+    static uint8_t frame[kCharFrameMaxPayload];
     frame[0] = CHAR_FRAME_TYPE_FRAGMENT;
     // Flags
     frame[1] = static_cast<uint8_t>((is_first ? 0x01 : 0x00) |
@@ -287,120 +251,22 @@ bool sendTextToGateway(const char* data, size_t length) {
 
   return true;
 }
-bool receiveCommandFromGateway(char* data, size_t& length) {
-  struct CharReassemblyState {
-    bool assembling = false;
-    uint16_t next_seq = 0;
-    uint32_t expected_total = 0;
-    std::vector<char> assembled;
-  };
-  static CharReassemblyState state;
+size_t receiveCommandBytesFromGateway(char* data, size_t capacity) {
+  CharCircularBuffer* buffer = &shared_memory->gateway_to_worker_char_buffer;
+  size_t count = 0;
+  uint32_t read_index = buffer->read_index;
 
-  const size_t output_capacity = length;
-  char frame[CHAR_BUFFER_SIZE];
-  size_t frame_length = sizeof(frame);
-  if (!charBufferReceive(&shared_memory->gateway_to_worker_char_buffer, frame,
-                         frame_length)) {
-    return false;
+  while (count < capacity && read_index != buffer->write_index) {
+    data[count++] = buffer->buffer[read_index];
+    read_index = (read_index + 1) % CHAR_BUFFER_SIZE;
   }
 
-  auto read_le16 = [](const uint8_t* p) -> uint16_t {
-    return static_cast<uint16_t>(p[0]) |
-           (static_cast<uint16_t>(p[1]) << 8);
-  };
-  auto read_le32 = [](const uint8_t* p) -> uint32_t {
-    return static_cast<uint32_t>(p[0]) |
-           (static_cast<uint32_t>(p[1]) << 8) |
-           (static_cast<uint32_t>(p[2]) << 16) |
-           (static_cast<uint32_t>(p[3]) << 24);
-  };
-
-  const uint8_t* u8 = reinterpret_cast<const uint8_t*>(frame);
-  if (frame_length == 0) {
-    length = 0;
-    return false;
+  if (count > 0) {
+    __DMB();
+    buffer->read_index = read_index;
   }
 
-  const uint8_t frame_type = u8[0];
-  if (frame_type == CHAR_FRAME_TYPE_NORMAL) {
-    const size_t payload_length = frame_length - 1;
-    if (payload_length > output_capacity) {
-      length = 0;
-      return false;
-    }
-
-    state = CharReassemblyState{};
-    memcpy(data, frame + 1, payload_length);
-    length = payload_length;
-    return true;
-  }
-
-  if (frame_type != CHAR_FRAME_TYPE_FRAGMENT ||
-      frame_length < CHAR_FRAGMENT_HEADER_SIZE) {
-    state = CharReassemblyState{};
-    length = 0;
-    return false;
-  }
-
-  const uint8_t flags = u8[1];
-  const uint8_t version = u8[2];
-  const uint16_t seq = read_le16(&u8[3]);
-  const uint32_t total_len = read_le32(&u8[5]);
-  const bool is_first = (flags & 0x01) != 0;
-  const bool is_last = (flags & 0x02) != 0;
-
-  if (version != CHAR_FRAGMENT_VERSION || total_len == 0) {
-    state = CharReassemblyState{};
-    length = 0;
-    return false;
-  }
-
-  if (is_first) {
-    state.assembling = true;
-    state.next_seq = 0;
-    state.expected_total = total_len;
-    state.assembled.clear();
-    state.assembled.reserve(total_len);
-  }
-
-  if (!state.assembling || seq != state.next_seq ||
-      total_len != state.expected_total) {
-    state = CharReassemblyState{};
-    length = 0;
-    return false;
-  }
-
-  const size_t payload_len =
-      (frame_length > CHAR_FRAGMENT_HEADER_SIZE)
-          ? (frame_length - CHAR_FRAGMENT_HEADER_SIZE)
-          : 0;
-  const size_t already = state.assembled.size();
-  if (payload_len > 0 && already < state.expected_total) {
-    const size_t remaining = state.expected_total - already;
-    const size_t to_append =
-        (payload_len < remaining) ? payload_len : remaining;
-    state.assembled.insert(state.assembled.end(),
-                           frame + CHAR_FRAGMENT_HEADER_SIZE,
-                           frame + CHAR_FRAGMENT_HEADER_SIZE + to_append);
-  }
-
-  state.next_seq++;
-
-  if (!(is_last && state.assembled.size() >= state.expected_total)) {
-    length = 0;
-    return false;
-  }
-
-  if (state.expected_total > output_capacity) {
-    state = CharReassemblyState{};
-    length = 0;
-    return false;
-  }
-
-  memcpy(data, state.assembled.data(), state.expected_total);
-  length = state.expected_total;
-  state = CharReassemblyState{};
-  return true;
+  return count;
 }
 bool hasCommandFromGateway() {
   return charBufferHasMessage(&shared_memory->gateway_to_worker_char_buffer);

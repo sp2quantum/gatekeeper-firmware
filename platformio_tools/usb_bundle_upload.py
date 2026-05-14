@@ -5,10 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
-
-import serial
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -19,14 +16,6 @@ DEFAULT_ROOT_BUILD_NAME = "gatekeeper_firmware"
 DEFAULT_M4_ENV = "gatekeeper_m4_usb_gateway"
 DEFAULT_M7_ENV = "gatekeeper_m7_worker"
 EXPECTED_ENVIRONMENT = "GATEKEEPER"
-
-ARDUINO_GIGA_DFU_DEVICE_ID = "2341:0366"
-M7_ADDRESS = "0x08040000"
-M4_ADDRESS = "0x08100000"
-M7_LEAVE_ADDRESS = f"{M7_ADDRESS}:leave"
-DFU_AUTO_WAIT_S = 8
-DFU_MANUAL_WAIT_S = 60
-
 
 def log(message):
     print(f"[usb-bundle-upload] {message}", flush=True)
@@ -83,27 +72,6 @@ def find_executable(*names):
         path = shutil.which(name)
         if path:
             return path
-    return None
-
-
-def find_dfu_util():
-    path = find_executable("dfu-util")
-    if path:
-        return path
-
-    candidates = [
-        Path.home() / ".platformio" / "packages" / "tool-dfuutil" / "bin" / "dfu-util",
-        Path.home() / ".platformio" / "packages" / "tool-dfuutil-arduino" / "dfu-util",
-        Path.home()
-        / ".platformio"
-        / "packages"
-        / "tool-stm32duino"
-        / "dfu-util"
-        / "dfu-util",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return str(candidate)
     return None
 
 
@@ -202,63 +170,6 @@ def refresh_intellisense():
         )
     except subprocess.CalledProcessError as exc:
         log(f"IntelliSense refresh failed after build: {exc}")
-
-
-def dfu_list_output(dfu_util):
-    result = subprocess.run(
-        [dfu_util, "-l", "-d", ARDUINO_GIGA_DFU_DEVICE_ID],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return f"{result.stdout}\n{result.stderr}"
-
-
-def dfu_device_present(dfu_util):
-    return "Found DFU" in dfu_list_output(dfu_util)
-
-
-def wait_for_dfu_device(dfu_util, timeout_s):
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if dfu_device_present(dfu_util):
-            return True
-        time.sleep(0.5)
-    return False
-
-
-def trigger_dfu_mode(dfu_util, port):
-    log(f"Triggering DFU mode from {port}...")
-    try:
-        with serial.Serial(port, 1200, timeout=1):
-            pass
-    except (serial.SerialException, OSError) as exc:
-        log(f"1200-baud touch failed: {exc}")
-    if wait_for_dfu_device(dfu_util, DFU_AUTO_WAIT_S):
-        return
-
-    log(
-        "DFU did not appear after the 1200-baud touch. "
-        "Double-tap reset now if this board is running older firmware."
-    )
-    if not wait_for_dfu_device(dfu_util, DFU_MANUAL_WAIT_S):
-        raise RuntimeError("Timed out waiting for USB DFU mode.")
-
-
-def dfu_download(dfu_util, address, binary_path):
-    run(
-        [
-            dfu_util,
-            "-d",
-            ARDUINO_GIGA_DFU_DEVICE_ID,
-            "-a",
-            "0",
-            "-s",
-            address,
-            "-D",
-            str(binary_path),
-        ]
-    )
 
 
 def patch_binary_if_supported(persistence, binary_path, serial_number):
@@ -388,7 +299,7 @@ def main():
         )
         return
 
-    dfu_util = find_dfu_util()
+    dfu_util = persistence.find_dfu_util()
     if dfu_util is None:
         raise RuntimeError("dfu-util not found.")
 
@@ -409,7 +320,7 @@ def main():
                 "Backed up device state "
                 f"(env={state['source_environment']}, serial={state['serial_number']})."
             )
-    elif dfu_device_present(dfu_util):
+    elif persistence.dfu_device_present(dfu_util):
         log("Found Arduino GIGA already in USB DFU mode.")
         state = {
             "skip": True,
@@ -421,7 +332,7 @@ def main():
             "No Arduino GIGA serial port or DFU device found. "
             "Double-tap reset now to enter the bootloader."
         )
-        if not wait_for_dfu_device(dfu_util, DFU_MANUAL_WAIT_S):
+        if not persistence.wait_for_dfu_device(dfu_util, persistence.DFU_MANUAL_WAIT_S):
             raise RuntimeError("Arduino GIGA not found as serial or USB DFU.")
         state = {
             "skip": True,
@@ -448,16 +359,25 @@ def main():
     patch_binary_if_supported(persistence, real_m7_bin, serial_number)
 
     if port is not None:
-        trigger_dfu_mode(dfu_util, port)
-    elif not dfu_device_present(dfu_util):
+        persistence.trigger_dfu_mode(
+            dfu_util,
+            port,
+            log_func=log,
+            manual_prompt="Double-tap reset now if this board is running older firmware.",
+        )
+    elif not persistence.dfu_device_present(dfu_util):
         raise RuntimeError("Arduino GIGA USB DFU device disappeared before upload.")
     else:
         log("Using existing Arduino GIGA USB DFU device.")
 
     log("Uploading M4 without leaving DFU...")
-    dfu_download(dfu_util, M4_ADDRESS, m4_bin)
+    persistence.dfu_download(
+        dfu_util, persistence.M4_ADDRESS, m4_bin, log_func=log
+    )
     log("Uploading M7 and leaving DFU...")
-    dfu_download(dfu_util, M7_LEAVE_ADDRESS, real_m7_bin)
+    persistence.dfu_download(
+        dfu_util, persistence.M7_LEAVE_ADDRESS, real_m7_bin, log_func=log
+    )
 
     if args.no_restore:
         log("USB bundle upload complete.")
