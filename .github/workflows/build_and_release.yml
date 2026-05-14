@@ -20,7 +20,7 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
-          key: ${{ runner.os }}-pio
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini', 'm4/platformio.ini', 'm7/platformio.ini') }}
 
       # Setup Python environment
       - uses: actions/setup-python@v5
