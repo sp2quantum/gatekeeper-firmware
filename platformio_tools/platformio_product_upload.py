@@ -54,6 +54,7 @@ elif env.IsCleanTarget():
     _run_bundle_clean()
 elif not COMMAND_LINE_TARGETS:
     _run_bundle_build()
+    env.Exit(0)
 
 env.AddCustomTarget(
     "build_firmware_bundle",
