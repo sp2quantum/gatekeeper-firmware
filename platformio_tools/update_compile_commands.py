@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import shlex
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +13,10 @@ M4_PROJECT_DIR = ROOT_DIR / "m4"
 M7_PROJECT_DIR = ROOT_DIR / "m7"
 M4_ENV = "gatekeeper_m4_usb_gateway"
 M7_ENV = "gatekeeper_m7_worker"
+INCLUDES_RESPONSE_RE = re.compile(
+    r"(?P<iprefix>(?:^|\s)-iprefix(?:\s+)?(?P<prefix>\"[^\"]+\"|\S+))"
+    r"\s+@(?P<response>\"[^\"]+\"|\S*includes\.txt)"
+)
 
 
 def log(message):
@@ -47,53 +51,37 @@ def _include_path_flag(path):
     return "-I" + str(path)
 
 
+def _unquote(value):
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1]
+    return value
+
+
 def _expand_response_file(path, directory, iprefix):
     response_path = _resolve_path(path, directory)
-    tokens = shlex.split(response_path.read_text())
     expanded = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if token.startswith("-iwithprefixbefore") and token != "-iwithprefixbefore":
-            include_suffix = token[len("-iwithprefixbefore"):]
-            expanded.append(_include_path_flag(str(iprefix).rstrip("/") + include_suffix))
-        elif token == "-iwithprefixbefore":
-            index += 1
-            include_suffix = tokens[index]
-            expanded.append(_include_path_flag(str(iprefix).rstrip("/") + include_suffix))
-        else:
-            expanded.append(token)
-        index += 1
+    for line in response_path.read_text().splitlines():
+        token = line.strip()
+        if not token:
+            continue
+        if token.startswith("-iwithprefixbefore"):
+            suffix = token.removeprefix("-iwithprefixbefore")
+            if "\\" in str(iprefix):
+                suffix = suffix.replace("/", "\\")
+            token = _include_path_flag(str(iprefix).rstrip("/\\") + suffix)
+        expanded.append(token)
     return expanded
 
 
 def expand_compile_command(command, directory):
-    tokens = shlex.split(command)
-    expanded = []
-    iprefix = None
-    index = 0
+    def replace(match):
+        iprefix = match.group("iprefix")
+        prefix = _unquote(match.group("prefix"))
+        response = _unquote(match.group("response"))
+        includes = _expand_response_file(response, directory, prefix)
+        return iprefix + " " + " ".join(includes)
 
-    while index < len(tokens):
-        token = tokens[index]
-
-        if token.startswith("-iprefix") and token != "-iprefix":
-            iprefix = token[len("-iprefix"):]
-            expanded.append(token)
-        elif token == "-iprefix":
-            expanded.append(token)
-            index += 1
-            iprefix = tokens[index]
-            expanded.append(tokens[index])
-        elif token.startswith("@"):
-            if iprefix is None:
-                expanded.append(token)
-            else:
-                expanded.extend(_expand_response_file(token[1:], directory, iprefix))
-        else:
-            expanded.append(token)
-        index += 1
-
-    return shlex.join(expanded)
+    return INCLUDES_RESPONSE_RE.sub(replace, command)
 
 
 def normalized_entries(compile_db_path):
