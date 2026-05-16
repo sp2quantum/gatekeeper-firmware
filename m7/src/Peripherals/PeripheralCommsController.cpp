@@ -35,8 +35,11 @@ uint32_t transferFrequency(bool isDac) {
   return isDac ? DAC_SPI_FREQUENCY_HZ : ADC_SPI_FREQUENCY_HZ;
 }
 
-uint8_t transferMode(bool isDac) {
-  return isDac ? DAC_SPI_MODE : ADC_SPI_MODE;
+uint8_t transferMode(bool isDac, bool dacReadMode) {
+  if (!isDac) {
+    return ADC_SPI_MODE;
+  }
+  return dacReadMode ? DAC_READ_SPI_MODE : DAC_SPI_MODE;
 }
 
 SpiBusState& busForTransfer(bool isDac) {
@@ -55,14 +58,14 @@ void constructSpiBuses() {
   }
 }
 
-bool configureBusForTransfer(bool isDac) {
+bool configureBusForTransfer(bool isDac, bool dacReadMode = false) {
   SpiBusState& bus = busForTransfer(isDac);
   if (bus.spi == nullptr) {
     return false;
   }
 
   const uint32_t frequency = transferFrequency(isDac);
-  const uint8_t mode = transferMode(isDac);
+  const uint8_t mode = transferMode(isDac, dacReadMode);
   if (!bus.configured || bus.frequency_hz != frequency || bus.mode != mode) {
     bus.spi->format(8, mode);
     bus.spi->frequency(frequency);
@@ -87,13 +90,14 @@ PeripheralCommsController::PeripheralCommsController(int cs_pin)
 
 bool PeripheralCommsController::performMbedTransfer(bool is_dac, uint8_t* tx,
                                                     uint8_t* rx,
-                                                    size_t count) {
+                                                    size_t count,
+                                                    bool dac_read_mode) {
   if (count == 0) {
     return true;
   }
 
   if (!spiInitialized || count > kSpiBufferSize ||
-      !configureBusForTransfer(is_dac)) {
+      !configureBusForTransfer(is_dac, dac_read_mode)) {
     clearCallerBuffer(tx, rx, count);
     return false;
   }
@@ -146,6 +150,11 @@ void PeripheralCommsController::setup() {
 bool PeripheralCommsController::transferDAC(void* buf, size_t count) {
   return performMbedTransfer(true, static_cast<uint8_t*>(buf),
                              static_cast<uint8_t*>(buf), count);
+}
+
+bool PeripheralCommsController::transferDACRead(void* buf, size_t count) {
+  return performMbedTransfer(true, static_cast<uint8_t*>(buf),
+                             static_cast<uint8_t*>(buf), count, true);
 }
 
 bool PeripheralCommsController::transferADC(void* buf, size_t count) {

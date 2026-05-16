@@ -46,7 +46,12 @@ class God {
   static OperationResult runPreparedTimeSeriesBufferRamp(
       int numDacChannels, int numAdcChannels, int numSteps,
       uint32_t dac_interval_us, uint32_t adc_interval_us, int* dacChannels,
-      float* dacV0s, float* dacVfs, int* adcChannels, uint8_t adcMask);
+      float* dacV0s, float* dacVfs, int* adcChannels, uint8_t adcMask,
+      // Used by 2D scans to hide the ADC's first conversion after a row jump.
+      int initialAdcSamplesToDiscard = 0,
+      bool holdInitialDacUntilDiscarded = false,
+      bool discardAdcSampleAfterDacStep = false,
+      bool holdInitialDacThroughFirstVisibleSample = false);
 
   static void cleanupTimeSeriesBufferRampHardware(
       int numAdcChannels, int* adcChannels, const BoardUsage& boardUsage);
@@ -61,7 +66,7 @@ class God {
   static OperationResult prepareDacLedBufferRampHardware(
       int numAdcChannels, int numAdcAverages, uint32_t dac_interval_us,
       uint32_t dac_settling_time_us, int* adcChannels, uint8_t& adcMask,
-      BoardUsage& boardUsage);
+      BoardUsage& boardUsage, bool startTimers = true);
 
   static OperationResult runPreparedDacLedBufferRamp(
       int numDacChannels, int numAdcChannels, int numSteps, int numAdcAverages,

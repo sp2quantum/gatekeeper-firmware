@@ -2,6 +2,8 @@
 
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
 #include "Peripherals/God.h"
+#include "Peripherals/PeripheralCommsController.h"
+#include "Utils/FastGpio.h"
 
 namespace {
 bool isValidDacChannelCount(int count) {
@@ -19,6 +21,20 @@ bool isUint32AtLeast(float value, uint32_t minimum) {
 
 bool isBooleanArg(float value) {
   return value == 0.0f || value == 1.0f;
+}
+
+constexpr int kTimeSeriesRowStartAdcDiscards = 2;
+constexpr uint32_t kTimeSeriesAdcStartDelayUs = 10;
+
+void setupTimeSeriesTimers(uint32_t dacIntervalUs, uint32_t adcIntervalUs,
+                           uint8_t adcMask) {
+  if (dacIntervalUs == adcIntervalUs &&
+      kTimeSeriesAdcStartDelayUs < adcIntervalUs) {
+    TimingUtil::setupTimersDacLed(dacIntervalUs, kTimeSeriesAdcStartDelayUs,
+                                  adcMask);
+    return;
+  }
+  TimingUtil::setupTimersTimeSeries(dacIntervalUs, adcIntervalUs, adcMask);
 }
 
 OperationResult validateDacChannels(const int* channels, int count) {
@@ -59,6 +75,439 @@ OperationResult finishRampTimingWatchdog(
     message += " adc_conversion_missteps=" + String(adcConversionMissteps);
   }
   return OperationResult::Failure(message);
+}
+
+OperationResult dacWriteFailure(int channel, double voltage) {
+  String message = "DAC write failed ch=" + String(channel) +
+                   " v=" + String(voltage, 9);
+
+  if (!DACController::isChannelIndexValid(channel)) {
+    return OperationResult::Failure(message + " source=invalid_channel");
+  }
+
+  const float lowerBound = DACController::getLowerBound(channel);
+  const float upperBound = DACController::getUpperBound(channel);
+  if (voltage < lowerBound || voltage > upperBound) {
+    message += " source=bounds bounds=[" + String(lowerBound, 9) + "," +
+               String(upperBound, 9) + "]";
+    return OperationResult::Failure(message);
+  }
+
+  return OperationResult::Failure(message + " source=spi");
+}
+
+bool sendVoltageFrame(const double* packets, size_t length) {
+  if (sendVoltageFrameToGateway(packets, length)) {
+    return true;
+  }
+  requestWorkerStop();
+  return false;
+}
+
+bool encodeDacVoltagePackets(int numDacChannels, const int* dacChannels,
+                             const double* voltages,
+                             byte packets[NUM_DAC_CHANNELS][3]) {
+  for (int i = 0; i < numDacChannels; i++) {
+    if (!DACController::encodeVoltagePacket(
+            dacChannels[i], static_cast<float>(voltages[i]), packets[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool writeDacPackets(int numDacChannels, const int* dacChannels,
+                     byte packets[NUM_DAC_CHANNELS][3]) {
+  for (int i = 0; i < numDacChannels; i++) {
+    if (!DACController::writeVoltagePacketNoLdac(dacChannels[i],
+                                                 packets[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void pauseTimeSeriesTimers() {
+  TimingUtil::disableDacInterrupt();
+  TimingUtil::disableAdcInterrupt();
+  TimingUtil::dacFlag = false;
+  TimingUtil::adcFlag = 0;
+  TimingUtil::stopAndResetAdcTimer();
+  FastGpio::digitalWrite(adc_sync, false);
+}
+
+void calculateDacLed2DVoltages(int pointIndex, int numStepsFast,
+                               bool retrace, bool snake,
+                               int numDacChannels, const float* startPoint,
+                               const float* fastAxisVector,
+                               const float* slowAxisStep,
+                               double voltages[NUM_DAC_CHANNELS]) {
+  const int scansPerSlowStep = (retrace && !snake) ? 2 : 1;
+  const int scanIndex = pointIndex / numStepsFast;
+  const int fastStep = pointIndex % numStepsFast;
+  const int slowStep = scanIndex / scansPerSlowStep;
+  const bool retraceScan = (retrace && !snake) &&
+                           ((scanIndex % scansPerSlowStep) == 1);
+  const bool snakeReverse = snake && ((slowStep % 2) != 0);
+  const bool reverseFastAxis = retraceScan || snakeReverse;
+  const double fastDenominator =
+      numStepsFast > 1 ? static_cast<double>(numStepsFast - 1) : 1.0;
+  double fastFraction = numStepsFast > 1
+                            ? static_cast<double>(fastStep) / fastDenominator
+                            : 0.0;
+  if (reverseFastAxis) {
+    fastFraction = 1.0 - fastFraction;
+  }
+
+  for (int i = 0; i < numDacChannels; i++) {
+    voltages[i] = static_cast<double>(startPoint[i]) +
+                  static_cast<double>(slowStep) *
+                      static_cast<double>(slowAxisStep[i]) +
+                  fastFraction * static_cast<double>(fastAxisVector[i]);
+  }
+}
+
+struct DacLed2DStreamPoint {
+  int pointIndex;
+  bool sendAdc;
+};
+
+bool usesRowStartDummyConversions(bool retrace, bool snake,
+                                  int numStepsFast,
+                                  int numStepsSlow) {
+  return !retrace && !snake && numStepsFast > 1 && numStepsSlow > 1;
+}
+
+int dacLed2DStreamPointCount(int totalPoints, bool retrace, bool snake,
+                             int numStepsFast, int numStepsSlow) {
+  if (!usesRowStartDummyConversions(retrace, snake, numStepsFast,
+                                    numStepsSlow)) {
+    return totalPoints;
+  }
+  return totalPoints + numStepsSlow - 1;
+}
+
+DacLed2DStreamPoint getDacLed2DStreamPoint(int streamIndex, bool retrace,
+                                           bool snake, int numStepsFast,
+                                           int numStepsSlow) {
+  if (!usesRowStartDummyConversions(retrace, snake, numStepsFast,
+                                    numStepsSlow) ||
+      streamIndex < numStepsFast) {
+    return {streamIndex, true};
+  }
+
+  const int laterRowStreamLength = numStepsFast + 1;
+  const int remaining = streamIndex - numStepsFast;
+  const int row = 1 + remaining / laterRowStreamLength;
+  const int rowPosition = remaining % laterRowStreamLength;
+  if (row >= numStepsSlow) {
+    return {numStepsFast * numStepsSlow - 1, true};
+  }
+  if (rowPosition == 0) {
+    return {row * numStepsFast, false};
+  }
+  return {row * numStepsFast + rowPosition - 1, true};
+}
+
+OperationResult runPreparedDacLedBufferRamp2D(
+    int numDacChannels, int numAdcChannels, int numStepsFast,
+    int numStepsSlow, bool retrace, bool snake, int numAdcAverages,
+    uint32_t dac_interval_us, uint32_t dac_settling_time_us, int* dacChannels,
+    float* startPoint, float* fastAxisVector, float* slowAxisVector,
+    int* adcChannels, uint8_t adcMask) {
+  const int scansPerSlowStep = (retrace && !snake) ? 2 : 1;
+  const int totalPoints = numStepsFast * numStepsSlow * scansPerSlowStep;
+  if (totalPoints < 1) {
+    return OperationResult::Failure("Invalid number of 2D ramp points");
+  }
+  const int totalStreamPoints = dacLed2DStreamPointCount(
+      totalPoints, retrace, snake, numStepsFast, numStepsSlow);
+
+  float slowAxisStep[NUM_DAC_CHANNELS] = {};
+  for (int i = 0; i < numDacChannels; i++) {
+    slowAxisStep[i] =
+        numStepsSlow > 1 ? slowAxisVector[i] / (numStepsSlow - 1) : 0.0f;
+  }
+
+  double currentVoltages[NUM_DAC_CHANNELS] = {};
+  const DacLed2DStreamPoint firstStreamPoint = getDacLed2DStreamPoint(
+      0, retrace, snake, numStepsFast, numStepsSlow);
+  calculateDacLed2DVoltages(firstStreamPoint.pointIndex, numStepsFast,
+                            retrace, snake, numDacChannels, startPoint,
+                            fastAxisVector, slowAxisStep, currentVoltages);
+  byte nextDacPackets[NUM_DAC_CHANNELS][3] = {};
+  if (!encodeDacVoltagePackets(numDacChannels, dacChannels, currentVoltages,
+                               nextDacPackets) ||
+      !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
+    return dacWriteFailure(dacChannels[0], currentVoltages[0]);
+  }
+
+  int dacStreamPointsPreloaded = 1;
+  bool nextDacPacketsReady = false;
+  double nextVoltages[NUM_DAC_CHANNELS] = {};
+  auto prepareNextDacPackets = [&]() {
+    if (dacStreamPointsPreloaded >= totalStreamPoints) {
+      nextDacPacketsReady = false;
+      return true;
+    }
+    const DacLed2DStreamPoint streamPoint = getDacLed2DStreamPoint(
+        dacStreamPointsPreloaded, retrace, snake, numStepsFast,
+        numStepsSlow);
+    calculateDacLed2DVoltages(streamPoint.pointIndex, numStepsFast, retrace,
+                              snake, numDacChannels, startPoint,
+                              fastAxisVector, slowAxisStep, nextVoltages);
+    nextDacPacketsReady = encodeDacVoltagePackets(
+        numDacChannels, dacChannels, nextVoltages, nextDacPackets);
+    return nextDacPacketsReady;
+  };
+  if (!prepareNextDacPackets()) {
+    return dacWriteFailure(dacChannels[0], nextVoltages[0]);
+  }
+
+  FastGpio::digitalWrite(adc_sync, false);
+  TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us,
+                                adcMask);
+  TimingUtil::dacFlag = false;
+  TimingUtil::adcFlag = 0;
+
+  double packets[NUM_ADC_CHANNELS] = {};
+  const double numAdcAveragesInv = 1.0 / static_cast<double>(numAdcAverages);
+  int adcReads = 0;
+  int adcStreamReads = 0;
+  bool voltageOverflow = false;
+
+  while (adcReads < totalPoints && !isWorkerStopRequested()) {
+    __WFE();
+
+    const bool adcPending = TimingUtil::consumeAdcFlag(adcMask);
+    bool haveAdcPackets = false;
+    if (adcPending) {
+      if (adcStreamReads >= totalStreamPoints) {
+        return OperationResult::Failure("2D ramp ADC stream overrun");
+      }
+      const DacLed2DStreamPoint streamPoint = getDacLed2DStreamPoint(
+          adcStreamReads, retrace, snake, numStepsFast, numStepsSlow);
+      adcStreamReads++;
+      for (int i = 0; i < numAdcChannels; i++) {
+        double total = 0.0;
+        for (int j = 0; j < numAdcAverages; j++) {
+          total += ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+        }
+        packets[i] = total * numAdcAveragesInv;
+      }
+      FastGpio::digitalWrite(adc_sync, false);
+      if (streamPoint.sendAdc) {
+        adcReads++;
+        haveAdcPackets = true;
+      }
+    }
+
+    const bool dacPending = dacStreamPointsPreloaded < totalStreamPoints &&
+                            TimingUtil::consumeDacFlag();
+    if (dacPending) {
+      if (!nextDacPacketsReady ||
+          !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
+        return dacWriteFailure(dacChannels[0], nextVoltages[0]);
+      }
+      dacStreamPointsPreloaded++;
+      if (!prepareNextDacPackets()) {
+        return dacWriteFailure(dacChannels[0], nextVoltages[0]);
+      }
+    }
+
+    if (haveAdcPackets) {
+      if (!sendVoltageFrame(packets, numAdcChannels)) {
+        voltageOverflow = true;
+        break;
+      }
+    }
+  }
+
+  if (isWorkerStopRequested()) {
+    if (voltageOverflow) {
+      return OperationResult::Failure("Voltage output buffer overflow");
+    }
+    return OperationResult::Failure("RAMPING_STOPPED");
+  }
+  if (voltageOverflow) {
+    return OperationResult::Failure("Voltage output buffer overflow");
+  }
+
+  return OperationResult::Success();
+}
+
+OperationResult runBufferedTimeSeriesBufferRamp(
+    int numDacChannels, int numAdcChannels, int numSteps,
+    uint32_t dac_interval_us, uint32_t adc_interval_us, int* dacChannels,
+    float* dacV0s, float* dacVfs, int* adcChannels, uint8_t adcMask,
+    int initialAdcSamplesToDiscard, bool holdInitialDacUntilDiscarded,
+    bool holdInitialDacThroughFirstVisibleSample) {
+  const int savedDataSize = numSteps * dac_interval_us / adc_interval_us;
+  if (savedDataSize < 1) {
+    return OperationResult::Failure("Invalid time-series sample count");
+  }
+
+  std::vector<double> bufferedFrames(
+      static_cast<size_t>(savedDataSize) *
+      static_cast<size_t>(numAdcChannels));
+
+  pauseTimeSeriesTimers();
+
+  int steps = 0;
+  int x = 0;
+  int discardedAdcSamples = 0;
+  const int discardCount =
+      initialAdcSamplesToDiscard > 0 ? initialAdcSamplesToDiscard : 0;
+  bool voltageOverflow = false;
+
+  double voltageStepSize[NUM_DAC_CHANNELS] = {};
+  for (int i = 0; i < numDacChannels; i++) {
+    voltageStepSize[i] =
+        numSteps > 1 ? (dacVfs[i] - dacV0s[i]) / (numSteps - 1) : 0.0;
+  }
+
+  double nextVoltageSet[NUM_DAC_CHANNELS] = {};
+  for (int i = 0; i < numDacChannels; i++) {
+    nextVoltageSet[i] = dacV0s[i];
+  }
+  byte nextDacPackets[NUM_DAC_CHANNELS][3] = {};
+  bool nextDacPacketsReady = false;
+  auto prepareNextDacPackets = [&]() {
+    if (steps >= numSteps) {
+      nextDacPacketsReady = false;
+      return true;
+    }
+    nextDacPacketsReady = encodeDacVoltagePackets(
+        numDacChannels, dacChannels, nextVoltageSet, nextDacPackets);
+    return nextDacPacketsReady;
+  };
+
+  for (int i = 0; i < numDacChannels; i++) {
+    if (!DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
+                                                      dacV0s[i])) {
+      pauseTimeSeriesTimers();
+      return dacWriteFailure(dacChannels[i], dacV0s[i]);
+    }
+    nextVoltageSet[i] += voltageStepSize[i];
+  }
+  DACController::toggleLdac();
+  steps++;
+
+  FastGpio::digitalWrite(adc_sync, false);
+  for (int i = 0; i < numAdcChannels; i++) {
+    ADCController::startContinuousConversion(adcChannels[i]);
+    ADCController::setRDYFN(adcChannels[i]);
+  }
+  setupTimeSeriesTimers(dac_interval_us, adc_interval_us, adcMask);
+
+  if (!prepareNextDacPackets()) {
+    pauseTimeSeriesTimers();
+    return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+  }
+
+  FastGpio::digitalWrite(adc_sync, false);
+  TimingUtil::dacFlag = false;
+  TimingUtil::adcFlag = 0;
+  bool dacWriteQueued = false;
+
+  double packets[NUM_ADC_CHANNELS] = {};
+
+  while ((discardedAdcSamples < discardCount || x < savedDataSize ||
+          steps < numSteps) &&
+         !isWorkerStopRequested()) {
+    __WFE();
+    const bool adcPending =
+        (discardedAdcSamples < discardCount || x < savedDataSize) &&
+        TimingUtil::consumeAdcFlag(adcMask);
+    const bool holdingInitialDac =
+        holdInitialDacUntilDiscarded &&
+        (discardedAdcSamples < discardCount ||
+         (holdInitialDacThroughFirstVisibleSample && x == 0));
+    const bool holdingInitialDacBeforeAdc = holdingInitialDac;
+    if ((holdingInitialDac || steps < numSteps) &&
+        TimingUtil::consumeDacFlag()) {
+      dacWriteQueued = true;
+    }
+
+    bool haveAdcPackets = false;
+    if (adcPending) {
+      for (int i = 0; i < numAdcChannels; i++) {
+        packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+      }
+      FastGpio::digitalWrite(adc_sync, false);
+      if (discardedAdcSamples < discardCount) {
+        discardedAdcSamples++;
+      } else {
+        haveAdcPackets = true;
+      }
+    }
+
+    if (dacWriteQueued && TimingUtil::adcConversionInProgressMask == 0) {
+      if (holdingInitialDacBeforeAdc) {
+        // The initial DAC code is already loaded; avoid redundant SPI writes
+        // while the hidden row-start ADC sample is being discarded.
+        dacWriteQueued = false;
+      } else if (!nextDacPacketsReady ||
+                 !writeDacPackets(numDacChannels, dacChannels,
+                                  nextDacPackets)) {
+        pauseTimeSeriesTimers();
+        return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+      } else {
+        dacWriteQueued = false;
+        for (int i = 0; i < numDacChannels; i++) {
+          nextVoltageSet[i] += voltageStepSize[i];
+        }
+        steps++;
+        if (!prepareNextDacPackets()) {
+          pauseTimeSeriesTimers();
+          return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+        }
+      }
+    }
+
+    if (haveAdcPackets) {
+      const size_t frameOffset =
+          static_cast<size_t>(x) * static_cast<size_t>(numAdcChannels);
+      for (int i = 0; i < numAdcChannels; i++) {
+        bufferedFrames[frameOffset + static_cast<size_t>(i)] = packets[i];
+      }
+      x++;
+    }
+  }
+
+  pauseTimeSeriesTimers();
+
+  if (isWorkerStopRequested()) {
+    if (voltageOverflow) {
+      return OperationResult::Failure("Voltage output buffer overflow");
+    }
+    return OperationResult::Failure("RAMPING_STOPPED");
+  }
+  if (voltageOverflow) {
+    return OperationResult::Failure("Voltage output buffer overflow");
+  }
+
+  for (int frame = 0; frame < savedDataSize && !isWorkerStopRequested();
+       frame++) {
+    const size_t frameOffset = static_cast<size_t>(frame) *
+                               static_cast<size_t>(numAdcChannels);
+    if (!sendVoltageFrame(&bufferedFrames[frameOffset], numAdcChannels)) {
+      voltageOverflow = true;
+      break;
+    }
+  }
+
+  if (isWorkerStopRequested()) {
+    if (voltageOverflow) {
+      return OperationResult::Failure("Voltage output buffer overflow");
+    }
+    return OperationResult::Failure("RAMPING_STOPPED");
+  }
+  if (voltageOverflow) {
+    return OperationResult::Failure("Voltage output buffer overflow");
+  }
+
+  return OperationResult::Success();
 }
 
 }
@@ -235,11 +684,7 @@ OperationResult finishRampTimingWatchdog(
 
     // Iterate over slow steps
     for (int slowStep = 0; slowStep < numStepsSlow && !isWorkerStopRequested(); ++slowStep) {
-      // Determine ramp direction for snake mode
-      bool isReverse = false;
-      if (snake) {
-        isReverse = (slowStep % 2 != 0);  // Reverse on odd slow steps
-      }
+      const bool reverseFastAxis = snake && ((slowStep % 2) != 0);
 
       // Calculate start and end voltages for fast axis ramp
       // Position = currentSlowPosition + t * fastAxisVector (where t goes from 0 to 1)
@@ -247,7 +692,7 @@ OperationResult finishRampTimingWatchdog(
       float fastVfs[NUM_DAC_CHANNELS] = {};
       
       for (int i = 0; i < numDacChannels; ++i) {
-        if (isReverse) {
+        if (reverseFastAxis) {
           fastV0s[i] = currentSlowPosition[i] + fastAxisVector[i];
           fastVfs[i] = currentSlowPosition[i];
         } else {
@@ -257,18 +702,20 @@ OperationResult finishRampTimingWatchdog(
       }
 
       // Execute fast axis ramp
-      OperationResult ramp1Result = God::runPreparedTimeSeriesBufferRamp(
+      const bool discardInitialConversion = true;
+      OperationResult ramp1Result = runBufferedTimeSeriesBufferRamp(
           numDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
           adc_interval_us, dacChannels, fastV0s, fastVfs, adcChannels,
-          adcMask);
+          adcMask, discardInitialConversion ? kTimeSeriesRowStartAdcDiscards : 0,
+          discardInitialConversion, false);
 
       // Execute retrace if requested (and not in snake mode)
       OperationResult ramp2Result = OperationResult::Success();
       if (retrace && !snake) {
-        ramp2Result = God::runPreparedTimeSeriesBufferRamp(
+        ramp2Result = runBufferedTimeSeriesBufferRamp(
             numDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
             adc_interval_us, dacChannels, fastVfs, fastV0s, adcChannels,
-            adcMask);
+            adcMask, kTimeSeriesRowStartAdcDiscards, true, false);
       }
 
       // Check for errors
@@ -449,22 +896,6 @@ OperationResult finishRampTimingWatchdog(
       }
     }
 
-    // Calculate slow axis step sizes for each DAC channel
-    float slowStepSize[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; i++) {
-      slowStepSize[i] =
-          numStepsSlow > 1 ? slowAxisVector[i] / (numStepsSlow - 1) : 0.0f;
-    }
-
-    // Track current position in phase space (starting at startPoint)
-    float currentSlowPosition[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; i++) {
-      currentSlowPosition[i] = startPoint[i];
-    }
-
-    float fastV0s[NUM_DAC_CHANNELS] = {};
-    float fastVfs[NUM_DAC_CHANNELS] = {};
-
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
 
@@ -472,67 +903,17 @@ OperationResult finishRampTimingWatchdog(
     God::BoardUsage boardUsage{0, std::vector<uint8_t>()};
     OperationResult prepareResult = God::prepareDacLedBufferRampHardware(
         numAdcChannels, numAdcAverages, dac_interval_us, dac_settling_time_us,
-        adcChannels, adcMask, boardUsage);
+        adcChannels, adcMask, boardUsage, false);
     if (!prepareResult.isSuccess()) {
       PeripheralCommsController::dataLedOff();
       return prepareResult;
     }
 
-    OperationResult rampResult = OperationResult::Success();
-
-    // Iterate over slow steps
-    for (int slowStep = 0; slowStep < numStepsSlow && !isWorkerStopRequested(); ++slowStep) {
-      // Determine ramp direction for snake mode
-      bool isReverse = false;
-      if (snake) {
-        isReverse = (slowStep % 2 != 0);  // Reverse on odd slow steps
-      }
-
-      // Calculate start and end voltages for fast axis ramp
-      // Position = currentSlowPosition + t * fastAxisVector (where t goes from 0 to 1)
-      if (isReverse) {
-        for (int i = 0; i < numDacChannels; ++i) {
-          fastV0s[i] = currentSlowPosition[i] + fastAxisVector[i];
-          fastVfs[i] = currentSlowPosition[i];
-        }
-      } else {
-        for (int i = 0; i < numDacChannels; ++i) {
-          fastV0s[i] = currentSlowPosition[i];
-          fastVfs[i] = currentSlowPosition[i] + fastAxisVector[i];
-        }
-      }
-
-      // Execute fast axis ramp
-      OperationResult ramp1Result = God::runPreparedDacLedBufferRamp(
-          numDacChannels, numAdcChannels, numStepsFast, numAdcAverages,
-          dacChannels, fastV0s, fastVfs, adcChannels, adcMask);
-
-      // Execute retrace if requested (and not in snake mode)
-      OperationResult ramp2Result = OperationResult::Success();
-      if (retrace && !snake) {
-        ramp2Result = God::runPreparedDacLedBufferRamp(
-            numDacChannels, numAdcChannels, numStepsFast, numAdcAverages,
-            dacChannels, fastVfs, fastV0s, adcChannels, adcMask);
-      }
-
-      // Check for errors
-      if (!ramp1Result.isSuccess() && !ramp2Result.isSuccess()) {
-        rampResult = OperationResult::Failure(ramp1Result.getMessage() + "\n" +
-                                              ramp2Result.getMessage());
-        break;
-      } else if (!ramp1Result.isSuccess()) {
-        rampResult = OperationResult::Failure(ramp1Result.getMessage());
-        break;
-      } else if (!ramp2Result.isSuccess()) {
-        rampResult = OperationResult::Failure(ramp2Result.getMessage());
-        break;
-      }
-
-      // Advance along slow axis
-      for (int i = 0; i < numDacChannels; ++i) {
-        currentSlowPosition[i] += slowStepSize[i];
-      }
-    }
+    OperationResult rampResult = runPreparedDacLedBufferRamp2D(
+        numDacChannels, numAdcChannels, numStepsFast, numStepsSlow, retrace,
+        snake, numAdcAverages, dac_interval_us, dac_settling_time_us,
+        dacChannels, startPoint, fastAxisVector, slowAxisVector, adcChannels,
+        adcMask);
 
     God::cleanupDacLedBufferRampHardware(numAdcChannels, adcChannels,
                                          boardUsage);

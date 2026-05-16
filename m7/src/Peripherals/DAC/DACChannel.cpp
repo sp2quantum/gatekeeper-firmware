@@ -181,11 +181,11 @@ DACChannel::DACChannel(int cs_pin, int channel_index) : commsController(cs_pin) 
   float DACChannel::getVoltage() {
     byte bytesToSend[3] = {144, 0, 0};
     byte data[3]= {0, 0, 0};
-    if (!commsController.transferDAC(bytesToSend, 3)) {
+    if (!commsController.transferDACRead(bytesToSend, 3)) {
       return NAN;
     }
     // delayMicroseconds(2);
-    if (!commsController.transferDAC(data, 3)) {
+    if (!commsController.transferDACRead(data, 3)) {
       return NAN;
     }
 

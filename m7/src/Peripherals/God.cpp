@@ -56,6 +56,19 @@ bool isUint32AtLeast(float value, uint32_t minimum) {
          static_cast<double>(value) <= 4294967295.0;
 }
 
+constexpr uint32_t kTimeSeriesAdcStartDelayUs = 10;
+
+void setupTimeSeriesTimers(uint32_t dacIntervalUs, uint32_t adcIntervalUs,
+                           uint8_t adcMask) {
+  if (dacIntervalUs == adcIntervalUs &&
+      kTimeSeriesAdcStartDelayUs < adcIntervalUs) {
+    TimingUtil::setupTimersDacLed(dacIntervalUs, kTimeSeriesAdcStartDelayUs,
+                                  adcMask);
+    return;
+  }
+  TimingUtil::setupTimersTimeSeries(dacIntervalUs, adcIntervalUs, adcMask);
+}
+
 uint8_t adcBoardForChannel(int channel) {
   return static_cast<uint8_t>(channel / NUM_CHANNELS_PER_ADC_BOARD);
 }
@@ -206,25 +219,6 @@ bool readAdcPackets(int numAdcChannels, const int* adcChannels,
     packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
   }
   return true;
-}
-
-uint32_t adcTimerElapsedUs(uint32_t adcIntervalUs) {
-  const uint32_t periodTicks = TIM8->ARR + 1;
-  if (periodTicks == 0) {
-    return 0;
-  }
-  return static_cast<uint32_t>(
-      (static_cast<uint64_t>(TIM8->CNT) * adcIntervalUs) / periodTicks);
-}
-
-bool shouldHoldDacForImminentAdc(uint32_t adcIntervalUs, float adcReadyUs) {
-  constexpr float kAdcReadyGuardUs = 15.0f;
-  if (TimingUtil::adcConversionInProgressMask == 0 || adcReadyUs <= 0.0f) {
-    return false;
-  }
-  const uint32_t elapsedUs = adcTimerElapsedUs(adcIntervalUs);
-  return static_cast<float>(elapsedUs) + kAdcReadyGuardUs >= adcReadyUs &&
-         elapsedUs < adcIntervalUs;
 }
 
 OperationResult finishRampTimingWatchdog(
@@ -631,8 +625,7 @@ OperationResult finishRampTimingWatchdog(
       ADCController::setRDYFN(adcChannels[i]);
     }
 
-    TimingUtil::setupTimersTimeSeries(dac_interval_us, adc_interval_us,
-                                      adcMask);
+    setupTimeSeriesTimers(dac_interval_us, adc_interval_us, adcMask);
     TimingUtil::dacFlag = false;
     TimingUtil::adcFlag = 0;
 
@@ -644,10 +637,19 @@ OperationResult finishRampTimingWatchdog(
   OperationResult God::runPreparedTimeSeriesBufferRamp(
       int numDacChannels, int numAdcChannels, int numSteps,
       uint32_t dac_interval_us, uint32_t adc_interval_us, int* dacChannels,
-      float* dacV0s, float* dacVfs, int* adcChannels, uint8_t adcMask) {
+      float* dacV0s, float* dacVfs, int* adcChannels, uint8_t adcMask,
+      int initialAdcSamplesToDiscard,
+      bool holdInitialDacUntilDiscarded,
+      bool discardAdcSampleAfterDacStep,
+      bool holdInitialDacThroughFirstVisibleSample) {
     int steps = 0;
     int x = 0;
     const int saved_data_size = numSteps * dac_interval_us / adc_interval_us;
+    int discardedAdcSamples = 0;
+    const int discardCount =
+        initialAdcSamplesToDiscard > 0 ? initialAdcSamplesToDiscard : 0;
+    bool discardCurrentDacSample = false;
+    bool waitingForVisibleCurrentDacSample = false;
     bool voltageOverflow = false;
 
     double voltageStepSize[NUM_DAC_CHANNELS] = {};
@@ -680,27 +682,42 @@ OperationResult finishRampTimingWatchdog(
       }
       nextVoltageSet[i] += voltageStepSize[i];
     }
+    DACController::toggleLdac();
     steps++;
+    byte holdDacPackets[NUM_DAC_CHANNELS][3] = {};
+    double holdVoltageSet[NUM_DAC_CHANNELS] = {};
+    for (int i = 0; i < numDacChannels; i++) {
+      holdVoltageSet[i] = dacV0s[i];
+    }
+    if ((holdInitialDacUntilDiscarded || discardAdcSampleAfterDacStep) &&
+        !encodeDacVoltagePackets(numDacChannels, dacChannels,
+                                 holdVoltageSet, holdDacPackets)) {
+      return dacWriteFailure(dacChannels[0], holdVoltageSet[0]);
+    }
     if (!prepareNextDacPackets()) {
       return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
     }
     FastGpio::digitalWrite(adc_sync, false);
     TimingUtil::dacFlag = false;
     TimingUtil::adcFlag = 0;
-    const float adcReadyUs =
-        maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
+    bool dacWriteQueued = false;
 
-    while ((x < saved_data_size || steps < numSteps) && !isWorkerStopRequested()) {
+    while ((discardedAdcSamples < discardCount || x < saved_data_size ||
+            steps < numSteps) &&
+           !isWorkerStopRequested()) {
       __WFE();
       const bool adcPending =
-          x < saved_data_size && TimingUtil::consumeAdcFlag(adcMask);
-      bool dacPending = false;
-      if (steps < numSteps && TimingUtil::dacFlag) {
-        if (!adcPending && shouldHoldDacForImminentAdc(adc_interval_us,
-                                                       adcReadyUs)) {
-          continue;
-        }
-        dacPending = TimingUtil::consumeDacFlag();
+          (discardedAdcSamples < discardCount || x < saved_data_size) &&
+          TimingUtil::consumeAdcFlag(adcMask);
+      const bool holdingInitialDac =
+          holdInitialDacUntilDiscarded &&
+          (discardedAdcSamples < discardCount ||
+           (holdInitialDacThroughFirstVisibleSample && x == 0));
+      const bool holdingInitialDacBeforeAdc = holdingInitialDac;
+      if ((holdingInitialDac || discardCurrentDacSample ||
+           waitingForVisibleCurrentDacSample || steps < numSteps) &&
+          TimingUtil::consumeDacFlag()) {
+        dacWriteQueued = true;
       }
 
       double packets[NUM_ADC_CHANNELS] = {};
@@ -708,19 +725,51 @@ OperationResult finishRampTimingWatchdog(
       if (adcPending) {
         readAdcPackets(numAdcChannels, adcChannels, packets);
         FastGpio::digitalWrite(adc_sync, false);
-        haveAdcPackets = true;
+        if (discardedAdcSamples < discardCount) {
+          discardedAdcSamples++;
+        } else if (discardAdcSampleAfterDacStep &&
+                   discardCurrentDacSample) {
+          discardCurrentDacSample = false;
+          waitingForVisibleCurrentDacSample = true;
+        } else {
+          haveAdcPackets = true;
+          waitingForVisibleCurrentDacSample = false;
+        }
       }
-      if (dacPending) {
-        if (!nextDacPacketsReady ||
-            !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
+      if (dacWriteQueued && TimingUtil::adcConversionInProgressMask == 0) {
+        if (holdingInitialDacBeforeAdc) {
+          // The initial DAC code was written before the timers started; keep it
+          // latched without burning SPI cycles during the hidden ADC sample.
+          dacWriteQueued = false;
+        } else if (discardCurrentDacSample ||
+                   waitingForVisibleCurrentDacSample) {
+          if (!writeDacPackets(numDacChannels, dacChannels, holdDacPackets)) {
+            return dacWriteFailure(dacChannels[0], holdVoltageSet[0]);
+          }
+          dacWriteQueued = false;
+        } else if (!nextDacPacketsReady ||
+                   !writeDacPackets(numDacChannels, dacChannels,
+                                    nextDacPackets)) {
           return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
-        }
-        for (int i = 0; i < numDacChannels; i++) {
-          nextVoltageSet[i] += voltageStepSize[i];
-        }
-        steps++;
-        if (!prepareNextDacPackets()) {
-          return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+        } else {
+          dacWriteQueued = false;
+          for (int i = 0; i < numDacChannels; i++) {
+            nextVoltageSet[i] += voltageStepSize[i];
+          }
+          steps++;
+          for (int i = 0; i < numDacChannels; i++) {
+            holdVoltageSet[i] = nextVoltageSet[i] - voltageStepSize[i];
+            for (int j = 0; j < 3; j++) {
+              holdDacPackets[i][j] = nextDacPackets[i][j];
+            }
+          }
+          if (discardAdcSampleAfterDacStep) {
+            discardCurrentDacSample = true;
+            waitingForVisibleCurrentDacSample = false;
+          }
+          if (!prepareNextDacPackets()) {
+            return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+          }
         }
       }
       if (haveAdcPackets) {
@@ -898,7 +947,7 @@ OperationResult finishRampTimingWatchdog(
   OperationResult God::prepareDacLedBufferRampHardware(
       int numAdcChannels, int numAdcAverages, uint32_t dac_interval_us,
       uint32_t dac_settling_time_us, int* adcChannels, uint8_t& adcMask,
-      BoardUsage& boardUsage) {
+      BoardUsage& boardUsage, bool startTimers) {
     adcMask = 0u;
     boardUsage = BoardUsage{0, std::vector<uint8_t>()};
 
@@ -923,10 +972,12 @@ OperationResult finishRampTimingWatchdog(
       ADCController::setRDYFN(adcChannels[i]);
     }
 
-    TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us,
-                                  adcMask);
-    TimingUtil::dacFlag = false;
-    TimingUtil::adcFlag = 0;
+    if (startTimers) {
+      TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us,
+                                    adcMask);
+      TimingUtil::dacFlag = false;
+      TimingUtil::adcFlag = 0;
+    }
 
     return OperationResult::Success();
   }
@@ -981,10 +1032,24 @@ OperationResult finishRampTimingWatchdog(
     while (x < numSteps && !isWorkerStopRequested()) {
       __WFE();
 
-      const bool dacPending =
-          dacIncrements < numSteps && TimingUtil::consumeDacFlag();
       const bool adcPending = TimingUtil::consumeAdcFlag(adcMask);
 
+      bool haveAdcPackets = false;
+      if (adcPending) {
+        x++;
+        for (int i = 0; i < numAdcChannels; i++) {
+          double total = 0.0;
+          for (int j = 0; j < numAdcAverages; j++) {
+            total += ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+          }
+          packets[i] = total * numAdcAveragesInv;
+        }
+        FastGpio::digitalWrite(adc_sync, false);
+        haveAdcPackets = true;
+      }
+
+      const bool dacPending =
+          dacIncrements < numSteps && TimingUtil::consumeDacFlag();
       if (dacPending) {
         if (!nextDacPacketsReady ||
             !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
@@ -998,16 +1063,8 @@ OperationResult finishRampTimingWatchdog(
           return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
         }
       }
-      if (adcPending) {
-        x++;
-        for (int i = 0; i < numAdcChannels; i++) {
-          double total = 0.0;
-          for (int j = 0; j < numAdcAverages; j++) {
-            total += ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-          }
-          packets[i] = total * numAdcAveragesInv;
-        }
-        FastGpio::digitalWrite(adc_sync, false);
+
+      if (haveAdcPackets) {
         if (!sendVoltageFrame(packets, numAdcChannels)) {
           voltageOverflow = true;
           break;
