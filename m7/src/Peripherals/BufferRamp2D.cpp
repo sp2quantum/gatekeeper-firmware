@@ -298,11 +298,18 @@ OperationResult runPreparedDacLedBufferRamp2D(
   const double numAdcAveragesInv = 1.0 / static_cast<double>(numAdcAverages);
   int adcReads = 0;
   int adcStreamReads = 0;
+  bool dacTimerPending = false;
   bool voltageOverflow = false;
 
   while (adcReads < totalPoints && !isWorkerStopRequested()) {
     __WFE();
 
+    if (dacStreamPointsPreloaded < totalStreamPoints &&
+        TimingUtil::consumeDacFlag()) {
+      dacTimerPending = true;
+    }
+    const bool adcConversionStarted =
+        TimingUtil::consumeAdcConversionStartedFlag();
     const bool adcPending = TimingUtil::consumeAdcFlag(adcMask);
     bool haveAdcPackets = false;
     if (adcPending) {
@@ -326,13 +333,12 @@ OperationResult runPreparedDacLedBufferRamp2D(
       }
     }
 
-    const bool dacPending = dacStreamPointsPreloaded < totalStreamPoints &&
-                            TimingUtil::consumeDacFlag();
-    if (dacPending) {
+    if (dacTimerPending && adcConversionStarted) {
       if (!nextDacPacketsReady ||
           !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
         return dacWriteFailure(dacChannels[0], nextVoltages[0]);
       }
+      dacTimerPending = false;
       dacStreamPointsPreloaded++;
       if (!prepareNextDacPackets()) {
         return dacWriteFailure(dacChannels[0], nextVoltages[0]);

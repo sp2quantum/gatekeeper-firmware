@@ -12,6 +12,7 @@ struct TimingUtil {
   static volatile uint32_t adcConversionMisstepEvents;
   static volatile uint8_t adcConversionInProgressMask;
   static volatile uint8_t adcConversionWatchMask;
+  static volatile bool adcConversionStartedFlag;
 
   static void resetTimers();
   static void resetTimingWatchdog(uint8_t adc_watch_mask = 0);
@@ -33,6 +34,7 @@ struct TimingUtil {
   static bool consumeDacFlag();
   static bool consumeAdcFlag(uint8_t expectedMask);
   static bool consumeAnyAdcFlag();
+  static bool consumeAdcConversionStartedFlag();
 
   template <int boardIndex>
   static void adcSyncISR() {

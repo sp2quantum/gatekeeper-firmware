@@ -11,6 +11,7 @@ volatile uint32_t TimingUtil::adcSpiMisstepEvents = 0;
 volatile uint32_t TimingUtil::adcConversionMisstepEvents = 0;
 volatile uint8_t TimingUtil::adcConversionInProgressMask = 0;
 volatile uint8_t TimingUtil::adcConversionWatchMask = 0;
+volatile bool TimingUtil::adcConversionStartedFlag = false;
 
 namespace {
 constexpr uint32_t kTimeSeriesAdcStartDelayUs = 10;
@@ -73,6 +74,7 @@ void TimingUtil::resetTimers() {
   dacFlag = false;
   adcConversionInProgressMask = 0;
   adcConversionWatchMask = 0;
+  adcConversionStartedFlag = false;
 
   __enable_irq();
   delayMicroseconds(5);
@@ -85,6 +87,7 @@ void TimingUtil::resetTimingWatchdog(uint8_t adc_watch_mask) {
   adcConversionMisstepEvents = 0;
   adcConversionInProgressMask = 0;
   adcConversionWatchMask = adc_watch_mask;
+  adcConversionStartedFlag = false;
   __enable_irq();
 }
 
@@ -103,6 +106,7 @@ void TimingUtil::stopTimeSeriesTimers() {
   dacFlag = false;
   adcFlag = 0;
   adcConversionInProgressMask = 0;
+  adcConversionStartedFlag = false;
   stopAndResetAdcTimer();
   FastGpio::digitalWrite(adc_sync, false);
 }
@@ -315,6 +319,17 @@ bool TimingUtil::consumeAnyAdcFlag() {
   return pending;
 }
 
+bool TimingUtil::consumeAdcConversionStartedFlag() {
+  if (!adcConversionStartedFlag) {
+    return false;
+  }
+  __disable_irq();
+  const bool pending = adcConversionStartedFlag;
+  adcConversionStartedFlag = false;
+  __enable_irq();
+  return pending;
+}
+
 extern "C" void TIM1_UP_IRQHandler(void) {
   if (TIM1->SR & TIM_SR_UIF) {
     TIM1->SR &= ~TIM_SR_UIF;
@@ -344,6 +359,10 @@ extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
     TimingUtil::adcConversionInProgressMask =
         TimingUtil::adcConversionWatchMask;
     FastGpio::digitalWrite(adc_sync, true);
+    if (TimingUtil::adcConversionWatchMask != 0) {
+      TimingUtil::adcConversionStartedFlag = true;
+      __SEV();
+    }
   }
 }
 
@@ -360,5 +379,9 @@ extern "C" void TIM8_CC_IRQHandler(void) {
     TimingUtil::adcConversionInProgressMask =
         TimingUtil::adcConversionWatchMask;
     FastGpio::digitalWrite(adc_sync, true);
+    if (TimingUtil::adcConversionWatchMask != 0) {
+      TimingUtil::adcConversionStartedFlag = true;
+      __SEV();
+    }
   }
 }

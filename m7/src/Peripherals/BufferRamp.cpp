@@ -688,7 +688,7 @@ OperationResult finishRampTimingWatchdog(
                                           adcMask);
     TimingUtil::dacFlag = false;
     TimingUtil::adcFlag = 0;
-    bool dacWriteQueued = false;
+    bool dacTimerPending = false;
 
     while ((discardedAdcSamples < discardCount ||
             framesCaptured < savedDataSize || dacStepsLoaded < numSteps) &&
@@ -701,7 +701,7 @@ OperationResult finishRampTimingWatchdog(
       const bool holdingInitialDac = discardedAdcSamples < discardCount;
       if ((holdingInitialDac || dacStepsLoaded < numSteps) &&
           TimingUtil::consumeDacFlag()) {
-        dacWriteQueued = true;
+        dacTimerPending = true;
       }
 
       double packets[NUM_ADC_CHANNELS] = {};
@@ -715,16 +715,16 @@ OperationResult finishRampTimingWatchdog(
           haveAdcPackets = true;
         }
       }
-      if (dacWriteQueued && TimingUtil::adcConversionInProgressMask == 0) {
+      if (dacTimerPending && TimingUtil::adcConversionInProgressMask == 0) {
         if (holdingInitialDac) {
-          dacWriteQueued = false;
+          dacTimerPending = false;
         } else if (!nextDacPacketsReady ||
                    !writeDacPackets(numDacChannels, dacChannels,
                                     nextDacPackets)) {
           TimingUtil::stopTimeSeriesTimers();
           return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
         } else {
-          dacWriteQueued = false;
+          dacTimerPending = false;
           for (int i = 0; i < numDacChannels; i++) {
             nextVoltageSet[i] += voltageStepSize[i];
           }
@@ -1003,11 +1003,17 @@ OperationResult finishRampTimingWatchdog(
     }
     FastGpio::digitalWrite(adc_sync, false);
     int adcFramesRead = 0;
+    bool dacTimerPending = false;
     bool voltageOverflow = false;
 
     while (adcFramesRead < numSteps && !isWorkerStopRequested()) {
       __WFE();
 
+      if (dacStepsLoaded < numSteps && TimingUtil::consumeDacFlag()) {
+        dacTimerPending = true;
+      }
+      const bool adcConversionStarted =
+          TimingUtil::consumeAdcConversionStartedFlag();
       const bool adcPending = TimingUtil::consumeAdcFlag(adcMask);
 
       bool haveAdcPackets = false;
@@ -1024,13 +1030,12 @@ OperationResult finishRampTimingWatchdog(
         haveAdcPackets = true;
       }
 
-      const bool dacPending =
-          dacStepsLoaded < numSteps && TimingUtil::consumeDacFlag();
-      if (dacPending) {
+      if (dacTimerPending && adcConversionStarted) {
         if (!nextDacPacketsReady ||
             !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
           return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
         }
+        dacTimerPending = false;
         for (int i = 0; i < numDacChannels; i++) {
           nextVoltageSet[i] += voltageStepSize[i];
         }

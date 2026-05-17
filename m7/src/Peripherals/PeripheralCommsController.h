@@ -15,9 +15,11 @@ class PeripheralCommsController {
   static uint8_t __attribute__((aligned(32))) tx_buffer[kSpiBufferSize];
   static uint8_t __attribute__((aligned(32))) rx_buffer[kSpiBufferSize];
 
-  bool performMbedTransfer(bool isDac, uint8_t* tx, uint8_t* rx,
-                           size_t count, bool dacReadMode = false);
-  bool performAdcHardwareTransfer(uint8_t* tx, uint8_t* rx, size_t count);
+  bool performHardwareTransfer(bool isDac, uint8_t* tx, uint8_t* rx,
+                               size_t count, bool dacReadMode = false);
+  bool transferBytes(bool isDac, uint8_t* bytes, size_t count,
+                     bool dacReadMode = false);
+  uint8_t transferByte(bool isDac, uint8_t data);
 
  public:
   explicit PeripheralCommsController(int cs_pin);
