@@ -1,15 +1,12 @@
 #pragma once
 
 #include <Arduino.h>
-#include <Peripherals/ADC/ADCController.h>
-#include <Peripherals/DAC/DACController.h>
 
-#include "Config.h"
-#include "Utils/TimingUtil.h"
-#include "Utils/shared_memory.h"
-#include "unordered_set"
+#include "Peripherals/OperationResult.h"
 
-class God2D {
+#include <vector>
+
+class BufferRamp2D {
  public:
   static void setup();
 
@@ -31,7 +28,6 @@ class God2D {
   static OperationResult timeSeriesBufferRamp2D(
       const std::vector<float> &args);
 
-
   // dacLedBufferRamp2D:
   // Arguments (in order):
   // numDacChannels, numAdcChannels, numStepsFast, numStepsSlow,
@@ -47,5 +43,4 @@ class God2D {
   // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f is in [0,1]
   // This allows probing arbitrary 2D planar subspaces anywhere in the full DAC phase space.
   static OperationResult dacLedBufferRamp2D(const std::vector<float> &args);
-
 };

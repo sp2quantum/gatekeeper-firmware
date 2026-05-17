@@ -376,7 +376,7 @@ def read_line(ser, timeout=None):
 def send_command(ser, command, timeout=None):
     ser.reset_input_buffer()
     ser.reset_output_buffer()
-    ser.write(f"{command}\r\n".encode("ascii"))
+    ser.write(f"{command}\n".encode("ascii"))
     ser.flush()
     response = read_line(ser, timeout=timeout)
     if response.startswith("FAILURE"):
@@ -503,7 +503,7 @@ def read_dac_float_stream(ser, active_dac_channel_count):
 def read_dac_calibration(ser, dac_channel_count):
     ser.reset_input_buffer()
     ser.reset_output_buffer()
-    ser.write(b"INQUIRY_OSG\r\n")
+    ser.write(b"INQUIRY_OSG\n")
     ser.flush()
     values = read_dac_float_stream(ser, dac_channel_count)
     response_channel_count = len(values) // 2

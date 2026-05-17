@@ -22,6 +22,10 @@ struct TimingUtil {
   static void setupTimersTimeSeries(uint32_t dac_period_us,
                                     uint32_t adc_period_us,
                                     uint8_t adc_watch_mask);
+  static void setupTimersTimeSeriesRamp(uint32_t dac_period_us,
+                                        uint32_t adc_period_us,
+                                        uint8_t adc_watch_mask);
+  static void stopTimeSeriesTimers();
   static void setupTimersDacLed(uint64_t period_us, uint64_t phase_shift_us,
                                 uint8_t adc_watch_mask);
   static void disableDacInterrupt();

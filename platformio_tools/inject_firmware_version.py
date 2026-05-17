@@ -13,39 +13,21 @@ def _get_git_commit_hash():
     except Exception:
         return "UNKNOWN"
 
-def _get_git_tag():
+
+def _get_head_tag():
     try:
-        # Try exact tag first
-        tag = subprocess.check_output([
-            "git", "describe", "--tags", "--exact-match"
-        ], stderr=subprocess.STDOUT).decode("utf-8").strip()
-        if tag:
-            return tag
+        tags = subprocess.check_output(
+            ["git", "tag", "--points-at", "HEAD"]
+        ).decode("utf-8").splitlines()
     except Exception:
-        pass
-    try:
-        # Fallback to nearest tag if available
-        tag = subprocess.check_output([
-            "git", "describe", "--tags", "--abbrev=0"
-        ], stderr=subprocess.STDOUT).decode("utf-8").strip()
-        if tag:
-            # Ensure tag actually points to HEAD; otherwise we don't use it
-            head_tag = subprocess.check_output([
-                "git", "tag", "--points-at", "HEAD"
-            ]).decode("utf-8").strip()
-            if head_tag:
-                # Choose the first tag pointing at HEAD
-                return head_tag.splitlines()[0]
-    except Exception:
-        pass
-    return None
+        return None
+
+    return tags[0] if tags else None
+
 
 _firmware_version = _get_git_commit_hash()
-_tag = _get_git_tag()
+env.Append(CPPDEFINES=[("FIRMWARE_VERSION_HASH", _firmware_version)])
 
-# Always define the raw hash token; code stringizes it if no tag string is present
-env.Append(CPPDEFINES=[("__FIRMWARE_VERSION__", _firmware_version)])
-
-# If we have a tag on HEAD, provide a fully quoted string macro for direct use
+_tag = _get_head_tag()
 if _tag:
-    env.Append(CPPDEFINES=[("__FIRMWARE_VERSION_STRING__", '"%s"' % _tag)])
+    env.Append(CPPDEFINES=[("FIRMWARE_VERSION_TAG", _tag)])

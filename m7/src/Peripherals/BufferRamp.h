@@ -1,18 +1,12 @@
 #pragma once
 
 #include <Arduino.h>
-#include <Peripherals/ADC/ADCController.h>
-#include <Peripherals/DAC/DACController.h>
 
-#include "Config.h"
-#include "Utils/TimingUtil.h"
-#include "Utils/shared_memory.h"
-#include "unordered_set"
+#include "Peripherals/OperationResult.h"
 
 #include <vector>
-#include <algorithm>
 
-class God {
+class BufferRamp {
  public:
   static void setup();
 
@@ -22,10 +16,14 @@ class God {
 
   static OperationResult hardResetCalibrationToDefaults();
 
-
   struct BoardUsage {
-    uint8_t numBoards;          // how many distinct boards are in use
-    std::vector<uint8_t> idx;   // their indexes, sorted (e.g. {0,1})
+    uint8_t numBoards;
+    std::vector<uint8_t> idx;
+  };
+
+  enum class TimeSeriesRampMode {
+    Streaming,
+    Buffered2DRow,
   };
 
   static BoardUsage getUsedBoards(const int *adcChannels, int numAdcChannels);
@@ -40,18 +38,14 @@ class God {
       const std::vector<float>& args);
 
   static OperationResult prepareTimeSeriesBufferRampHardware(
-      int numAdcChannels, uint32_t dac_interval_us, uint32_t adc_interval_us,
-      int* adcChannels, uint8_t& adcMask, BoardUsage& boardUsage);
+      int numAdcChannels, int* adcChannels, uint8_t& adcMask,
+      BoardUsage& boardUsage);
 
   static OperationResult runPreparedTimeSeriesBufferRamp(
       int numDacChannels, int numAdcChannels, int numSteps,
       uint32_t dac_interval_us, uint32_t adc_interval_us, int* dacChannels,
       float* dacV0s, float* dacVfs, int* adcChannels, uint8_t adcMask,
-      // Used by 2D scans to hide the ADC's first conversion after a row jump.
-      int initialAdcSamplesToDiscard = 0,
-      bool holdInitialDacUntilDiscarded = false,
-      bool discardAdcSampleAfterDacStep = false,
-      bool holdInitialDacThroughFirstVisibleSample = false);
+      TimeSeriesRampMode mode = TimeSeriesRampMode::Streaming);
 
   static void cleanupTimeSeriesBufferRampHardware(
       int numAdcChannels, int* adcChannels, const BoardUsage& boardUsage);
@@ -64,9 +58,8 @@ class God {
       const std::vector<float>& args);
 
   static OperationResult prepareDacLedBufferRampHardware(
-      int numAdcChannels, int numAdcAverages, uint32_t dac_interval_us,
-      uint32_t dac_settling_time_us, int* adcChannels, uint8_t& adcMask,
-      BoardUsage& boardUsage, bool startTimers = true);
+      int numAdcChannels, int* adcChannels, uint8_t& adcMask,
+      BoardUsage& boardUsage);
 
   static OperationResult runPreparedDacLedBufferRamp(
       int numDacChannels, int numAdcChannels, int numSteps, int numAdcAverages,
@@ -79,10 +72,12 @@ class God {
   static OperationResult OwenRampWrapper(std::vector<float> args);
 
   static OperationResult OwenRampBase(
-    int numDacChannels, int numAdcChannels, int numLoops, int numDacStepsPerLoop, int numAdcAverages,
-    uint32_t dac_interval_us, int* dacChannels,
-    float** dacVoltageLists, int* adcChannels, int specialIndex, int specialWidth, int numStepsPerSpecialRamp, float* specialDacV0s, float* specialDacVfs);
-
+      int numDacChannels, int numAdcChannels, int numLoops,
+      int numDacStepsPerLoop, int numAdcAverages,
+      uint32_t dac_interval_us, int* dacChannels,
+      float** dacVoltageLists, int* adcChannels, int specialIndex,
+      int numStepsPerSpecialRamp, float* specialDacV0s,
+      float* specialDacVfs);
 
   static OperationResult AWGBufferRampWrapper(std::vector<float> args);
 
@@ -103,16 +98,11 @@ class God {
       uint32_t dac_interval_us, int numCycles,
       int* dacChannels, int* adcChannels, const float* channelMajorVoltages);
 
-
   static OperationResult AWGBufferRampBase(
-      int numDacChannels, int numAdcChannels, int numLoops, int numDacStepsPerLoop, int numAdcAverages,
+      int numDacChannels, int numAdcChannels, int numLoops,
+      int numDacStepsPerLoop, int numAdcAverages,
       uint32_t dac_interval_us, int* dacChannels,
       float** dacVoltageLists, int* adcChannels);
-
-
-
-
-
 
   static OperationResult dacChannelCalibration();
 

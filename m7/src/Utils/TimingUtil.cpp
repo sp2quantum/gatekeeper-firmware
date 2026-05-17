@@ -13,6 +13,8 @@ volatile uint8_t TimingUtil::adcConversionInProgressMask = 0;
 volatile uint8_t TimingUtil::adcConversionWatchMask = 0;
 
 namespace {
+constexpr uint32_t kTimeSeriesAdcStartDelayUs = 10;
+
 void enableTimerClock(uint32_t clock_enable_bits) {
   RCC->APB2ENR |= clock_enable_bits;
   const uint32_t apb2enr = RCC->APB2ENR;
@@ -30,6 +32,22 @@ bool spiStillClocking(SPI_TypeDef* spi, volatile bool& inProgress) {
     return false;
   }
   return true;
+}
+
+struct TimerPeriod {
+  uint16_t prescaler;
+  uint16_t autoReload;
+};
+
+TimerPeriod timerPeriodForMicros(uint64_t periodUs, uint64_t timerClock) {
+  const uint64_t totalTicks = (periodUs * timerClock) / 1000000;
+  if (totalTicks <= 65536) {
+    return {0, static_cast<uint16_t>(totalTicks - 1)};
+  }
+
+  const uint32_t prescaler = (totalTicks + 65536 - 1) / 65536;
+  return {static_cast<uint16_t>(prescaler - 1),
+          static_cast<uint16_t>((totalTicks / prescaler) - 1)};
 }
 }
 
@@ -79,30 +97,28 @@ void TimingUtil::startAdcTimer() {
   TIM8->CR1 |= TIM_CR1_CEN;
 }
 
+void TimingUtil::stopTimeSeriesTimers() {
+  disableDacInterrupt();
+  disableAdcInterrupt();
+  dacFlag = false;
+  adcFlag = 0;
+  adcConversionInProgressMask = 0;
+  stopAndResetAdcTimer();
+  FastGpio::digitalWrite(adc_sync, false);
+}
+
 void TimingUtil::setupTimerOnlyDac(uint32_t period_us) {
   resetTimers();
   resetTimingWatchdog();
 
   enableTimerClock(RCC_APB2ENR_TIM1EN);
 
-  uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
-  uint64_t total_ticks_dac = (period_us * timerClock) / 1000000;
-
-  uint16_t psc_dac;
-  uint16_t arr_dac;
-
-  if (total_ticks_dac <= 65536) {
-    psc_dac = 0;
-    arr_dac = total_ticks_dac - 1;
-  } else {
-    uint32_t prescaler_dac = (total_ticks_dac + 65536 - 1) / 65536;
-    psc_dac = prescaler_dac - 1;
-    arr_dac = (total_ticks_dac / prescaler_dac) - 1;
-  }
+  const uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
+  const TimerPeriod dacPeriod = timerPeriodForMicros(period_us, timerClock);
 
   TIM1->CR1 &= ~TIM_CR1_CEN;
-  TIM1->PSC = psc_dac;
-  TIM1->ARR = arr_dac;
+  TIM1->PSC = dacPeriod.prescaler;
+  TIM1->ARR = dacPeriod.autoReload;
   TIM1->CR1 = TIM_CR1_ARPE;
   TIM1->DIER |= TIM_DIER_UIE;
 
@@ -118,24 +134,12 @@ void TimingUtil::setupTimersOnlyADC(uint32_t adc_period_us) {
 
   enableTimerClock(RCC_APB2ENR_TIM8EN);
 
-  uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
-  uint64_t total_ticks_adc = (adc_period_us * timerClock) / 1000000;
-
-  uint16_t psc_adc;
-  uint16_t arr_adc;
-
-  if (total_ticks_adc <= 65536) {
-    psc_adc = 0;
-    arr_adc = total_ticks_adc - 1;
-  } else {
-    uint32_t prescaler_adc = (total_ticks_adc + 65536 - 1) / 65536;
-    psc_adc = prescaler_adc - 1;
-    arr_adc = (total_ticks_adc / prescaler_adc) - 1;
-  }
+  const uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
+  const TimerPeriod adcPeriod = timerPeriodForMicros(adc_period_us, timerClock);
 
   TIM8->CR1 &= ~TIM_CR1_CEN;
-  TIM8->PSC = psc_adc;
-  TIM8->ARR = arr_adc;
+  TIM8->PSC = adcPeriod.prescaler;
+  TIM8->ARR = adcPeriod.autoReload;
   TIM8->CR1 = TIM_CR1_ARPE;
   TIM8->DIER |= TIM_DIER_UIE;
 
@@ -156,38 +160,15 @@ void TimingUtil::setupTimersTimeSeries(uint32_t dac_period_us,
 
   enableTimerClock(RCC_APB2ENR_TIM1EN | RCC_APB2ENR_TIM8EN);
 
-  uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
-  uint64_t total_ticks_dac = (dac_period_us * timerClock) / 1000000;
-
-  uint16_t psc_dac;
-  uint16_t arr_dac;
-
-  if (total_ticks_dac <= 65536) {
-    psc_dac = 0;
-    arr_dac = total_ticks_dac - 1;
-  } else {
-    uint32_t prescaler_dac = (total_ticks_dac + 65536 - 1) / 65536;
-    psc_dac = prescaler_dac - 1;
-    arr_dac = (total_ticks_dac / prescaler_dac) - 1;
-  }
-
-  uint64_t total_ticks_adc = (adc_period_us * timerClock) / 1000000;
-
-  uint16_t psc_adc;
-  uint16_t arr_adc;
-
-  if (total_ticks_adc <= 65536) {
-    psc_adc = 0;
-    arr_adc = total_ticks_adc - 1;
-  } else {
-    uint32_t prescaler_adc = (total_ticks_adc + 65536 - 1) / 65536;
-    psc_adc = prescaler_adc - 1;
-    arr_adc = (total_ticks_adc / prescaler_adc) - 1;
-  }
+  const uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
+  const TimerPeriod dacPeriod =
+      timerPeriodForMicros(dac_period_us, timerClock);
+  const TimerPeriod adcPeriod =
+      timerPeriodForMicros(adc_period_us, timerClock);
 
   TIM1->CR1 &= ~TIM_CR1_CEN;
-  TIM1->PSC = psc_dac;
-  TIM1->ARR = arr_dac;
+  TIM1->PSC = dacPeriod.prescaler;
+  TIM1->ARR = dacPeriod.autoReload;
   TIM1->CR1 = TIM_CR1_ARPE;
   TIM1->DIER |= TIM_DIER_UIE;
 
@@ -195,8 +176,8 @@ void TimingUtil::setupTimersTimeSeries(uint32_t dac_period_us,
   TIM1->SR &= ~TIM_SR_UIF;
 
   TIM8->CR1 &= ~TIM_CR1_CEN;
-  TIM8->PSC = psc_adc;
-  TIM8->ARR = arr_adc;
+  TIM8->PSC = adcPeriod.prescaler;
+  TIM8->ARR = adcPeriod.autoReload;
   TIM8->CR1 = TIM_CR1_ARPE;
   TIM8->DIER |= TIM_DIER_UIE;
 
@@ -212,6 +193,18 @@ void TimingUtil::setupTimersTimeSeries(uint32_t dac_period_us,
   TIM8->CR1 |= TIM_CR1_CEN;
 }
 
+void TimingUtil::setupTimersTimeSeriesRamp(uint32_t dac_period_us,
+                                           uint32_t adc_period_us,
+                                           uint8_t adc_watch_mask) {
+  if (dac_period_us == adc_period_us &&
+      kTimeSeriesAdcStartDelayUs < adc_period_us) {
+    setupTimersDacLed(dac_period_us, kTimeSeriesAdcStartDelayUs,
+                      adc_watch_mask);
+    return;
+  }
+  setupTimersTimeSeries(dac_period_us, adc_period_us, adc_watch_mask);
+}
+
 void TimingUtil::setupTimersDacLed(uint64_t period_us,
                                    uint64_t phase_shift_us,
                                    uint8_t adc_watch_mask) {
@@ -220,23 +213,11 @@ void TimingUtil::setupTimersDacLed(uint64_t period_us,
 
   enableTimerClock(RCC_APB2ENR_TIM1EN | RCC_APB2ENR_TIM8EN);
 
-  uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
-  uint64_t total_ticks = (period_us * timerClock) / 1000000;
+  const uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
+  const TimerPeriod period = timerPeriodForMicros(period_us, timerClock);
 
-  uint16_t psc;
-  uint16_t arr;
-
-  if (total_ticks <= 65536) {
-    psc = 0;
-    arr = total_ticks - 1;
-  } else {
-    uint32_t prescaler = (total_ticks + 65536 - 1) / 65536;
-    psc = prescaler - 1;
-    arr = (total_ticks / prescaler) - 1;
-  }
-
-  TIM1->PSC = psc;
-  TIM1->ARR = arr;
+  TIM1->PSC = period.prescaler;
+  TIM1->ARR = period.autoReload;
   TIM1->CR1 = TIM_CR1_ARPE;
   TIM1->CNT = 0;
 
@@ -244,8 +225,8 @@ void TimingUtil::setupTimersDacLed(uint64_t period_us,
   TIM1->CR2 |= TIM_CR2_MMS_1;
   TIM1->DIER |= TIM_DIER_UIE;
 
-  TIM8->PSC = psc;
-  TIM8->ARR = arr;
+  TIM8->PSC = period.prescaler;
+  TIM8->ARR = period.autoReload;
   TIM8->CR1 = TIM_CR1_ARPE;
   TIM8->CNT = 0;
 

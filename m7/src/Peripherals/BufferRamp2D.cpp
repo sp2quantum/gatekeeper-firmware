@@ -1,9 +1,14 @@
-#include "Peripherals/God2D.h"
+#include "Peripherals/BufferRamp2D.h"
 
+#include "Config.h"
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
-#include "Peripherals/God.h"
+#include "Peripherals/ADC/ADCController.h"
+#include "Peripherals/DAC/DACController.h"
+#include "Peripherals/BufferRamp.h"
 #include "Peripherals/PeripheralCommsController.h"
 #include "Utils/FastGpio.h"
+#include "Utils/TimingUtil.h"
+#include "Utils/shared_memory.h"
 
 namespace {
 bool isValidDacChannelCount(int count) {
@@ -23,18 +28,46 @@ bool isBooleanArg(float value) {
   return value == 0.0f || value == 1.0f;
 }
 
-constexpr int kTimeSeriesRowStartAdcDiscards = 2;
-constexpr uint32_t kTimeSeriesAdcStartDelayUs = 10;
+enum class DacBoundsMode {
+  Calibrated,
+  CalibratedAndGlobal,
+};
 
-void setupTimeSeriesTimers(uint32_t dacIntervalUs, uint32_t adcIntervalUs,
-                           uint8_t adcMask) {
-  if (dacIntervalUs == adcIntervalUs &&
-      kTimeSeriesAdcStartDelayUs < adcIntervalUs) {
-    TimingUtil::setupTimersDacLed(dacIntervalUs, kTimeSeriesAdcStartDelayUs,
-                                  adcMask);
-    return;
+OperationResult validateDac2DScanBounds(
+    int numDacChannels, const int* dacChannels, const float* startPoint,
+    const float* fastAxisVector, const float* slowAxisVector,
+    DacBoundsMode mode) {
+  for (int i = 0; i < numDacChannels; i++) {
+    const int ch = dacChannels[i];
+    float lowerBound = DACController::getLowerBound(ch);
+    float upperBound = DACController::getUpperBound(ch);
+    if (mode == DacBoundsMode::CalibratedAndGlobal) {
+      lowerBound = max(lowerBound, DACLimits::lower_voltage_limit[ch]);
+      upperBound = min(upperBound, DACLimits::upper_voltage_limit[ch]);
+    }
+
+    const float corner1 = startPoint[i];
+    const float corner2 = startPoint[i] + fastAxisVector[i];
+    const float corner3 = startPoint[i] + slowAxisVector[i];
+    const float corner4 =
+        startPoint[i] + fastAxisVector[i] + slowAxisVector[i];
+    const float minVoltage =
+        min(min(corner1, corner2), min(corner3, corner4));
+    const float maxVoltage =
+        max(max(corner1, corner2), max(corner3, corner4));
+
+    if (minVoltage < lowerBound || maxVoltage > upperBound) {
+      return OperationResult::Failure("DAC " + String(ch) +
+                                      " 2D scan range [" +
+                                      String(minVoltage, 6) + ", " +
+                                      String(maxVoltage, 6) +
+                                      "]V exceeds bounds [" +
+                                      String(lowerBound, 6) + ", " +
+                                      String(upperBound, 6) + "]");
+    }
   }
-  TimingUtil::setupTimersTimeSeries(dacIntervalUs, adcIntervalUs, adcMask);
+
+  return OperationResult::Success();
 }
 
 OperationResult validateDacChannels(const int* channels, int count) {
@@ -125,15 +158,6 @@ bool writeDacPackets(int numDacChannels, const int* dacChannels,
     }
   }
   return true;
-}
-
-void pauseTimeSeriesTimers() {
-  TimingUtil::disableDacInterrupt();
-  TimingUtil::disableAdcInterrupt();
-  TimingUtil::dacFlag = false;
-  TimingUtil::adcFlag = 0;
-  TimingUtil::stopAndResetAdcTimer();
-  FastGpio::digitalWrite(adc_sync, false);
 }
 
 void calculateDacLed2DVoltages(int pointIndex, int numStepsFast,
@@ -336,187 +360,13 @@ OperationResult runPreparedDacLedBufferRamp2D(
   return OperationResult::Success();
 }
 
-OperationResult runBufferedTimeSeriesBufferRamp(
-    int numDacChannels, int numAdcChannels, int numSteps,
-    uint32_t dac_interval_us, uint32_t adc_interval_us, int* dacChannels,
-    float* dacV0s, float* dacVfs, int* adcChannels, uint8_t adcMask,
-    int initialAdcSamplesToDiscard, bool holdInitialDacUntilDiscarded,
-    bool holdInitialDacThroughFirstVisibleSample) {
-  const int savedDataSize = numSteps * dac_interval_us / adc_interval_us;
-  if (savedDataSize < 1) {
-    return OperationResult::Failure("Invalid time-series sample count");
-  }
-
-  std::vector<double> bufferedFrames(
-      static_cast<size_t>(savedDataSize) *
-      static_cast<size_t>(numAdcChannels));
-
-  pauseTimeSeriesTimers();
-
-  int steps = 0;
-  int x = 0;
-  int discardedAdcSamples = 0;
-  const int discardCount =
-      initialAdcSamplesToDiscard > 0 ? initialAdcSamplesToDiscard : 0;
-  bool voltageOverflow = false;
-
-  double voltageStepSize[NUM_DAC_CHANNELS] = {};
-  for (int i = 0; i < numDacChannels; i++) {
-    voltageStepSize[i] =
-        numSteps > 1 ? (dacVfs[i] - dacV0s[i]) / (numSteps - 1) : 0.0;
-  }
-
-  double nextVoltageSet[NUM_DAC_CHANNELS] = {};
-  for (int i = 0; i < numDacChannels; i++) {
-    nextVoltageSet[i] = dacV0s[i];
-  }
-  byte nextDacPackets[NUM_DAC_CHANNELS][3] = {};
-  bool nextDacPacketsReady = false;
-  auto prepareNextDacPackets = [&]() {
-    if (steps >= numSteps) {
-      nextDacPacketsReady = false;
-      return true;
-    }
-    nextDacPacketsReady = encodeDacVoltagePackets(
-        numDacChannels, dacChannels, nextVoltageSet, nextDacPackets);
-    return nextDacPacketsReady;
-  };
-
-  for (int i = 0; i < numDacChannels; i++) {
-    if (!DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                      dacV0s[i])) {
-      pauseTimeSeriesTimers();
-      return dacWriteFailure(dacChannels[i], dacV0s[i]);
-    }
-    nextVoltageSet[i] += voltageStepSize[i];
-  }
-  DACController::toggleLdac();
-  steps++;
-
-  FastGpio::digitalWrite(adc_sync, false);
-  for (int i = 0; i < numAdcChannels; i++) {
-    ADCController::startContinuousConversion(adcChannels[i]);
-    ADCController::setRDYFN(adcChannels[i]);
-  }
-  setupTimeSeriesTimers(dac_interval_us, adc_interval_us, adcMask);
-
-  if (!prepareNextDacPackets()) {
-    pauseTimeSeriesTimers();
-    return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
-  }
-
-  FastGpio::digitalWrite(adc_sync, false);
-  TimingUtil::dacFlag = false;
-  TimingUtil::adcFlag = 0;
-  bool dacWriteQueued = false;
-
-  double packets[NUM_ADC_CHANNELS] = {};
-
-  while ((discardedAdcSamples < discardCount || x < savedDataSize ||
-          steps < numSteps) &&
-         !isWorkerStopRequested()) {
-    __WFE();
-    const bool adcPending =
-        (discardedAdcSamples < discardCount || x < savedDataSize) &&
-        TimingUtil::consumeAdcFlag(adcMask);
-    const bool holdingInitialDac =
-        holdInitialDacUntilDiscarded &&
-        (discardedAdcSamples < discardCount ||
-         (holdInitialDacThroughFirstVisibleSample && x == 0));
-    const bool holdingInitialDacBeforeAdc = holdingInitialDac;
-    if ((holdingInitialDac || steps < numSteps) &&
-        TimingUtil::consumeDacFlag()) {
-      dacWriteQueued = true;
-    }
-
-    bool haveAdcPackets = false;
-    if (adcPending) {
-      for (int i = 0; i < numAdcChannels; i++) {
-        packets[i] = ADCController::getVoltageDataNoTransaction(adcChannels[i]);
-      }
-      FastGpio::digitalWrite(adc_sync, false);
-      if (discardedAdcSamples < discardCount) {
-        discardedAdcSamples++;
-      } else {
-        haveAdcPackets = true;
-      }
-    }
-
-    if (dacWriteQueued && TimingUtil::adcConversionInProgressMask == 0) {
-      if (holdingInitialDacBeforeAdc) {
-        // The initial DAC code is already loaded; avoid redundant SPI writes
-        // while the hidden row-start ADC sample is being discarded.
-        dacWriteQueued = false;
-      } else if (!nextDacPacketsReady ||
-                 !writeDacPackets(numDacChannels, dacChannels,
-                                  nextDacPackets)) {
-        pauseTimeSeriesTimers();
-        return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
-      } else {
-        dacWriteQueued = false;
-        for (int i = 0; i < numDacChannels; i++) {
-          nextVoltageSet[i] += voltageStepSize[i];
-        }
-        steps++;
-        if (!prepareNextDacPackets()) {
-          pauseTimeSeriesTimers();
-          return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
-        }
-      }
-    }
-
-    if (haveAdcPackets) {
-      const size_t frameOffset =
-          static_cast<size_t>(x) * static_cast<size_t>(numAdcChannels);
-      for (int i = 0; i < numAdcChannels; i++) {
-        bufferedFrames[frameOffset + static_cast<size_t>(i)] = packets[i];
-      }
-      x++;
-    }
-  }
-
-  pauseTimeSeriesTimers();
-
-  if (isWorkerStopRequested()) {
-    if (voltageOverflow) {
-      return OperationResult::Failure("Voltage output buffer overflow");
-    }
-    return OperationResult::Failure("RAMPING_STOPPED");
-  }
-  if (voltageOverflow) {
-    return OperationResult::Failure("Voltage output buffer overflow");
-  }
-
-  for (int frame = 0; frame < savedDataSize && !isWorkerStopRequested();
-       frame++) {
-    const size_t frameOffset = static_cast<size_t>(frame) *
-                               static_cast<size_t>(numAdcChannels);
-    if (!sendVoltageFrame(&bufferedFrames[frameOffset], numAdcChannels)) {
-      voltageOverflow = true;
-      break;
-    }
-  }
-
-  if (isWorkerStopRequested()) {
-    if (voltageOverflow) {
-      return OperationResult::Failure("Voltage output buffer overflow");
-    }
-    return OperationResult::Failure("RAMPING_STOPPED");
-  }
-  if (voltageOverflow) {
-    return OperationResult::Failure("Voltage output buffer overflow");
-  }
-
-  return OperationResult::Success();
 }
 
-}
-
-  void God2D::setup() { initializeRegistry(); }
+  void BufferRamp2D::setup() { initializeRegistry(); }
 
 
 
-  void God2D::initializeRegistry() {
+  void BufferRamp2D::initializeRegistry() {
     registerMemberFunctionVector(timeSeriesBufferRamp2D,
                                  "2D_TIME_SERIES_BUFFER_RAMP");
     registerMemberFunctionVector(dacLedBufferRamp2D, "2D_DAC_LED_BUFFER_RAMP");
@@ -537,7 +387,7 @@ OperationResult runBufferedTimeSeriesBufferRamp(
   // The fast/slow axis vectors define a 2D plane in the N-dimensional DAC phase space.
   // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f is in [0,1]
   // This allows probing arbitrary 2D planar subspaces anywhere in the full DAC phase space.
-  OperationResult God2D::timeSeriesBufferRamp2D(
+  OperationResult BufferRamp2D::timeSeriesBufferRamp2D(
       const std::vector<float> &args) {
     // Minimum required arguments:
     // 8 initial params + numDacChannels + 3*numDacChannels vectors + numAdcChannels
@@ -630,28 +480,11 @@ OperationResult runBufferedTimeSeriesBufferRamp(
       return adcValidation;
     }
 
-    // Check voltage bounds for all four corners of the 2D scan rectangle (both calibrated bounds AND global limits)
-    for (int i = 0; i < numDacChannels; i++) {
-      int ch = dacChannels[i];
-      float lowerBound = DACController::getLowerBound(ch);
-      float upperBound = DACController::getUpperBound(ch);
-      
-      // Four corners: startPoint, startPoint+fast, startPoint+slow, startPoint+fast+slow
-      float corner1 = startPoint[i];
-      float corner2 = startPoint[i] + fastAxisVector[i];
-      float corner3 = startPoint[i] + slowAxisVector[i];
-      float corner4 = startPoint[i] + fastAxisVector[i] + slowAxisVector[i];
-      
-      float minVoltage = min(min(corner1, corner2), min(corner3, corner4));
-      float maxVoltage = max(max(corner1, corner2), max(corner3, corner4));
-      
-      if (minVoltage < lowerBound || maxVoltage > upperBound) {
-        return OperationResult::Failure("DAC " + String(ch) + 
-                                        " 2D scan range [" + String(minVoltage, 6) + 
-                                        ", " + String(maxVoltage, 6) + 
-                                        "]V exceeds bounds [" + String(lowerBound, 6) + 
-                                        ", " + String(upperBound, 6) + "]");
-      }
+    OperationResult boundsValidation = validateDac2DScanBounds(
+        numDacChannels, dacChannels, startPoint, fastAxisVector,
+        slowAxisVector, DacBoundsMode::Calibrated);
+    if (!boundsValidation.isSuccess()) {
+      return boundsValidation;
     }
 
     // Calculate slow axis step sizes for each DAC channel
@@ -671,10 +504,9 @@ OperationResult runBufferedTimeSeriesBufferRamp(
     PeripheralCommsController::dataLedOn();
 
     uint8_t adcMask = 0u;
-    God::BoardUsage boardUsage{0, std::vector<uint8_t>()};
-    OperationResult prepareResult = God::prepareTimeSeriesBufferRampHardware(
-        numAdcChannels, dac_interval_us, adc_interval_us, adcChannels, adcMask,
-        boardUsage);
+    BufferRamp::BoardUsage boardUsage{0, std::vector<uint8_t>()};
+    OperationResult prepareResult = BufferRamp::prepareTimeSeriesBufferRampHardware(
+        numAdcChannels, adcChannels, adcMask, boardUsage);
     if (!prepareResult.isSuccess()) {
       PeripheralCommsController::dataLedOff();
       return prepareResult;
@@ -690,7 +522,7 @@ OperationResult runBufferedTimeSeriesBufferRamp(
       // Position = currentSlowPosition + t * fastAxisVector (where t goes from 0 to 1)
       float fastV0s[NUM_DAC_CHANNELS] = {};
       float fastVfs[NUM_DAC_CHANNELS] = {};
-      
+
       for (int i = 0; i < numDacChannels; ++i) {
         if (reverseFastAxis) {
           fastV0s[i] = currentSlowPosition[i] + fastAxisVector[i];
@@ -701,21 +533,17 @@ OperationResult runBufferedTimeSeriesBufferRamp(
         }
       }
 
-      // Execute fast axis ramp
-      const bool discardInitialConversion = true;
-      OperationResult ramp1Result = runBufferedTimeSeriesBufferRamp(
+      OperationResult ramp1Result = BufferRamp::runPreparedTimeSeriesBufferRamp(
           numDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
           adc_interval_us, dacChannels, fastV0s, fastVfs, adcChannels,
-          adcMask, discardInitialConversion ? kTimeSeriesRowStartAdcDiscards : 0,
-          discardInitialConversion, false);
+          adcMask, BufferRamp::TimeSeriesRampMode::Buffered2DRow);
 
-      // Execute retrace if requested (and not in snake mode)
       OperationResult ramp2Result = OperationResult::Success();
       if (retrace && !snake) {
-        ramp2Result = runBufferedTimeSeriesBufferRamp(
+        ramp2Result = BufferRamp::runPreparedTimeSeriesBufferRamp(
             numDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
             adc_interval_us, dacChannels, fastVfs, fastV0s, adcChannels,
-            adcMask, kTimeSeriesRowStartAdcDiscards, true, false);
+            adcMask, BufferRamp::TimeSeriesRampMode::Buffered2DRow);
       }
 
       // Check for errors
@@ -737,7 +565,7 @@ OperationResult runBufferedTimeSeriesBufferRamp(
       }
     }
 
-    God::cleanupTimeSeriesBufferRampHardware(numAdcChannels, adcChannels,
+    BufferRamp::cleanupTimeSeriesBufferRampHardware(numAdcChannels, adcChannels,
                                              boardUsage);
 
     PeripheralCommsController::dataLedOff();
@@ -774,7 +602,7 @@ OperationResult runBufferedTimeSeriesBufferRamp(
   // The fast/slow axis vectors define a 2D plane in the N-dimensional DAC phase space.
   // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f is in [0,1]
   // This allows probing arbitrary 2D planar subspaces anywhere in the full DAC phase space.
-  OperationResult God2D::dacLedBufferRamp2D(const std::vector<float> &args) {
+  OperationResult BufferRamp2D::dacLedBufferRamp2D(const std::vector<float> &args) {
     // Minimum required arguments:
     // 9 initial params + numDacChannels + 3*numDacChannels vectors + numAdcChannels
     if (args.size() < 9) {
@@ -872,38 +700,20 @@ OperationResult runBufferedTimeSeriesBufferRamp(
       return adcValidation;
     }
 
-    // Check voltage bounds for all four corners of the 2D scan rectangle (both calibrated bounds AND global limits)
-    for (int i = 0; i < numDacChannels; i++) {
-      int ch = dacChannels[i];
-      float lowerBound = max(DACController::getLowerBound(ch), DACLimits::lower_voltage_limit[ch]);
-      float upperBound = min(DACController::getUpperBound(ch), DACLimits::upper_voltage_limit[ch]);
-      
-      // Four corners: startPoint, startPoint+fast, startPoint+slow, startPoint+fast+slow
-      float corner1 = startPoint[i];
-      float corner2 = startPoint[i] + fastAxisVector[i];
-      float corner3 = startPoint[i] + slowAxisVector[i];
-      float corner4 = startPoint[i] + fastAxisVector[i] + slowAxisVector[i];
-      
-      float minVoltage = min(min(corner1, corner2), min(corner3, corner4));
-      float maxVoltage = max(max(corner1, corner2), max(corner3, corner4));
-      
-      if (minVoltage < lowerBound || maxVoltage > upperBound) {
-        return OperationResult::Failure("DAC " + String(ch) + 
-                                        " 2D scan range [" + String(minVoltage, 6) + 
-                                        ", " + String(maxVoltage, 6) + 
-                                        "]V exceeds bounds [" + String(lowerBound, 6) + 
-                                        ", " + String(upperBound, 6) + "]");
-      }
+    OperationResult boundsValidation = validateDac2DScanBounds(
+        numDacChannels, dacChannels, startPoint, fastAxisVector,
+        slowAxisVector, DacBoundsMode::CalibratedAndGlobal);
+    if (!boundsValidation.isSuccess()) {
+      return boundsValidation;
     }
 
     clearWorkerStopRequest();
     PeripheralCommsController::dataLedOn();
 
     uint8_t adcMask = 0u;
-    God::BoardUsage boardUsage{0, std::vector<uint8_t>()};
-    OperationResult prepareResult = God::prepareDacLedBufferRampHardware(
-        numAdcChannels, numAdcAverages, dac_interval_us, dac_settling_time_us,
-        adcChannels, adcMask, boardUsage, false);
+    BufferRamp::BoardUsage boardUsage{0, std::vector<uint8_t>()};
+    OperationResult prepareResult = BufferRamp::prepareDacLedBufferRampHardware(
+        numAdcChannels, adcChannels, adcMask, boardUsage);
     if (!prepareResult.isSuccess()) {
       PeripheralCommsController::dataLedOff();
       return prepareResult;
@@ -915,7 +725,7 @@ OperationResult runBufferedTimeSeriesBufferRamp(
         dacChannels, startPoint, fastAxisVector, slowAxisVector, adcChannels,
         adcMask);
 
-    God::cleanupDacLedBufferRampHardware(numAdcChannels, adcChannels,
+    BufferRamp::cleanupDacLedBufferRampHardware(numAdcChannels, adcChannels,
                                          boardUsage);
 
     PeripheralCommsController::dataLedOff();

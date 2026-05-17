@@ -55,6 +55,16 @@ static const uint32_t tx_ep_sizes[NUM_ENDPOINTS] = {
     MAX_PACKET_SIZE_ISO
 };
 
+#if defined(TARGET_STM32H7)
+static void enable_stm32h7_rcc_peripheral_clock(volatile uint32_t &enable_register,
+                                                uint32_t enable_mask)
+{
+    enable_register |= enable_mask;
+    const uint32_t enabled = enable_register & enable_mask;
+    (void)enabled;
+}
+#endif
+
 #if (MBED_CONF_TARGET_USB_SPEED != USE_USB_NO_OTG)
 uint32_t HAL_PCDEx_GetTxFiFo(PCD_HandleTypeDef *hpcd, uint8_t fifo)
 {
@@ -138,13 +148,13 @@ void HAL_PCD_ResumeCallback(PCD_HandleTypeDef *hpcd)
 }
 
 /*  weak function redefinition  */
-void HAL_PCD_ConnectCallback(PCD_HandleTypeDef *hpcd)
+void HAL_PCD_ConnectCallback(PCD_HandleTypeDef *)
 {
     // Nothing to do
 }
 
 /*  weak function redefinition  */
-void HAL_PCD_DisconnectCallback(PCD_HandleTypeDef *hpcd)
+void HAL_PCD_DisconnectCallback(PCD_HandleTypeDef *)
 {
     // Nothing to do
 }
@@ -206,9 +216,9 @@ static void enable_stm32h7_usb_clock()
 {
 #if defined(TARGET_STM32H7)
     __HAL_RCC_PWR_CLK_ENABLE();
-    __HAL_RCC_SYSCFG_CLK_ENABLE();
+    enable_stm32h7_rcc_peripheral_clock(RCC->APB4ENR, RCC_APB4ENR_SYSCFGEN);
     __HAL_RCC_HSI48_ENABLE();
-    __HAL_RCC_CRS_CLK_ENABLE();
+    enable_stm32h7_rcc_peripheral_clock(RCC->APB1HENR, RCC_APB1HENR_CRSEN);
 
     uint32_t start = HAL_GetTick();
     while (__HAL_RCC_GET_FLAG(RCC_FLAG_HSI48RDY) == RESET &&
@@ -267,7 +277,11 @@ void USBPhyHw::init(USBPhyEvents *events)
     hpcd.Init.use_external_vbus = DISABLE;
     hpcd.Init.speed = PCD_SPEED_HIGH;
 
+#if defined(TARGET_STM32H7)
+    enable_stm32h7_rcc_peripheral_clock(RCC->AHB1ENR, RCC_AHB1ENR_USB1OTGHSEN);
+#else
     __HAL_RCC_USB_OTG_HS_CLK_ENABLE();
+#endif
     __HAL_RCC_USB_OTG_HS_ULPI_CLK_ENABLE();
     __HAL_RCC_USB_OTG_HS_CLK_SLEEP_ENABLE();
     __HAL_RCC_USB_OTG_HS_ULPI_CLK_SLEEP_ENABLE();
@@ -290,7 +304,7 @@ void USBPhyHw::init(USBPhyEvents *events)
     #ifdef __HAL_RCC_USB2_OTG_FS_ULPI_CLK_SLEEP_DISABLE
         __HAL_RCC_USB2_OTG_FS_ULPI_CLK_SLEEP_DISABLE();
     #endif
-     
+
     map = PinMap_USB_HS;
 
 #elif (MBED_CONF_TARGET_USB_SPEED == USE_USB_OTG_FS)
@@ -299,7 +313,11 @@ void USBPhyHw::init(USBPhyEvents *events)
     hpcd.Init.Sof_enable = 1;
     hpcd.Init.speed = PCD_SPEED_FULL;
 
+#if defined(TARGET_STM32H7)
+    enable_stm32h7_rcc_peripheral_clock(RCC->AHB1ENR, RCC_AHB1ENR_USB2OTGHSEN);
+#else
     __HAL_RCC_USB_OTG_FS_CLK_ENABLE();
+#endif
 
     #ifdef __HAL_RCC_USB1_OTG_FS_ULPI_CLK_SLEEP_DISABLE
         __HAL_RCC_USB1_OTG_FS_ULPI_CLK_SLEEP_DISABLE();
@@ -307,7 +325,7 @@ void USBPhyHw::init(USBPhyEvents *events)
     #ifdef __HAL_RCC_USB2_OTG_FS_ULPI_CLK_SLEEP_DISABLE
         __HAL_RCC_USB2_OTG_FS_ULPI_CLK_SLEEP_DISABLE();
     #endif
-     
+
     map = PinMap_USB_FS;
 
 #elif (MBED_CONF_TARGET_USB_SPEED == USE_USB_NO_OTG)
@@ -338,7 +356,9 @@ void USBPhyHw::init(USBPhyEvents *events)
     __HAL_RCC_PWR_CLK_ENABLE();
 #endif
 
-#if !defined(TARGET_STM32WB)
+#if defined(TARGET_STM32H7)
+    enable_stm32h7_rcc_peripheral_clock(RCC->APB4ENR, RCC_APB4ENR_SYSCFGEN);
+#elif !defined(TARGET_STM32WB)
     __HAL_RCC_SYSCFG_CLK_ENABLE();
 #endif
 
@@ -528,9 +548,8 @@ const usb_ep_table_t *USBPhyHw::endpoint_table()
     return &table;
 }
 
-uint32_t USBPhyHw::ep0_set_max_packet(uint32_t max_packet)
+uint32_t USBPhyHw::ep0_set_max_packet(uint32_t)
 {
-    // FUTURE - set endpoint 0 size and return this size
     return MAX_PACKET_SIZE_EP0;
 }
 

@@ -154,7 +154,7 @@ static bool streamHostBytesToWorker(const char* data, size_t length) {
     return true;
   }
   if (!sendCommandBytesToWorker(data, length)) {
-    usbPrint("FAILURE: Gateway command stream full\r\n");
+    usbPrint("FAILURE: Gateway command stream full\n");
     return false;
   }
   return true;
@@ -255,7 +255,7 @@ void loop() {
         size--;
       }
       usbWrite(reinterpret_cast<const uint8_t*>(response), size);
-      usbPrint("\r\n");
+      usbPrint("\n");
     }
   }
 
@@ -268,7 +268,7 @@ void loop() {
         snprintf(value, sizeof(value), "%.8f ", response[i]);
         usbPrint(value);
       }
-      usbPrint("\r\n");
+      usbPrint("\n");
     }
   }
 

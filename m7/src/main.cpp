@@ -3,8 +3,8 @@
 #include "Config.h"
 #include "Peripherals/ADC/ADCController.h"
 #include "Peripherals/DAC/DACController.h"
-#include "Peripherals/God.h"
-#include "Peripherals/God2D.h"
+#include "Peripherals/BufferRamp.h"
+#include "Peripherals/BufferRamp2D.h"
 #include "Peripherals/PeripheralCommsController.h"
 #include "UserIOHandler.h"
 #include "Utils/flash.h"
@@ -48,11 +48,18 @@ static void configureSharedMemoryMpu() {
   __ISB();
 }
 
+static void enableRccPeripheralClock(volatile uint32_t& enableRegister,
+                                     uint32_t enableMask) {
+  enableRegister |= enableMask;
+  const uint32_t enabled = enableRegister & enableMask;
+  (void)enabled;
+}
+
 static void prepareM4UsbClock() {
   __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_RCC_SYSCFG_CLK_ENABLE();
+  enableRccPeripheralClock(RCC->APB4ENR, RCC_APB4ENR_SYSCFGEN);
   __HAL_RCC_HSI48_ENABLE();
-  __HAL_RCC_CRS_CLK_ENABLE();
+  enableRccPeripheralClock(RCC->APB1HENR, RCC_APB1HENR_CRSEN);
 
   uint32_t start = HAL_GetTick();
   while (__HAL_RCC_GET_FLAG(RCC_FLAG_HSI48RDY) == RESET &&
@@ -145,8 +152,8 @@ static void setupWorker() {
   DACController::setup();
   ADCController::setup();
 
-  God::setup();
-  God2D::setup();
+  BufferRamp::setup();
+  BufferRamp2D::setup();
 
   while (!isCalibrationDataReady()) {
     delay(1);

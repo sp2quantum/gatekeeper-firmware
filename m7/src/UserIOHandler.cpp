@@ -9,8 +9,8 @@
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
 #include "Utils/shared_memory.h"
 
-#ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "UNKNOWN"
+#ifndef FIRMWARE_VERSION_HASH
+#define FIRMWARE_VERSION_HASH UNKNOWN
 #endif
 
 #ifndef STRINGIZE
@@ -192,12 +192,11 @@ void UserIOHandler::setup() {
 }
 
 OperationResult UserIOHandler::getFirmwareVersion() {
-#ifdef __FIRMWARE_VERSION_STRING__
-  return OperationResult::Success(
-      STRINGIZE_VALUE_OF(__FIRMWARE_VERSION_STRING__));
+#ifdef FIRMWARE_VERSION_TAG
+  return OperationResult::Success(STRINGIZE_VALUE_OF(FIRMWARE_VERSION_TAG));
 #endif
   return OperationResult::Success(String("Commit Hash: ") +
-                                  STRINGIZE_VALUE_OF(__FIRMWARE_VERSION__));
+                                  STRINGIZE_VALUE_OF(FIRMWARE_VERSION_HASH));
 }
 
 OperationResult UserIOHandler::nop() {
