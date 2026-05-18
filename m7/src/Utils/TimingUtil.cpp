@@ -35,6 +35,23 @@ bool spiStillClocking(SPI_TypeDef* spi, volatile bool& inProgress) {
   return true;
 }
 
+void handleAdcTimerStartEvent() {
+  if (spiStillClocking(SPI5,
+                       PeripheralCommsController::adcSpiTransferInProgress)) {
+    TimingUtil::adcSpiMisstepEvents++;
+  }
+  if (TimingUtil::adcConversionInProgressMask != 0) {
+    TimingUtil::adcConversionMisstepEvents++;
+  }
+  TimingUtil::adcConversionInProgressMask =
+      TimingUtil::adcConversionWatchMask;
+  FastGpio::digitalWrite(adc_sync, true);
+  if (TimingUtil::adcConversionWatchMask != 0) {
+    TimingUtil::adcConversionStartedFlag = true;
+    __SEV();
+  }
+}
+
 struct TimerPeriod {
   uint16_t prescaler;
   uint16_t autoReload;
@@ -349,39 +366,13 @@ extern "C" void TIM1_UP_IRQHandler(void) {
 extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
-    if (spiStillClocking(SPI5,
-                         PeripheralCommsController::adcSpiTransferInProgress)) {
-      TimingUtil::adcSpiMisstepEvents++;
-    }
-    if (TimingUtil::adcConversionInProgressMask != 0) {
-      TimingUtil::adcConversionMisstepEvents++;
-    }
-    TimingUtil::adcConversionInProgressMask =
-        TimingUtil::adcConversionWatchMask;
-    FastGpio::digitalWrite(adc_sync, true);
-    if (TimingUtil::adcConversionWatchMask != 0) {
-      TimingUtil::adcConversionStartedFlag = true;
-      __SEV();
-    }
+    handleAdcTimerStartEvent();
   }
 }
 
 extern "C" void TIM8_CC_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_CC1IF) {
     TIM8->SR &= ~TIM_SR_CC1IF;
-    if (spiStillClocking(SPI5,
-                         PeripheralCommsController::adcSpiTransferInProgress)) {
-      TimingUtil::adcSpiMisstepEvents++;
-    }
-    if (TimingUtil::adcConversionInProgressMask != 0) {
-      TimingUtil::adcConversionMisstepEvents++;
-    }
-    TimingUtil::adcConversionInProgressMask =
-        TimingUtil::adcConversionWatchMask;
-    FastGpio::digitalWrite(adc_sync, true);
-    if (TimingUtil::adcConversionWatchMask != 0) {
-      TimingUtil::adcConversionStartedFlag = true;
-      __SEV();
-    }
+    handleAdcTimerStartEvent();
   }
 }

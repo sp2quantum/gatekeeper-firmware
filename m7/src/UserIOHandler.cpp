@@ -110,11 +110,8 @@ void executeParsedCommand() {
   switch (executeResult) {
     case FunctionRegistry::ExecuteResult::Success:
       if (result.hasMessage()) {
-        const size_t messageSize = result.getMessage().length() + 1;
-        char* message = new char[messageSize];
-        result.getMessage().toCharArray(message, messageSize);
-        sendTextToGateway(message, messageSize);
-        delete[] message;
+        const String message = result.getMessage();
+        sendTextToGateway(message.c_str(), message.length() + 1);
       }
       break;
     case FunctionRegistry::ExecuteResult::ArgumentError:

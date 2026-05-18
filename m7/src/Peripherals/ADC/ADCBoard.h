@@ -1,6 +1,3 @@
-// AD7734 register macros used here
-
-
 #pragma once
 
 #include <Arduino.h>
@@ -12,63 +9,74 @@
 
 #include "Config.h"
 
-// ADC symbols
-// All tables & pages reference AD7734 Data Sheet Rev B (4 Channels, AD7732 is 2
-// Channels) Communications Register, Table 11 Summery
+namespace AdcRegister {
 
-// Read/Write bit (R, W), Table 11
-#define READ 1 << 6
-#define WRITE 0 << 6
+constexpr uint8_t kRead = 1u << 6;
+constexpr uint8_t kWrite = 0u;
 
-// ADC register addresses, Table 11
-#define ADDR_COM 0x0
-#define ADDR_IO 0x1
-#define ADDR_REVISION 0x2
-#define ADDR_TEST 0x3
-#define ADDR_ADCSTATUS 0x4
-#define ADDR_CHECKSUM 0x5
-#define ADDR_ADCZEROSCALECAL 0x6
-#define ADDR_ADCFULLSCALE 0x7
+constexpr uint8_t kCom = 0x0;
+constexpr uint8_t kIo = 0x1;
+constexpr uint8_t kRevision = 0x2;
+constexpr uint8_t kTest = 0x3;
+constexpr uint8_t kAdcStatus = 0x4;
+constexpr uint8_t kChecksum = 0x5;
+constexpr uint8_t kAdcZeroScaleCal = 0x6;
+constexpr uint8_t kAdcFullScale = 0x7;
 
-#define DUMP_MODE 1 << 3
+constexpr uint8_t kDumpMode = 1u << 3;
 
-// Address macro functions, returns address for desired register of selected
-// channel (0-3), Table 11
-#define ADDR_CHANNELDATA(adc_channel) (0x8 + adc_channel)
-#define ADDR_CHANNELZEROSCALECAL(adc_channel) (0x10 + adc_channel)
-#define ADDR_CHANNELFULLSCALECAL(adc_channel) (0x18 + adc_channel)
-#define ADDR_CHANNELSTATUS(adc_channel) (0x20 + adc_channel)
-#define ADDR_CHANNELSETUP(adc_channel) (0x28 + adc_channel)
-#define ADDR_CHANNELCONVERSIONTIME(adc_channel) (0x30 + adc_channel)
-#define ADDR_MODE(adc_channel) (0x38 + adc_channel)
+constexpr uint8_t channelData(int adcChannel) {
+  return static_cast<uint8_t>(0x08 + adcChannel);
+}
 
-#define BIT_MODE16 0 << 1
-#define BIT_MODE24 1 << 1
+constexpr uint8_t channelZeroScaleCal(int adcChannel) {
+  return static_cast<uint8_t>(0x10 + adcChannel);
+}
 
-// SELECT ADC RESOLUTION HERE
-#define BIT_MODE BIT_MODE24
+constexpr uint8_t channelFullScaleCal(int adcChannel) {
+  return static_cast<uint8_t>(0x18 + adcChannel);
+}
 
-// Operational Mode Register, Table 12
-// mode bits (MD2, MD1, MD0 bits)
-#define IDLE_MODE 0 << 5 | BIT_MODE
-#define CONT_CONV_MODE 1 << 5 | BIT_MODE
-#define SINGLE_CONV_MODE 2 << 5 | BIT_MODE
-#define PWR_DOWN_MODE 3 << 5 | BIT_MODE
-#define ZERO_SCALE_SELF_CAL_MODE 4 << 5 | BIT_MODE
-#define CH_ZERO_SCALE_SYS_CAL_MODE 6 << 5 | BIT_MODE
-#define CH_FULL_SCALE_SYS_CAL_MODE 7 << 5 | BIT_MODE
-#define CH_EN_CONT_CONV 1 << 3
+constexpr uint8_t channelStatus(int adcChannel) {
+  return static_cast<uint8_t>(0x20 + adcChannel);
+}
 
-#define ADCRES16 65535.0
-#define ADCRES24 16777215.0
+constexpr uint8_t channelSetup(int adcChannel) {
+  return static_cast<uint8_t>(0x28 + adcChannel);
+}
 
-// full scale range, can take 4 different values
-#define FSR 20.0
-#define ADC2DOUBLE16(vin) (FSR * ((double)vin - (ADCRES16 / 2.0)) / ADCRES16)
-#define ADC2DOUBLE24(vin) (FSR * ((double)vin - (ADCRES24 / 2.0)) / ADCRES24)
+constexpr uint8_t channelConversionTime(int adcChannel) {
+  return static_cast<uint8_t>(0x30 + adcChannel);
+}
 
-// SELECT ADC RESOLUTION HERE
-#define ADC2DOUBLE(vin) ADC2DOUBLE24(vin)
+constexpr uint8_t mode(int adcChannel) {
+  return static_cast<uint8_t>(0x38 + adcChannel);
+}
+
+constexpr uint8_t kMode16 = 0u;
+constexpr uint8_t kMode24 = 1u << 1;
+constexpr uint8_t kBitMode = kMode24;
+
+constexpr uint8_t kIdleMode = (0u << 5) | kBitMode;
+constexpr uint8_t kContinuousConversionMode = (1u << 5) | kBitMode;
+constexpr uint8_t kSingleConversionMode = (2u << 5) | kBitMode;
+constexpr uint8_t kPowerDownMode = (3u << 5) | kBitMode;
+constexpr uint8_t kZeroScaleSelfCalMode = (4u << 5) | kBitMode;
+constexpr uint8_t kChannelZeroScaleSystemCalMode = (6u << 5) | kBitMode;
+constexpr uint8_t kChannelFullScaleSystemCalMode = (7u << 5) | kBitMode;
+constexpr uint8_t kEnableContinuousConversion = 1u << 3;
+
+constexpr double kAdcResolution16 = 65535.0;
+constexpr double kAdcResolution24 = 16777215.0;
+constexpr double kFullScaleRange = 20.0;
+
+inline double toDouble(uint32_t value) {
+  return kFullScaleRange *
+         (static_cast<double>(value) - (kAdcResolution24 / 2.0)) /
+         kAdcResolution24;
+}
+
+}  // namespace AdcRegister
 
 class ADCBoard {
  public:
@@ -81,6 +89,10 @@ class ADCBoard {
   PeripheralCommsController commsController;
 
   void waitDataReady();
+  uint8_t readRegister8(uint8_t address);
+  uint32_t readRegister24(uint8_t address, bool noTransaction = false);
+  void writeRegister8(uint8_t address, uint8_t value);
+  void writeRegister24(uint8_t address, uint32_t value);
 
  public:
   bool data_ready = false;
@@ -89,7 +101,7 @@ class ADCBoard {
 
   void setup();
 
-  void RDY_ISR ();
+  void RDY_ISR();
 
   void initialize();
 

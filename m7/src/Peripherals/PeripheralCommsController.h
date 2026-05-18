@@ -4,6 +4,13 @@
 
 class PeripheralCommsController {
  public:
+  enum class SpiBus {
+    Dac,
+    Adc,
+  };
+
+  static constexpr size_t kRegisterTransferMaxBytes = 4;
+
   static volatile bool dacSpiTransferInProgress;
   static volatile bool adcSpiTransferInProgress;
 
@@ -11,15 +18,16 @@ class PeripheralCommsController {
   static bool spiInitialized;
   int cs_pin;
 
-  static constexpr size_t kSpiBufferSize = 64;
-  static uint8_t __attribute__((aligned(32))) tx_buffer[kSpiBufferSize];
-  static uint8_t __attribute__((aligned(32))) rx_buffer[kSpiBufferSize];
+  static uint8_t __attribute__((aligned(32)))
+      tx_buffer[kRegisterTransferMaxBytes];
+  static uint8_t __attribute__((aligned(32)))
+      rx_buffer[kRegisterTransferMaxBytes];
 
-  bool performHardwareTransfer(bool isDac, uint8_t* tx, uint8_t* rx,
+  bool performRegisterTransfer(SpiBus bus, uint8_t* tx, uint8_t* rx,
                                size_t count, bool dacReadMode = false);
-  bool transferBytes(bool isDac, uint8_t* bytes, size_t count,
+  bool transferBytes(SpiBus bus, uint8_t* bytes, size_t count,
                      bool dacReadMode = false);
-  uint8_t transferByte(bool isDac, uint8_t data);
+  uint8_t transferByte(SpiBus bus, uint8_t data);
 
  public:
   explicit PeripheralCommsController(int cs_pin);

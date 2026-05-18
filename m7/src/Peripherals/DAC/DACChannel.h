@@ -55,11 +55,12 @@ class DACChannel {
   float getVoltage();
 
  private:
+  bool writeAndLatchPacket(const byte packet[3]);
+
   void voltageToDecimal(float v, byte *DB1, byte *DB2, byte *DB3);
 
   void intToThreeBytes(int decimal, byte *DB1, byte *DB2, byte *DB3);
 
-  // This gives a 16 bit integer (between +/- 2^16)
   int threeByteToInt(byte DB1, byte DB2, byte DB3);
 
   float threeByteToVoltage(byte DB1, byte DB2, byte DB3);

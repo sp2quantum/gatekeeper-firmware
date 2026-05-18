@@ -287,7 +287,9 @@ bool ADCController::buildConversionDataRead(int adc_channel, byte packet[4]) {
   if (!isChannelIndexValid(adc_channel)) {
     return false;
   }
-  packet[0] = READ | ADDR_CHANNELDATA(getChannelIndexFromGlobalIndex(adc_channel));
+  packet[0] = AdcRegister::kRead |
+              AdcRegister::channelData(
+                  getChannelIndexFromGlobalIndex(adc_channel));
   packet[1] = 0;
   packet[2] = 0;
   packet[3] = 0;
@@ -299,7 +301,7 @@ double ADCController::conversionDataPacketToVoltage(const byte packet[4]) {
   const uint32_t lower = packet[2];
   const uint32_t last = packet[3];
   const uint32_t raw = (upper << 16) | (lower << 8) | last;
-  return ADC2DOUBLE(raw);
+  return AdcRegister::toDouble(raw);
 }
 
 uint32_t ADCController::getConversionData(int adc_channel) {
@@ -324,13 +326,14 @@ OperationResult ADCController::unsetRDYFN(int adc_channel) {
 }
 
 double ADCController::getVoltageData(int adc_channel) {
-  return ADC2DOUBLE(getConversionData(adc_channel));
+  return AdcRegister::toDouble(getConversionData(adc_channel));
 }
 
 double ADCController::getVoltageDataNoTransaction(int adc_channel) {
-  return ADC2DOUBLE(adc_boards[getBoardIndexFromGlobalIndex(adc_channel)]
-                        .getConversionDataNoTransaction(
-                            getChannelIndexFromGlobalIndex(adc_channel)));
+  return AdcRegister::toDouble(
+      adc_boards[getBoardIndexFromGlobalIndex(adc_channel)]
+          .getConversionDataNoTransaction(
+              getChannelIndexFromGlobalIndex(adc_channel)));
 }
 
 void ADCController::startContinuousConversion(int adc_channel) {

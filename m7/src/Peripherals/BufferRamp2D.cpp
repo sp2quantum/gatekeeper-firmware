@@ -3,26 +3,25 @@
 #include "Config.h"
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
 #include "Peripherals/ADC/ADCController.h"
-#include "Peripherals/DAC/DACController.h"
 #include "Peripherals/BufferRamp.h"
+#include "Peripherals/BufferRampCommon.h"
+#include "Peripherals/DAC/DACController.h"
 #include "Peripherals/PeripheralCommsController.h"
 #include "Utils/FastGpio.h"
 #include "Utils/TimingUtil.h"
 #include "Utils/shared_memory.h"
 
 namespace {
-bool isValidDacChannelCount(int count) {
-  return count >= 1 && count <= NUM_DAC_CHANNELS;
-}
-
-bool isValidAdcChannelCount(int count) {
-  return count >= 1 && count <= NUM_ADC_CHANNELS;
-}
-
-bool isUint32AtLeast(float value, uint32_t minimum) {
-  return value >= static_cast<float>(minimum) &&
-         static_cast<double>(value) <= 4294967295.0;
-}
+using BufferRampCommon::dacWriteFailure;
+using BufferRampCommon::encodeDacVoltagePackets;
+using BufferRampCommon::finishRampTimingWatchdog;
+using BufferRampCommon::isUint32AtLeast;
+using BufferRampCommon::isValidAdcChannelCount;
+using BufferRampCommon::isValidDacChannelCount;
+using BufferRampCommon::sendVoltageFrame;
+using BufferRampCommon::validateAdcChannels;
+using BufferRampCommon::validateDacChannels;
+using BufferRampCommon::writeDacPackets;
 
 bool isBooleanArg(float value) {
   return value == 0.0f || value == 1.0f;
@@ -70,96 +69,6 @@ OperationResult validateDac2DScanBounds(
   return OperationResult::Success();
 }
 
-OperationResult validateDacChannels(const int* channels, int count) {
-  for (int i = 0; i < count; i++) {
-    if (!DACController::isChannelIndexValid(channels[i])) {
-      return OperationResult::Failure("Invalid DAC channel index " +
-                                      String(channels[i]));
-    }
-  }
-  return OperationResult::Success();
-}
-
-OperationResult validateAdcChannels(const int* channels, int count) {
-  for (int i = 0; i < count; i++) {
-    if (!ADCController::isChannelIndexValid(channels[i])) {
-      return OperationResult::Failure("Invalid ADC channel index " +
-                                      String(channels[i]));
-    }
-  }
-  return OperationResult::Success();
-}
-
-OperationResult finishRampTimingWatchdog(
-    bool includeAdcConversionMissteps = true) {
-  const uint32_t dacSpiMissteps = TimingUtil::dacSpiMisstepEvents;
-  const uint32_t adcSpiMissteps = TimingUtil::adcSpiMisstepEvents;
-  const uint32_t adcConversionMissteps =
-      TimingUtil::adcConversionMisstepEvents;
-  if (dacSpiMissteps == 0 && adcSpiMissteps == 0 &&
-      (!includeAdcConversionMissteps || adcConversionMissteps == 0)) {
-    return OperationResult::Success();
-  }
-  String message =
-      "Ramp timing misstep during ramp dac_spi_missteps=" +
-      String(dacSpiMissteps) + " adc_spi_missteps=" +
-      String(adcSpiMissteps);
-  if (includeAdcConversionMissteps) {
-    message += " adc_conversion_missteps=" + String(adcConversionMissteps);
-  }
-  return OperationResult::Failure(message);
-}
-
-OperationResult dacWriteFailure(int channel, double voltage) {
-  String message = "DAC write failed ch=" + String(channel) +
-                   " v=" + String(voltage, 9);
-
-  if (!DACController::isChannelIndexValid(channel)) {
-    return OperationResult::Failure(message + " source=invalid_channel");
-  }
-
-  const float lowerBound = DACController::getLowerBound(channel);
-  const float upperBound = DACController::getUpperBound(channel);
-  if (voltage < lowerBound || voltage > upperBound) {
-    message += " source=bounds bounds=[" + String(lowerBound, 9) + "," +
-               String(upperBound, 9) + "]";
-    return OperationResult::Failure(message);
-  }
-
-  return OperationResult::Failure(message + " source=spi");
-}
-
-bool sendVoltageFrame(const double* packets, size_t length) {
-  if (sendVoltageFrameToGateway(packets, length)) {
-    return true;
-  }
-  requestWorkerStop();
-  return false;
-}
-
-bool encodeDacVoltagePackets(int numDacChannels, const int* dacChannels,
-                             const double* voltages,
-                             byte packets[NUM_DAC_CHANNELS][3]) {
-  for (int i = 0; i < numDacChannels; i++) {
-    if (!DACController::encodeVoltagePacket(
-            dacChannels[i], static_cast<float>(voltages[i]), packets[i])) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool writeDacPackets(int numDacChannels, const int* dacChannels,
-                     byte packets[NUM_DAC_CHANNELS][3]) {
-  for (int i = 0; i < numDacChannels; i++) {
-    if (!DACController::writeVoltagePacketNoLdac(dacChannels[i],
-                                                 packets[i])) {
-      return false;
-    }
-  }
-  return true;
-}
-
 void calculateDacLed2DVoltages(int pointIndex, int numStepsFast,
                                bool retrace, bool snake,
                                int numDacChannels, const float* startPoint,
@@ -195,6 +104,51 @@ struct DacLed2DStreamPoint {
   int pointIndex;
   bool sendAdc;
 };
+
+struct Parsed2DScanTail {
+  int dacChannels[NUM_DAC_CHANNELS] = {};
+  float startPoint[NUM_DAC_CHANNELS] = {};
+  float fastAxisVector[NUM_DAC_CHANNELS] = {};
+  float slowAxisVector[NUM_DAC_CHANNELS] = {};
+  int adcChannels[NUM_ADC_CHANNELS] = {};
+};
+
+OperationResult parse2DScanTail(const std::vector<float>& args,
+                                size_t currentIndex, int numDacChannels,
+                                int numAdcChannels,
+                                Parsed2DScanTail& parsed) {
+  const size_t expected =
+      currentIndex + static_cast<size_t>(numDacChannels) +
+      3u * static_cast<size_t>(numDacChannels) +
+      static_cast<size_t>(numAdcChannels);
+  if (args.size() != expected) {
+    return OperationResult::Failure(
+        "Incorrect number of arguments for 2D ramp");
+  }
+
+  for (int i = 0; i < numDacChannels; ++i) {
+    parsed.dacChannels[i] = static_cast<int>(args[currentIndex++]);
+  }
+  for (int i = 0; i < numDacChannels; ++i) {
+    parsed.startPoint[i] = args[currentIndex++];
+  }
+  for (int i = 0; i < numDacChannels; ++i) {
+    parsed.fastAxisVector[i] = args[currentIndex++];
+  }
+  for (int i = 0; i < numDacChannels; ++i) {
+    parsed.slowAxisVector[i] = args[currentIndex++];
+  }
+  for (int i = 0; i < numAdcChannels; ++i) {
+    parsed.adcChannels[i] = static_cast<int>(args[currentIndex++]);
+  }
+
+  OperationResult dacValidation =
+      validateDacChannels(parsed.dacChannels, numDacChannels, false);
+  if (!dacValidation.isSuccess()) {
+    return dacValidation;
+  }
+  return validateAdcChannels(parsed.adcChannels, numAdcChannels, false);
+}
 
 bool usesRowStartDummyConversions(bool retrace, bool snake,
                                   int numStepsFast,
@@ -368,385 +322,256 @@ OperationResult runPreparedDacLedBufferRamp2D(
 
 }
 
-  void BufferRamp2D::setup() { initializeRegistry(); }
+void BufferRamp2D::setup() { initializeRegistry(); }
 
 
 
-  void BufferRamp2D::initializeRegistry() {
-    registerMemberFunctionVector(timeSeriesBufferRamp2D,
-                                 "2D_TIME_SERIES_BUFFER_RAMP");
-    registerMemberFunctionVector(dacLedBufferRamp2D, "2D_DAC_LED_BUFFER_RAMP");
+void BufferRamp2D::initializeRegistry() {
+  registerMemberFunctionVector(timeSeriesBufferRamp2D,
+                               "2D_TIME_SERIES_BUFFER_RAMP");
+  registerMemberFunctionVector(dacLedBufferRamp2D, "2D_DAC_LED_BUFFER_RAMP");
+}
+
+OperationResult BufferRamp2D::timeSeriesBufferRamp2D(
+    const std::vector<float>& args) {
+  if (args.size() < 8) {
+    return OperationResult::Failure(
+        "Not enough arguments provided for 2D ramp");
   }
 
+  size_t currentIndex = 0;
 
+  int numDacChannels = static_cast<int>(args[currentIndex++]);
+  int numAdcChannels = static_cast<int>(args[currentIndex++]);
+  int numStepsFast = static_cast<int>(args[currentIndex++]);
+  int numStepsSlow = static_cast<int>(args[currentIndex++]);
+  const float dacIntervalArg = args[currentIndex++];
+  const float adcIntervalArg = args[currentIndex++];
+  const float retraceArg = args[currentIndex++];
+  const float snakeArg = args[currentIndex++];
 
-  // timeSeriesBufferRamp2D:
-  // Arguments (in order):
-  // numDacChannels, numAdcChannels, numStepsFast, numStepsSlow,
-  // dacInterval_us, adcInterval_us, retrace (0.0f = false, 1.0f = true), snake (0.0f = false, 1.0f = true),
-  // [dacChannelID] * numDacChannels,
-  // [startPoint] * numDacChannels,
-  // [fastAxisVector] * numDacChannels,
-  // [slowAxisVector] * numDacChannels,
-  // [adcChannelID] * numAdcChannels
-  //
-  // The fast/slow axis vectors define a 2D plane in the N-dimensional DAC phase space.
-  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f is in [0,1]
-  // This allows probing arbitrary 2D planar subspaces anywhere in the full DAC phase space.
-  OperationResult BufferRamp2D::timeSeriesBufferRamp2D(
-      const std::vector<float> &args) {
-    // Minimum required arguments:
-    // 8 initial params + numDacChannels + 3*numDacChannels vectors + numAdcChannels
-    if (args.size() < 8) {
-      return OperationResult::Failure(
-          "Not enough arguments provided for 2D ramp");
-    }
+  if (!isValidDacChannelCount(numDacChannels) ||
+      !isValidAdcChannelCount(numAdcChannels)) {
+    return OperationResult::Failure("Invalid number of channels");
+  }
+  if (!isUint32AtLeast(adcIntervalArg, 1) ||
+      !isUint32AtLeast(dacIntervalArg, 1)) {
+    return OperationResult::Failure("Invalid interval");
+  }
+  if (!isBooleanArg(retraceArg) || !isBooleanArg(snakeArg)) {
+    return OperationResult::Failure("Invalid 2D scan boolean argument");
+  }
+  if (numStepsFast < 1 || numStepsSlow < 1) {
+    return OperationResult::Failure("Invalid number of steps");
+  }
+  uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
+  uint32_t adc_interval_us = static_cast<uint32_t>(adcIntervalArg);
+  bool retrace = retraceArg != 0.0f;
+  bool snake = snakeArg != 0.0f;
 
-    size_t currentIndex = 0;
+  Parsed2DScanTail parsed;
+  OperationResult parseResult = parse2DScanTail(
+      args, currentIndex, numDacChannels, numAdcChannels, parsed);
+  if (!parseResult.isSuccess()) {
+    return parseResult;
+  }
 
-    // Parse initial parameters
-    int numDacChannels = static_cast<int>(args[currentIndex++]);
-    int numAdcChannels = static_cast<int>(args[currentIndex++]);
-    int numStepsFast = static_cast<int>(args[currentIndex++]);
-    int numStepsSlow = static_cast<int>(args[currentIndex++]);
-    const float dacIntervalArg = args[currentIndex++];
-    const float adcIntervalArg = args[currentIndex++];
-    const float retraceArg = args[currentIndex++];
-    const float snakeArg = args[currentIndex++];
+  OperationResult boundsValidation = validateDac2DScanBounds(
+      numDacChannels, parsed.dacChannels, parsed.startPoint,
+      parsed.fastAxisVector, parsed.slowAxisVector,
+      DacBoundsMode::Calibrated);
+  if (!boundsValidation.isSuccess()) {
+    return boundsValidation;
+  }
 
-    if (!isValidDacChannelCount(numDacChannels) ||
-        !isValidAdcChannelCount(numAdcChannels)) {
-      return OperationResult::Failure("Invalid number of channels");
-    }
-    if (!isUint32AtLeast(adcIntervalArg, 1) ||
-        !isUint32AtLeast(dacIntervalArg, 1)) {
-      return OperationResult::Failure("Invalid interval");
-    }
-    if (!isBooleanArg(retraceArg) || !isBooleanArg(snakeArg)) {
-      return OperationResult::Failure("Invalid 2D scan boolean argument");
-    }
-    if (numStepsFast < 1 || numStepsSlow < 1) {
-      return OperationResult::Failure("Invalid number of steps");
-    }
-    uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
-    uint32_t adc_interval_us = static_cast<uint32_t>(adcIntervalArg);
-    bool retrace = retraceArg != 0.0f;
-    bool snake = snakeArg != 0.0f;
+  float slowStepSize[NUM_DAC_CHANNELS] = {};
+  for (int i = 0; i < numDacChannels; i++) {
+    slowStepSize[i] =
+        numStepsSlow > 1
+            ? parsed.slowAxisVector[i] / (numStepsSlow - 1)
+            : 0.0f;
+  }
 
-    const size_t expected =
-        currentIndex + static_cast<size_t>(numDacChannels) +
-        3u * static_cast<size_t>(numDacChannels) +
-        static_cast<size_t>(numAdcChannels);
-    if (args.size() != expected) {
-      return OperationResult::Failure("Incorrect number of arguments for 2D ramp");
-    }
+  float currentSlowPosition[NUM_DAC_CHANNELS] = {};
+  for (int i = 0; i < numDacChannels; i++) {
+    currentSlowPosition[i] = parsed.startPoint[i];
+  }
 
-    // Parse DAC channel IDs
-    int dacChannels[NUM_DAC_CHANNELS] = {};
+  clearWorkerStopRequest();
+  PeripheralCommsController::dataLedOn();
+
+  uint8_t adcMask = 0u;
+  BufferRamp::BoardUsage boardUsage{0, std::vector<uint8_t>()};
+  OperationResult prepareResult =
+      BufferRamp::prepareTimeSeriesBufferRampHardware(
+          numAdcChannels, parsed.adcChannels, adcMask, boardUsage);
+  if (!prepareResult.isSuccess()) {
+    PeripheralCommsController::dataLedOff();
+    return prepareResult;
+  }
+
+  OperationResult rampResult = OperationResult::Success();
+
+  for (int slowStep = 0;
+       slowStep < numStepsSlow && !isWorkerStopRequested(); ++slowStep) {
+    const bool reverseFastAxis = snake && ((slowStep % 2) != 0);
+
+    float fastV0s[NUM_DAC_CHANNELS] = {};
+    float fastVfs[NUM_DAC_CHANNELS] = {};
+
     for (int i = 0; i < numDacChannels; ++i) {
-      dacChannels[i] = static_cast<int>(args[currentIndex++]);
-    }
-
-    // Parse start point
-    float startPoint[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; ++i) {
-      startPoint[i] = args[currentIndex++];
-    }
-
-    // Parse fast axis vector
-    float fastAxisVector[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; ++i) {
-      fastAxisVector[i] = args[currentIndex++];
-    }
-
-    // Parse slow axis vector
-    float slowAxisVector[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; ++i) {
-      slowAxisVector[i] = args[currentIndex++];
-    }
-
-    // Parse ADC Channels
-    if (args.size() < currentIndex + numAdcChannels) {
-      return OperationResult::Failure("Not enough arguments for ADC channels");
-    }
-
-    int adcChannels[NUM_ADC_CHANNELS] = {};
-    for (int i = 0; i < numAdcChannels; ++i) {
-      adcChannels[i] = static_cast<int>(args[currentIndex++]);
-    }
-
-    OperationResult dacValidation =
-        validateDacChannels(dacChannels, numDacChannels);
-    if (!dacValidation.isSuccess()) {
-      return dacValidation;
-    }
-    OperationResult adcValidation =
-        validateAdcChannels(adcChannels, numAdcChannels);
-    if (!adcValidation.isSuccess()) {
-      return adcValidation;
-    }
-
-    OperationResult boundsValidation = validateDac2DScanBounds(
-        numDacChannels, dacChannels, startPoint, fastAxisVector,
-        slowAxisVector, DacBoundsMode::Calibrated);
-    if (!boundsValidation.isSuccess()) {
-      return boundsValidation;
-    }
-
-    // Calculate slow axis step sizes for each DAC channel
-    float slowStepSize[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; i++) {
-      slowStepSize[i] =
-          numStepsSlow > 1 ? slowAxisVector[i] / (numStepsSlow - 1) : 0.0f;
-    }
-
-    // Track current position in phase space (starting at startPoint)
-    float currentSlowPosition[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; i++) {
-      currentSlowPosition[i] = startPoint[i];
-    }
-
-    clearWorkerStopRequest();
-    PeripheralCommsController::dataLedOn();
-
-    uint8_t adcMask = 0u;
-    BufferRamp::BoardUsage boardUsage{0, std::vector<uint8_t>()};
-    OperationResult prepareResult = BufferRamp::prepareTimeSeriesBufferRampHardware(
-        numAdcChannels, adcChannels, adcMask, boardUsage);
-    if (!prepareResult.isSuccess()) {
-      PeripheralCommsController::dataLedOff();
-      return prepareResult;
-    }
-
-    OperationResult rampResult = OperationResult::Success();
-
-    // Iterate over slow steps
-    for (int slowStep = 0; slowStep < numStepsSlow && !isWorkerStopRequested(); ++slowStep) {
-      const bool reverseFastAxis = snake && ((slowStep % 2) != 0);
-
-      // Calculate start and end voltages for fast axis ramp
-      // Position = currentSlowPosition + t * fastAxisVector (where t goes from 0 to 1)
-      float fastV0s[NUM_DAC_CHANNELS] = {};
-      float fastVfs[NUM_DAC_CHANNELS] = {};
-
-      for (int i = 0; i < numDacChannels; ++i) {
-        if (reverseFastAxis) {
-          fastV0s[i] = currentSlowPosition[i] + fastAxisVector[i];
-          fastVfs[i] = currentSlowPosition[i];
-        } else {
-          fastV0s[i] = currentSlowPosition[i];
-          fastVfs[i] = currentSlowPosition[i] + fastAxisVector[i];
-        }
+      if (reverseFastAxis) {
+        fastV0s[i] = currentSlowPosition[i] + parsed.fastAxisVector[i];
+        fastVfs[i] = currentSlowPosition[i];
+      } else {
+        fastV0s[i] = currentSlowPosition[i];
+        fastVfs[i] = currentSlowPosition[i] + parsed.fastAxisVector[i];
       }
+    }
 
-      OperationResult ramp1Result = BufferRamp::runPreparedTimeSeriesBufferRamp(
+    OperationResult ramp1Result = BufferRamp::runPreparedTimeSeriesBufferRamp(
+        numDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
+        adc_interval_us, parsed.dacChannels, fastV0s, fastVfs,
+        parsed.adcChannels, adcMask,
+        BufferRamp::TimeSeriesRampMode::Buffered2DRow);
+
+    OperationResult ramp2Result = OperationResult::Success();
+    if (retrace && !snake) {
+      ramp2Result = BufferRamp::runPreparedTimeSeriesBufferRamp(
           numDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
-          adc_interval_us, dacChannels, fastV0s, fastVfs, adcChannels,
-          adcMask, BufferRamp::TimeSeriesRampMode::Buffered2DRow);
-
-      OperationResult ramp2Result = OperationResult::Success();
-      if (retrace && !snake) {
-        ramp2Result = BufferRamp::runPreparedTimeSeriesBufferRamp(
-            numDacChannels, numAdcChannels, numStepsFast, dac_interval_us,
-            adc_interval_us, dacChannels, fastVfs, fastV0s, adcChannels,
-            adcMask, BufferRamp::TimeSeriesRampMode::Buffered2DRow);
-      }
-
-      // Check for errors
-      if (!ramp1Result.isSuccess() && !ramp2Result.isSuccess()) {
-        rampResult = OperationResult::Failure(ramp1Result.getMessage() + "\n" +
-                                              ramp2Result.getMessage());
-        break;
-      } else if (!ramp1Result.isSuccess()) {
-        rampResult = OperationResult::Failure(ramp1Result.getMessage());
-        break;
-      } else if (!ramp2Result.isSuccess()) {
-        rampResult = OperationResult::Failure(ramp2Result.getMessage());
-        break;
-      }
-
-      // Advance along slow axis
-      for (int i = 0; i < numDacChannels; ++i) {
-        currentSlowPosition[i] += slowStepSize[i];
-      }
+          adc_interval_us, parsed.dacChannels, fastVfs, fastV0s,
+          parsed.adcChannels, adcMask,
+          BufferRamp::TimeSeriesRampMode::Buffered2DRow);
     }
 
-    BufferRamp::cleanupTimeSeriesBufferRampHardware(numAdcChannels, adcChannels,
-                                             boardUsage);
-
-    PeripheralCommsController::dataLedOff();
-
-    if (!rampResult.isSuccess()) {
-      if (isWorkerStopRequested()) {
-        clearWorkerStopRequest();
-      }
-      return rampResult;
+    if (!ramp1Result.isSuccess() && !ramp2Result.isSuccess()) {
+      rampResult = OperationResult::Failure(ramp1Result.getMessage() + "\n" +
+                                            ramp2Result.getMessage());
+      break;
+    } else if (!ramp1Result.isSuccess()) {
+      rampResult = OperationResult::Failure(ramp1Result.getMessage());
+      break;
+    } else if (!ramp2Result.isSuccess()) {
+      rampResult = OperationResult::Failure(ramp2Result.getMessage());
+      break;
     }
 
-    if (isWorkerStopRequested()) {
-      clearWorkerStopRequest();
-      return OperationResult::Failure("2D RAMPING_STOPPED");
+    for (int i = 0; i < numDacChannels; ++i) {
+      currentSlowPosition[i] += slowStepSize[i];
     }
-
-    return finishRampTimingWatchdog(false);
   }
 
+  BufferRamp::cleanupTimeSeriesBufferRampHardware(
+      numAdcChannels, parsed.adcChannels, boardUsage);
 
+  PeripheralCommsController::dataLedOff();
 
+  if (!rampResult.isSuccess()) {
+    if (isWorkerStopRequested()) {
+      clearWorkerStopRequest();
+    }
+    return rampResult;
+  }
 
-  // dacLedBufferRamp2D:
-  // Arguments (in order):
-  // numDacChannels, numAdcChannels, numStepsFast, numStepsSlow,
-  // dacInterval_us, dacSettlingTime_us, retrace (0.0f = false, 1.0f = true), snake (0.0f = false, 1.0f = true),
-  // numAdcAverages,
-  // [dacChannelID] * numDacChannels,
-  // [startPoint] * numDacChannels,
-  // [fastAxisVector] * numDacChannels,
-  // [slowAxisVector] * numDacChannels,
-  // [adcChannelID] * numAdcChannels
-  //
-  // The fast/slow axis vectors define a 2D plane in the N-dimensional DAC phase space.
-  // Position(s,f) = startPoint + s*slowAxisVector + f*fastAxisVector where s,f is in [0,1]
-  // This allows probing arbitrary 2D planar subspaces anywhere in the full DAC phase space.
-  OperationResult BufferRamp2D::dacLedBufferRamp2D(const std::vector<float> &args) {
-    // Minimum required arguments:
-    // 9 initial params + numDacChannels + 3*numDacChannels vectors + numAdcChannels
-    if (args.size() < 9) {
-      return OperationResult::Failure(
-          "Not enough arguments provided for 2D ramp");
-    }
-
-    size_t currentIndex = 0;
-
-    // Parse initial parameters
-    int numDacChannels = static_cast<int>(args[currentIndex++]);
-    int numAdcChannels = static_cast<int>(args[currentIndex++]);
-    int numStepsFast = static_cast<int>(args[currentIndex++]);
-    int numStepsSlow = static_cast<int>(args[currentIndex++]);
-    const float dacIntervalArg = args[currentIndex++];
-    const float dacSettlingTimeArg = args[currentIndex++];
-    const float retraceArg = args[currentIndex++];
-    const float snakeArg = args[currentIndex++];
-    int numAdcAverages = static_cast<int>(args[currentIndex++]);
-
-    if (!isValidDacChannelCount(numDacChannels) ||
-        !isValidAdcChannelCount(numAdcChannels)) {
-      return OperationResult::Failure("Invalid number of channels");
-    }
-    if (!isUint32AtLeast(dacSettlingTimeArg, 1) ||
-        !isUint32AtLeast(dacIntervalArg, 1) ||
-        dacSettlingTimeArg >= dacIntervalArg) {
-      return OperationResult::Failure("Invalid interval or settling time");
-    }
-    if (!isBooleanArg(retraceArg) || !isBooleanArg(snakeArg)) {
-      return OperationResult::Failure("Invalid 2D scan boolean argument");
-    }
-    if (numAdcAverages < 1) {
-      return OperationResult::Failure("Invalid number of ADC averages");
-    }
-    if (numStepsFast < 1 || numStepsSlow < 1) {
-      return OperationResult::Failure("Invalid number of steps");
-    }
-    uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
-    uint32_t dac_settling_time_us =
-        static_cast<uint32_t>(dacSettlingTimeArg);
-    bool retrace = retraceArg != 0.0f;
-    bool snake = snakeArg != 0.0f;
-
-    const size_t expected =
-        currentIndex + static_cast<size_t>(numDacChannels) +
-        3u * static_cast<size_t>(numDacChannels) +
-        static_cast<size_t>(numAdcChannels);
-    if (args.size() != expected) {
-      return OperationResult::Failure("Incorrect number of arguments for 2D ramp");
-    }
-
-    // Parse DAC channel IDs
-    int dacChannels[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; ++i) {
-      dacChannels[i] = static_cast<int>(args[currentIndex++]);
-    }
-
-    // Parse start point
-    float startPoint[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; ++i) {
-      startPoint[i] = args[currentIndex++];
-    }
-
-    // Parse fast axis vector
-    float fastAxisVector[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; ++i) {
-      fastAxisVector[i] = args[currentIndex++];
-    }
-
-    // Parse slow axis vector
-    float slowAxisVector[NUM_DAC_CHANNELS] = {};
-    for (int i = 0; i < numDacChannels; ++i) {
-      slowAxisVector[i] = args[currentIndex++];
-    }
-
-    // Parse ADC Channels
-    if (args.size() < currentIndex + numAdcChannels) {
-      return OperationResult::Failure("Not enough arguments for ADC channels");
-    }
-
-    int adcChannels[NUM_ADC_CHANNELS] = {};
-    for (int i = 0; i < numAdcChannels; ++i) {
-      adcChannels[i] = static_cast<int>(args[currentIndex++]);
-    }
-
-    OperationResult dacValidation =
-        validateDacChannels(dacChannels, numDacChannels);
-    if (!dacValidation.isSuccess()) {
-      return dacValidation;
-    }
-    OperationResult adcValidation =
-        validateAdcChannels(adcChannels, numAdcChannels);
-    if (!adcValidation.isSuccess()) {
-      return adcValidation;
-    }
-
-    OperationResult boundsValidation = validateDac2DScanBounds(
-        numDacChannels, dacChannels, startPoint, fastAxisVector,
-        slowAxisVector, DacBoundsMode::CalibratedAndGlobal);
-    if (!boundsValidation.isSuccess()) {
-      return boundsValidation;
-    }
-
+  if (isWorkerStopRequested()) {
     clearWorkerStopRequest();
-    PeripheralCommsController::dataLedOn();
+    return OperationResult::Failure("2D RAMPING_STOPPED");
+  }
 
-    uint8_t adcMask = 0u;
-    BufferRamp::BoardUsage boardUsage{0, std::vector<uint8_t>()};
-    OperationResult prepareResult = BufferRamp::prepareDacLedBufferRampHardware(
-        numAdcChannels, adcChannels, adcMask, boardUsage);
-    if (!prepareResult.isSuccess()) {
-      PeripheralCommsController::dataLedOff();
-      return prepareResult;
-    }
+  return finishRampTimingWatchdog(false);
+}
+OperationResult BufferRamp2D::dacLedBufferRamp2D(
+    const std::vector<float>& args) {
+  if (args.size() < 9) {
+    return OperationResult::Failure(
+        "Not enough arguments provided for 2D ramp");
+  }
 
-    OperationResult rampResult = runPreparedDacLedBufferRamp2D(
-        numDacChannels, numAdcChannels, numStepsFast, numStepsSlow, retrace,
-        snake, numAdcAverages, dac_interval_us, dac_settling_time_us,
-        dacChannels, startPoint, fastAxisVector, slowAxisVector, adcChannels,
-        adcMask);
+  size_t currentIndex = 0;
 
-    BufferRamp::cleanupDacLedBufferRampHardware(numAdcChannels, adcChannels,
-                                         boardUsage);
+  int numDacChannels = static_cast<int>(args[currentIndex++]);
+  int numAdcChannels = static_cast<int>(args[currentIndex++]);
+  int numStepsFast = static_cast<int>(args[currentIndex++]);
+  int numStepsSlow = static_cast<int>(args[currentIndex++]);
+  const float dacIntervalArg = args[currentIndex++];
+  const float dacSettlingTimeArg = args[currentIndex++];
+  const float retraceArg = args[currentIndex++];
+  const float snakeArg = args[currentIndex++];
+  int numAdcAverages = static_cast<int>(args[currentIndex++]);
 
+  if (!isValidDacChannelCount(numDacChannels) ||
+      !isValidAdcChannelCount(numAdcChannels)) {
+    return OperationResult::Failure("Invalid number of channels");
+  }
+  if (!isUint32AtLeast(dacSettlingTimeArg, 1) ||
+      !isUint32AtLeast(dacIntervalArg, 1) ||
+      dacSettlingTimeArg >= dacIntervalArg) {
+    return OperationResult::Failure("Invalid interval or settling time");
+  }
+  if (!isBooleanArg(retraceArg) || !isBooleanArg(snakeArg)) {
+    return OperationResult::Failure("Invalid 2D scan boolean argument");
+  }
+  if (numAdcAverages < 1) {
+    return OperationResult::Failure("Invalid number of ADC averages");
+  }
+  if (numStepsFast < 1 || numStepsSlow < 1) {
+    return OperationResult::Failure("Invalid number of steps");
+  }
+  uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
+  uint32_t dac_settling_time_us =
+      static_cast<uint32_t>(dacSettlingTimeArg);
+  bool retrace = retraceArg != 0.0f;
+  bool snake = snakeArg != 0.0f;
+
+  Parsed2DScanTail parsed;
+  OperationResult parseResult = parse2DScanTail(
+      args, currentIndex, numDacChannels, numAdcChannels, parsed);
+  if (!parseResult.isSuccess()) {
+    return parseResult;
+  }
+
+  OperationResult boundsValidation = validateDac2DScanBounds(
+      numDacChannels, parsed.dacChannels, parsed.startPoint,
+      parsed.fastAxisVector, parsed.slowAxisVector,
+      DacBoundsMode::CalibratedAndGlobal);
+  if (!boundsValidation.isSuccess()) {
+    return boundsValidation;
+  }
+
+  clearWorkerStopRequest();
+  PeripheralCommsController::dataLedOn();
+
+  uint8_t adcMask = 0u;
+  BufferRamp::BoardUsage boardUsage{0, std::vector<uint8_t>()};
+  OperationResult prepareResult = BufferRamp::prepareDacLedBufferRampHardware(
+      numAdcChannels, parsed.adcChannels, adcMask, boardUsage);
+  if (!prepareResult.isSuccess()) {
     PeripheralCommsController::dataLedOff();
+    return prepareResult;
+  }
 
-    if (!rampResult.isSuccess()) {
-      if (isWorkerStopRequested()) {
-        clearWorkerStopRequest();
-      }
-      return rampResult;
-    }
+  OperationResult rampResult = runPreparedDacLedBufferRamp2D(
+      numDacChannels, numAdcChannels, numStepsFast, numStepsSlow, retrace,
+      snake, numAdcAverages, dac_interval_us, dac_settling_time_us,
+      parsed.dacChannels, parsed.startPoint, parsed.fastAxisVector,
+      parsed.slowAxisVector, parsed.adcChannels, adcMask);
 
+  BufferRamp::cleanupDacLedBufferRampHardware(
+      numAdcChannels, parsed.adcChannels, boardUsage);
+
+  PeripheralCommsController::dataLedOff();
+
+  if (!rampResult.isSuccess()) {
     if (isWorkerStopRequested()) {
       clearWorkerStopRequest();
-      return OperationResult::Failure("2D RAMPING_STOPPED");
     }
-
-    return finishRampTimingWatchdog();
+    return rampResult;
   }
+
+  if (isWorkerStopRequested()) {
+    clearWorkerStopRequest();
+    return OperationResult::Failure("2D RAMPING_STOPPED");
+  }
+
+  return finishRampTimingWatchdog();
+}

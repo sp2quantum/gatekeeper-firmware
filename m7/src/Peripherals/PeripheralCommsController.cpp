@@ -11,12 +11,13 @@ bool PeripheralCommsController::spiInitialized = false;
 volatile bool PeripheralCommsController::dacSpiTransferInProgress = false;
 volatile bool PeripheralCommsController::adcSpiTransferInProgress = false;
 uint8_t PeripheralCommsController::tx_buffer
-    [PeripheralCommsController::kSpiBufferSize] __attribute__((aligned(32)));
+    [PeripheralCommsController::kRegisterTransferMaxBytes]
+    __attribute__((aligned(32)));
 uint8_t PeripheralCommsController::rx_buffer
-    [PeripheralCommsController::kSpiBufferSize] __attribute__((aligned(32)));
+    [PeripheralCommsController::kRegisterTransferMaxBytes]
+    __attribute__((aligned(32)));
 
 namespace {
-constexpr size_t kHardwareTransferMaxBytes = 4;
 constexpr uint32_t kSpiPollTimeout = 100000;
 constexpr uint32_t kSpiRxReadyMask =
     SPI_SR_RXP | SPI_SR_RXWNE | SPI_SR_RXPLVL;
@@ -40,28 +41,34 @@ mbed::SPI* adcSpi = nullptr;
 SpiBusState dacBus{nullptr, 0, 0, false};
 SpiBusState adcBus{nullptr, 0, 0, false};
 
-uint32_t transferFrequency(bool isDac) {
-  return isDac ? DAC_SPI_FREQUENCY_HZ : ADC_SPI_FREQUENCY_HZ;
+using SpiBus = PeripheralCommsController::SpiBus;
+
+bool isDacBus(SpiBus bus) {
+  return bus == SpiBus::Dac;
 }
 
-uint8_t transferMode(bool isDac, bool dacReadMode) {
-  if (!isDac) {
+uint32_t transferFrequency(SpiBus bus) {
+  return isDacBus(bus) ? DAC_SPI_FREQUENCY_HZ : ADC_SPI_FREQUENCY_HZ;
+}
+
+uint8_t transferMode(SpiBus bus, bool dacReadMode) {
+  if (!isDacBus(bus)) {
     return ADC_SPI_MODE;
   }
   return dacReadMode ? DAC_READ_SPI_MODE : DAC_SPI_MODE;
 }
 
-SpiBusState& busForTransfer(bool isDac) {
-  return isDac ? dacBus : adcBus;
+SpiBusState& busForTransfer(SpiBus bus) {
+  return isDacBus(bus) ? dacBus : adcBus;
 }
 
-SPI_TypeDef* spiPeripheralForTransfer(bool isDac) {
-  return isDac ? SPI1 : SPI5;
+SPI_TypeDef* spiPeripheralForTransfer(SpiBus bus) {
+  return isDacBus(bus) ? SPI1 : SPI5;
 }
 
-volatile bool& transferInProgressForTransfer(bool isDac) {
-  return isDac ? PeripheralCommsController::dacSpiTransferInProgress
-               : PeripheralCommsController::adcSpiTransferInProgress;
+volatile bool& transferInProgressForTransfer(SpiBus bus) {
+  return isDacBus(bus) ? PeripheralCommsController::dacSpiTransferInProgress
+                       : PeripheralCommsController::adcSpiTransferInProgress;
 }
 
 void constructSpiBuses() {
@@ -76,14 +83,14 @@ void constructSpiBuses() {
   }
 }
 
-bool configureBusForTransfer(bool isDac, bool dacReadMode = false) {
-  SpiBusState& bus = busForTransfer(isDac);
+bool configureBusForTransfer(SpiBus selectedBus, bool dacReadMode = false) {
+  SpiBusState& bus = busForTransfer(selectedBus);
   if (bus.spi == nullptr) {
     return false;
   }
 
-  const uint32_t frequency = transferFrequency(isDac);
-  const uint8_t mode = transferMode(isDac, dacReadMode);
+  const uint32_t frequency = transferFrequency(selectedBus);
+  const uint8_t mode = transferMode(selectedBus, dacReadMode);
   if (!bus.configured || bus.frequency_hz != frequency || bus.mode != mode) {
     bus.spi->format(8, mode);
     bus.spi->frequency(frequency);
@@ -121,8 +128,8 @@ void copyTransferResult(uint8_t* tx, uint8_t* rx, const uint8_t* rxScratch,
   }
 }
 
-void invalidateBusConfig(bool isDac) {
-  busForTransfer(isDac).configured = false;
+void invalidateBusConfig(SpiBus bus) {
+  busForTransfer(bus).configured = false;
 }
 
 void clearSpiFlags(SPI_TypeDef* spi) {
@@ -138,8 +145,9 @@ void writeSpiByte(SPI_TypeDef* spi, uint8_t value) {
 }
 
 void drainRxFifo(SPI_TypeDef* spi) {
-  for (size_t i = 0; i < kHardwareTransferMaxBytes * 2 &&
-                     (spi->SR & kSpiRxReadyMask) != 0;
+  for (size_t i = 0;
+       i < PeripheralCommsController::kRegisterTransferMaxBytes * 2 &&
+       (spi->SR & kSpiRxReadyMask) != 0;
        ++i) {
     static_cast<void>(readSpiByte(spi));
   }
@@ -147,7 +155,8 @@ void drainRxFifo(SPI_TypeDef* spi) {
 
 bool transferThroughRegisters(SPI_TypeDef* spi, int cs_pin, const uint8_t* tx,
                               uint8_t* rx, size_t count) {
-  if (count == 0 || count > kHardwareTransferMaxBytes) {
+  if (count == 0 ||
+      count > PeripheralCommsController::kRegisterTransferMaxBytes) {
     return false;
   }
 
@@ -213,7 +222,8 @@ bool transferThroughRegisters(SPI_TypeDef* spi, int cs_pin, const uint8_t* tx,
 PeripheralCommsController::PeripheralCommsController(int cs_pin)
     : cs_pin(cs_pin) {}
 
-bool PeripheralCommsController::performHardwareTransfer(bool isDac, uint8_t* tx,
+bool PeripheralCommsController::performRegisterTransfer(SpiBus bus,
+                                                        uint8_t* tx,
                                                         uint8_t* rx,
                                                         size_t count,
                                                         bool dacReadMode) {
@@ -221,21 +231,22 @@ bool PeripheralCommsController::performHardwareTransfer(bool isDac, uint8_t* tx,
     return true;
   }
 
-  if (!spiInitialized || count > kHardwareTransferMaxBytes ||
-      !configureBusForTransfer(isDac, dacReadMode)) {
+  if (!spiInitialized ||
+      count > PeripheralCommsController::kRegisterTransferMaxBytes ||
+      !configureBusForTransfer(bus, dacReadMode)) {
     return false;
   }
 
   loadTransferBuffers(tx_buffer, rx_buffer, tx, count);
 
-  volatile bool& inProgress = transferInProgressForTransfer(isDac);
+  volatile bool& inProgress = transferInProgressForTransfer(bus);
   inProgress = true;
   const bool transferred = transferThroughRegisters(
-      spiPeripheralForTransfer(isDac), cs_pin, tx_buffer, rx_buffer, count);
+      spiPeripheralForTransfer(bus), cs_pin, tx_buffer, rx_buffer, count);
   inProgress = false;
 
   if (!transferred) {
-    invalidateBusConfig(isDac);
+    invalidateBusConfig(bus);
     return false;
   }
 
@@ -243,17 +254,17 @@ bool PeripheralCommsController::performHardwareTransfer(bool isDac, uint8_t* tx,
   return true;
 }
 
-bool PeripheralCommsController::transferBytes(bool isDac, uint8_t* bytes,
+bool PeripheralCommsController::transferBytes(SpiBus bus, uint8_t* bytes,
                                               size_t count, bool dacReadMode) {
-  if (performHardwareTransfer(isDac, bytes, bytes, count, dacReadMode)) {
+  if (performRegisterTransfer(bus, bytes, bytes, count, dacReadMode)) {
     return true;
   }
   clearCallerBuffer(bytes, bytes, count);
   return false;
 }
 
-uint8_t PeripheralCommsController::transferByte(bool isDac, uint8_t data) {
-  return transferBytes(isDac, &data, 1) ? data : 0;
+uint8_t PeripheralCommsController::transferByte(SpiBus bus, uint8_t data) {
+  return transferBytes(bus, &data, 1) ? data : 0;
 }
 
 void PeripheralCommsController::setup() {
@@ -262,47 +273,47 @@ void PeripheralCommsController::setup() {
   }
 
   constructSpiBuses();
-  const bool dacReady = configureBusForTransfer(true);
-  const bool adcReady = configureBusForTransfer(false);
+  const bool dacReady = configureBusForTransfer(SpiBus::Dac);
+  const bool adcReady = configureBusForTransfer(SpiBus::Adc);
   spiInitialized = dacReady && adcReady;
 }
 
 bool PeripheralCommsController::transferDAC(void* buf, size_t count) {
-  return transferBytes(true, static_cast<uint8_t*>(buf), count);
+  return transferBytes(SpiBus::Dac, static_cast<uint8_t*>(buf), count);
 }
 
 bool PeripheralCommsController::transferDACRead(void* buf, size_t count) {
-  return transferBytes(true, static_cast<uint8_t*>(buf), count, true);
+  return transferBytes(SpiBus::Dac, static_cast<uint8_t*>(buf), count, true);
 }
 
 bool PeripheralCommsController::transferADC(void* buf, size_t count) {
-  return transferBytes(false, static_cast<uint8_t*>(buf), count);
+  return transferBytes(SpiBus::Adc, static_cast<uint8_t*>(buf), count);
 }
 
 uint8_t PeripheralCommsController::transferDAC(uint8_t data) {
-  return transferByte(true, data);
+  return transferByte(SpiBus::Dac, data);
 }
 
 uint8_t PeripheralCommsController::transferADC(uint8_t data) {
-  return transferByte(false, data);
+  return transferByte(SpiBus::Adc, data);
 }
 
 bool PeripheralCommsController::transferDACNoTransaction(void* buf,
                                                         size_t count) {
-  return transferBytes(true, static_cast<uint8_t*>(buf), count);
+  return transferBytes(SpiBus::Dac, static_cast<uint8_t*>(buf), count);
 }
 
 bool PeripheralCommsController::transferADCNoTransaction(void* buf,
                                                         size_t count) {
-  return transferBytes(false, static_cast<uint8_t*>(buf), count);
+  return transferBytes(SpiBus::Adc, static_cast<uint8_t*>(buf), count);
 }
 
 uint8_t PeripheralCommsController::transferDACNoTransaction(uint8_t data) {
-  return transferByte(true, data);
+  return transferByte(SpiBus::Dac, data);
 }
 
 uint8_t PeripheralCommsController::transferADCNoTransaction(uint8_t data) {
-  return transferByte(false, data);
+  return transferByte(SpiBus::Adc, data);
 }
 
 void PeripheralCommsController::dataLedOn() {}
