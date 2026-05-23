@@ -6,6 +6,7 @@
 #include "Utils/FastGpio.h"
 #include "Utils/TimingUtil.h"
 #include "Utils/shared_memory.h"
+#include "DACController.h"
 
 namespace {
 bool isFinite(float value) {
@@ -24,6 +25,7 @@ void DACController::initializeRegistry() {
   registerMemberFunction(getVoltage, "GET_DAC");
   registerMemberFunction(sendCode, "SET_DAC_CODE");
   registerMemberFunction(setFullScale, "FULL_SCALE");
+  registerMemberFunction(getFullScale, "GET_FULL_SCALE");
   registerMemberFunction(inquiryOSG, "INQUIRY_OSG");
   registerMemberFunction(setOSG, "SET_OSG");
   registerMemberFunction(autoRamp1, "RAMP1");
@@ -290,6 +292,14 @@ OperationResult DACController::setFullScale(int channel, float full_scale) {
   }
   dac_channels[channel].setFullScale(full_scale);
   return OperationResult::Success("FULL_SCALE_UPDATED");
+}
+
+OperationResult DACController::getFullScale(int channel) {
+  if (!isChannelIndexValid(channel)) {
+    return OperationResult::Failure("Invalid channel index " + String(channel));
+  }
+  float full_scale = dac_channels[channel].getFullScale();
+  return OperationResult::Success(String(full_scale, 6));
 }
 
 OperationResult DACController::inquiryOSG() {

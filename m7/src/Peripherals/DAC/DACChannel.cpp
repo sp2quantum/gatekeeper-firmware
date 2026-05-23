@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "Utils/FastGpio.h"
+#include "DACChannel.h"
 
 namespace {
 constexpr byte kWriteAndUpdateDacCommand = 0x10;
@@ -113,6 +114,10 @@ void DACChannel::setFullScale(float full_scale) {
   this->full_scale = full_scale;
   voltage_upper_bound = full_scale * gain_error + offset_error;
   voltage_lower_bound = -full_scale * gain_error + offset_error;
+}
+
+float DACChannel::getFullScale() {
+  return full_scale;
 }
 
 float DACChannel::getHardwareLowerBound() {

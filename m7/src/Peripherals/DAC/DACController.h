@@ -49,6 +49,7 @@ class DACController {
   static float getUpperBound(int channel);
   static OperationResult sendCode(int channel, int code);
   static OperationResult setFullScale(int channel, float full_scale);
+  static OperationResult getFullScale(int channel);
   static OperationResult inquiryOSG();
   static OperationResult autoRamp1(int dacChannel, float v0, float vf,
                                    int numSteps, u_long settlingTime_us);

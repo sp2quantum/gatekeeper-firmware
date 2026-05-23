@@ -25,10 +25,10 @@ const int drdy[NUM_ADC_BOARDS] = {47, 48};
 #define led 7 // indicator LED
 #define data_pin 6 // data indicator LED
 #define err 11 // error indicator LED
-constexpr uint32_t DAC_SPI_FREQUENCY_HZ = 20000000;
+constexpr uint32_t DAC_SPI_FREQUENCY_HZ = 18000000;
 constexpr uint8_t DAC_SPI_MODE = 1;
 constexpr uint8_t DAC_READ_SPI_MODE = 3;
-constexpr uint32_t ADC_SPI_FREQUENCY_HZ = 14990000;
+constexpr uint32_t ADC_SPI_FREQUENCY_HZ = 5000000;
 constexpr uint8_t ADC_SPI_MODE = 0;
 
 // Global DAC voltage limits - channel specific arrays

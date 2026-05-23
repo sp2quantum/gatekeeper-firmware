@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -28,6 +29,27 @@ def find_platformio():
         path = shutil.which(name)
         if path:
             return path
+    scripts_dir = Path(sys.executable).resolve().parent
+    extensions = [""]
+    if sys.platform == "win32":
+        extensions.extend(
+            os.environ.get("PATHEXT", ".EXE;.BAT;.CMD").split(os.pathsep)
+        )
+    for name in ("pio", "platformio"):
+        name_path = Path(name)
+        candidates = [scripts_dir / name_path]
+        if not name_path.suffix:
+            candidates.extend(
+                scripts_dir / f"{name}{extension.lower()}"
+                for extension in extensions
+            )
+            candidates.extend(
+                scripts_dir / f"{name}{extension.upper()}"
+                for extension in extensions
+            )
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
     raise RuntimeError("PlatformIO executable not found.")
 
 

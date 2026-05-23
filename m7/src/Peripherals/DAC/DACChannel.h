@@ -43,6 +43,8 @@ class DACChannel {
 
   void setFullScale(float full_scale);
 
+  float getFullScale();
+
   float getHardwareLowerBound();
 
   float getHardwareUpperBound();

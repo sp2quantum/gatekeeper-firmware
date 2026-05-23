@@ -169,10 +169,12 @@ bool transferThroughRegisters(SPI_TypeDef* spi, int cs_pin, const uint8_t* tx,
 
   clearSpiFlags(spi);
   if ((spi->CR1 & SPI_CR1_SPE) != 0) {
-    uint32_t timeout = kSpiPollTimeout;
-    while ((spi->SR & SPI_SR_TXC) == 0) {
-      if (--timeout == 0) {
-        return fail();
+    if ((spi->CR1 & SPI_CR1_CSTART) != 0) {
+      uint32_t timeout = kSpiPollTimeout;
+      while ((spi->SR & SPI_SR_TXC) == 0) {
+        if (--timeout == 0) {
+          return fail();
+        }
       }
     }
     spi->CR1 &= ~SPI_CR1_SPE;
