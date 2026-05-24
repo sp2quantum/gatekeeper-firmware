@@ -17,6 +17,12 @@ OperationResult validateDacChannels(const int* channels, int count,
                                     bool rejectDuplicates = true);
 OperationResult validateAdcChannels(const int* channels, int count,
                                     bool rejectDuplicates = true);
+OperationResult validateRampChannels(const int* dacChannels,
+                                     int numDacChannels,
+                                     const int* adcChannels,
+                                     int numAdcChannels,
+                                     bool rejectDuplicateDacChannels = true,
+                                     bool rejectDuplicateAdcChannels = true);
 OperationResult finishRampTimingWatchdog(
     bool includeAdcConversionMissteps = true);
 OperationResult dacWriteFailure(int channel, double voltage);

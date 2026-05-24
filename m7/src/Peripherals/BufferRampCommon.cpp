@@ -58,6 +58,21 @@ OperationResult validateAdcChannels(const int* channels, int count,
   return OperationResult::Success();
 }
 
+OperationResult validateRampChannels(const int* dacChannels,
+                                     int numDacChannels,
+                                     const int* adcChannels,
+                                     int numAdcChannels,
+                                     bool rejectDuplicateDacChannels,
+                                     bool rejectDuplicateAdcChannels) {
+  OperationResult dacValidation = validateDacChannels(
+      dacChannels, numDacChannels, rejectDuplicateDacChannels);
+  if (!dacValidation.isSuccess()) {
+    return dacValidation;
+  }
+  return validateAdcChannels(adcChannels, numAdcChannels,
+                             rejectDuplicateAdcChannels);
+}
+
 OperationResult finishRampTimingWatchdog(bool includeAdcConversionMissteps) {
   const uint32_t dacSpiMissteps = TimingUtil::dacSpiMisstepEvents;
   const uint32_t adcSpiMissteps = TimingUtil::adcSpiMisstepEvents;

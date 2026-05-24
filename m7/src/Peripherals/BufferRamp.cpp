@@ -6,6 +6,7 @@
 #include "Peripherals/BufferRampCommon.h"
 #include "Peripherals/DAC/DACController.h"
 #include "Peripherals/PeripheralCommsController.h"
+#include "Peripherals/RampCommand.h"
 #include "Utils/FastGpio.h"
 #include "Utils/TimingUtil.h"
 #include "Utils/shared_memory.h"
@@ -17,13 +18,13 @@ using BufferRampCommon::adcBoardForChannel;
 using BufferRampCommon::dacWriteFailure;
 using BufferRampCommon::encodeDacVoltagePackets;
 using BufferRampCommon::finishRampTimingWatchdog;
-using BufferRampCommon::isUint32AtLeast;
 using BufferRampCommon::isValidAdcChannelCount;
 using BufferRampCommon::isValidDacChannelCount;
 using BufferRampCommon::sendVoltageFrame;
-using BufferRampCommon::validateAdcChannels;
 using BufferRampCommon::validateDacChannels;
+using BufferRampCommon::validateRampChannels;
 using BufferRampCommon::writeDacPackets;
+using RampCommand::validateDacVoltageListBounds;
 
 using AdcIsr = void (*)();
 
@@ -92,78 +93,6 @@ float maxAdcConversionTimePerBoard(const int* adcChannels,
                            boardConversionTimeUs + NUM_ADC_BOARDS);
 }
 
-OperationResult validateDacRampEndpoints(int numDacChannels,
-                                         const int* dacChannels,
-                                         const float* dacV0s,
-                                         const float* dacVfs) {
-  for (int i = 0; i < numDacChannels; i++) {
-    const int ch = dacChannels[i];
-    const float lowerBound = DACController::getLowerBound(ch);
-    const float upperBound = DACController::getUpperBound(ch);
-
-    if (dacV0s[i] < lowerBound || dacV0s[i] > upperBound) {
-      return OperationResult::Failure("DAC " + String(ch) +
-                                      " start voltage " +
-                                      String(dacV0s[i], 6) +
-                                      "V out of bounds [" +
-                                      String(lowerBound, 6) + ", " +
-                                      String(upperBound, 6) + "]");
-    }
-    if (dacVfs[i] < lowerBound || dacVfs[i] > upperBound) {
-      return OperationResult::Failure("DAC " + String(ch) +
-                                      " end voltage " +
-                                      String(dacVfs[i], 6) +
-                                      "V out of bounds [" +
-                                      String(lowerBound, 6) + ", " +
-                                      String(upperBound, 6) + "]");
-    }
-  }
-
-  return OperationResult::Success();
-}
-
-struct ParsedLinearRampTail {
-  int dacChannels[NUM_DAC_CHANNELS] = {};
-  float dacV0s[NUM_DAC_CHANNELS] = {};
-  float dacVfs[NUM_DAC_CHANNELS] = {};
-  int adcChannels[NUM_ADC_CHANNELS] = {};
-};
-
-OperationResult parseLinearRampTail(const std::vector<float>& args,
-                                    size_t index, int numDacChannels,
-                                    int numAdcChannels,
-                                    ParsedLinearRampTail& parsed) {
-  if (args.size() !=
-      index + static_cast<size_t>(numDacChannels) * 3u +
-          static_cast<size_t>(numAdcChannels)) {
-    return OperationResult::Failure("Incorrect number of arguments");
-  }
-
-  for (int i = 0; i < numDacChannels; ++i) {
-    parsed.dacChannels[i] = static_cast<int>(args[index++]);
-    parsed.dacV0s[i] = args[index++];
-    parsed.dacVfs[i] = args[index++];
-  }
-  for (int i = 0; i < numAdcChannels; ++i) {
-    parsed.adcChannels[i] = static_cast<int>(args[index++]);
-  }
-
-  OperationResult dacValidation =
-      validateDacChannels(parsed.dacChannels, numDacChannels);
-  if (!dacValidation.isSuccess()) {
-    return dacValidation;
-  }
-
-  OperationResult adcValidation =
-      validateAdcChannels(parsed.adcChannels, numAdcChannels);
-  if (!adcValidation.isSuccess()) {
-    return adcValidation;
-  }
-
-  return validateDacRampEndpoints(numDacChannels, parsed.dacChannels,
-                                  parsed.dacV0s, parsed.dacVfs);
-}
-
 OperationResult validateDacLedBufferRampAdcConversionTimes(
     int numAdcChannels, const int* adcChannels) {
   bool selectedAdcChannels[NUM_ADC_CHANNELS] = {};
@@ -203,6 +132,18 @@ bool readAdcPackets(int numAdcChannels, const int* adcChannels,
   return true;
 }
 
+OperationResult validateLinearDacAdcRamp(
+    int numDacChannels, int numAdcChannels, const int* dacChannels,
+    const float* dacV0s, const float* dacVfs, const int* adcChannels) {
+  OperationResult channelValidation = validateRampChannels(
+      dacChannels, numDacChannels, adcChannels, numAdcChannels);
+  if (!channelValidation.isSuccess()) {
+    return channelValidation;
+  }
+  return RampCommand::validateDacEndpoints(numDacChannels, dacChannels,
+                                           dacV0s, dacVfs);
+}
+
 }
 
 void BufferRamp::setup() {
@@ -212,17 +153,19 @@ void BufferRamp::setup() {
 
 
 void BufferRamp::initializeRegistry() {
-  registerMemberFunction(initialize, "INITIALIZE");
-  registerMemberFunction(initialize, "INIT");
-  registerMemberFunction(initialize, "INNIT");
-  registerMemberFunctionVector(timeSeriesBufferRampBase, "TIME_SERIES_BUFFER_RAMP");
-  registerMemberFunctionVector(dacLedBufferRampBase, "DAC_LED_BUFFER_RAMP");
-  registerMemberFunctionVector(AWGBufferRampWrapper, "AWG_BUFFER_RAMP");
-  registerMemberFunctionVector(AWGWithADCWrapper, "AWG_WITH_ADC");
-  registerMemberFunctionVector(timeSeriesAdcRead, "TIME_SERIES_ADC_READ");
-  registerMemberFunction(dacChannelCalibration, "DAC_CH_CAL");
-  registerMemberFunctionVector(boxcarAverageRamp, "BOXCAR_BUFFER_RAMP");
-  registerMemberFunction(hardResetCalibrationToDefaults, "HARD_RESET_CALIBRATION");
+  registerFunction(initialize, "INITIALIZE");
+  registerFunction(initialize, "INIT");
+  registerFunction(initialize, "INNIT");
+
+  registerFunction(timeSeriesBufferRampBase, "TIME_SERIES_BUFFER_RAMP");
+  registerFunction(dacLedBufferRampBase, "DAC_LED_BUFFER_RAMP");
+  registerFunction(AWGBufferRampWrapper, "AWG_BUFFER_RAMP");
+  registerFunction(AWGWithADCWrapper, "AWG_WITH_ADC");
+  registerFunction(timeSeriesAdcRead, "TIME_SERIES_ADC_READ");
+  registerFunction(boxcarAverageRamp, "BOXCAR_BUFFER_RAMP");
+
+  registerFunction(dacChannelCalibration, "DAC_CH_CAL");
+  registerFunction(hardResetCalibrationToDefaults, "HARD_RESET_CALIBRATION");
 }
 
 
@@ -273,38 +216,26 @@ BufferRamp::BoardUsage BufferRamp::getUsedBoards(const int *adcChannels, int num
 
 
 
-OperationResult BufferRamp::timeSeriesAdcRead(const std::vector<float>& args) {
-  if (args.size() < 4) {
-    return OperationResult::Failure("Not enough arguments provided");
-  }
-
-  int numAdcChannels = static_cast<int>(args[0]);
+OperationResult BufferRamp::timeSeriesAdcRead(
+    int numAdcChannels, List<int, 0>& adcChannelsList,
+    float conversionTimeArg, float totalDurationArg) {
   if (!isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of ADC channels");
   }
-  if (args.size() != static_cast<size_t>(numAdcChannels + 3)) {
-    return OperationResult::Failure("Incorrect number of arguments");
-  }
-
-  std::vector<int> adcChannels_vec;
-  for (int i = 0; i < numAdcChannels; ++i) {
-    adcChannels_vec.push_back(static_cast<int>(args[i + 1]));
-  }
-  int* adcChannels = adcChannels_vec.data();
-  OperationResult adcValidation =
-      validateAdcChannels(adcChannels, numAdcChannels);
+  OperationResult adcValidation = BufferRampCommon::validateAdcChannels(
+      adcChannelsList.data(), numAdcChannels);
   if (!adcValidation.isSuccess()) {
     return adcValidation;
   }
-
-  const float conversionTimeArg = args[numAdcChannels + 1];
-  const float totalDurationArg = args[numAdcChannels + 2];
-  if (!isUint32AtLeast(conversionTimeArg, 1) ||
-      !isUint32AtLeast(totalDurationArg, 82)) {
+  if (!BufferRampCommon::isUint32AtLeast(conversionTimeArg, 1) ||
+      !BufferRampCommon::isUint32AtLeast(totalDurationArg, 82)) {
     return OperationResult::Failure("Invalid total duration");
   }
-  uint32_t conversionTimeUs = static_cast<uint32_t>(conversionTimeArg);
-  uint32_t totalDurationUs = static_cast<uint32_t>(totalDurationArg);
+
+  int* adcChannels = adcChannelsList.data();
+  const uint32_t conversionTimeUs =
+      static_cast<uint32_t>(conversionTimeArg);
+  const uint32_t totalDurationUs = static_cast<uint32_t>(totalDurationArg);
 
   float realConversionTime = 0;
   for (int i = 0; i < numAdcChannels; i++) {
@@ -392,43 +323,40 @@ OperationResult BufferRamp::timeSeriesAdcRead(const std::vector<float>& args) {
 
 // args:
 // numDacChannels, numAdcChannels, numSteps, dacInterval_us, adcInterval_us,
-// dacchannel0, dacv00, dacvf0, dacchannel1, dacv01, dacvf1, ..., adc0, adc1,
-// adc2, ...
+// dacChannels..., dacV0s..., dacVfs..., adcChannels...
 OperationResult BufferRamp::timeSeriesBufferRampBase(
-    const std::vector<float>& args) {
-  if (args.size() < 5) {
-    return OperationResult::Failure("Not enough arguments provided");
-  }
-
-  int index = 0;
-
-  int numDacChannels = static_cast<int>(args[index++]);
-  int numAdcChannels = static_cast<int>(args[index++]);
-  int numSteps = static_cast<int>(args[index++]);
-  const float dacIntervalArg = args[index++];
-  const float adcIntervalArg = args[index++];
-
+    int numDacChannels, int numAdcChannels, int numSteps,
+    float dacIntervalArg, float adcIntervalArg,
+    List<int, 0>& dacChannelsList,
+    List<float, 0>& dacV0sList,
+    List<float, 0>& dacVfsList,
+    List<int, 1>& adcChannelsList) {
   if (!isValidDacChannelCount(numDacChannels) ||
       !isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of channels");
   }
-  if (!isUint32AtLeast(adcIntervalArg, 1) ||
-      !isUint32AtLeast(dacIntervalArg, 1)) {
+  if (!BufferRampCommon::isUint32AtLeast(adcIntervalArg, 1) ||
+      !BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1)) {
     return OperationResult::Failure("Invalid interval");
   }
-  uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
-  uint32_t adc_interval_us = static_cast<uint32_t>(adcIntervalArg);
   if (numSteps < 1) {
     return OperationResult::Failure("Invalid number of steps");
   }
 
-  ParsedLinearRampTail parsed;
-  OperationResult parseResult =
-      parseLinearRampTail(args, index, numDacChannels, numAdcChannels,
-                          parsed);
-  if (!parseResult.isSuccess()) {
-    return parseResult;
+  int* dacChannels = dacChannelsList.data();
+  float* dacV0s = dacV0sList.data();
+  float* dacVfs = dacVfsList.data();
+  int* adcChannels = adcChannelsList.data();
+
+  OperationResult requestValidation = validateLinearDacAdcRamp(
+      numDacChannels, numAdcChannels, dacChannels, dacV0s, dacVfs,
+      adcChannels);
+  if (!requestValidation.isSuccess()) {
+    return requestValidation;
   }
+
+  const uint32_t dacIntervalUs = static_cast<uint32_t>(dacIntervalArg);
+  const uint32_t adcIntervalUs = static_cast<uint32_t>(adcIntervalArg);
 
   uint8_t adcMask = 0u;
   BoardUsage boardUsage{0, std::vector<uint8_t>()};
@@ -436,18 +364,17 @@ OperationResult BufferRamp::timeSeriesBufferRampBase(
   PeripheralCommsController::dataLedOn();
 
   OperationResult prepareResult = prepareTimeSeriesBufferRampHardware(
-      numAdcChannels, parsed.adcChannels, adcMask, boardUsage);
+      numAdcChannels, adcChannels, adcMask, boardUsage);
   if (!prepareResult.isSuccess()) {
     PeripheralCommsController::dataLedOff();
     return prepareResult;
   }
 
   OperationResult rampResult = runPreparedTimeSeriesBufferRamp(
-      numDacChannels, numAdcChannels, numSteps, dac_interval_us,
-      adc_interval_us, parsed.dacChannels, parsed.dacV0s, parsed.dacVfs,
-      parsed.adcChannels, adcMask);
+      numDacChannels, numAdcChannels, numSteps, dacIntervalUs,
+      adcIntervalUs, dacChannels, dacV0s, dacVfs, adcChannels, adcMask);
 
-  cleanupTimeSeriesBufferRampHardware(numAdcChannels, parsed.adcChannels,
+  cleanupTimeSeriesBufferRampHardware(numAdcChannels, adcChannels,
                                       boardUsage);
   PeripheralCommsController::dataLedOff();
 
@@ -685,35 +612,23 @@ void BufferRamp::cleanupTimeSeriesBufferRampHardware(
 
 // args:
 // numDacChannels, numAdcChannels, numSteps, numAdcAverages, dacInterval_us,
-// dacSettlingTime_us, dacchannel0, dacv00, dacvf0, dacchannel1, dacv01,
-// dacvf1, ..., adc0, adc1, adc2, ...
+// dacSettlingTime_us, dacChannels..., dacV0s..., dacVfs..., adcChannels...
 OperationResult BufferRamp::dacLedBufferRampBase(
-    const std::vector<float>& args) {
-  if (args.size() < 10) {
-    return OperationResult::Failure("Not enough arguments provided");
-  }
-
-  int index = 0;
-
-  int numDacChannels = static_cast<int>(args[index++]);
-  int numAdcChannels = static_cast<int>(args[index++]);
-  int numSteps = static_cast<int>(args[index++]);
-  int numAdcAverages = static_cast<int>(args[index++]);
-  const float dacIntervalArg = args[index++];
-  const float dacSettlingTimeArg = args[index++];
-
+    int numDacChannels, int numAdcChannels, int numSteps,
+    int numAdcAverages, float dacIntervalArg, float dacSettlingTimeArg,
+    List<int, 0>& dacChannelsList,
+    List<float, 0>& dacV0sList,
+    List<float, 0>& dacVfsList,
+    List<int, 1>& adcChannelsList) {
   if (!isValidDacChannelCount(numDacChannels) ||
       !isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of channels");
   }
-  if (!isUint32AtLeast(dacSettlingTimeArg, 1) ||
-      !isUint32AtLeast(dacIntervalArg, 1) ||
+  if (!BufferRampCommon::isUint32AtLeast(dacSettlingTimeArg, 1) ||
+      !BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1) ||
       dacSettlingTimeArg >= dacIntervalArg) {
     return OperationResult::Failure("Invalid interval or settling time");
   }
-  uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
-  uint32_t dac_settling_time_us =
-      static_cast<uint32_t>(dacSettlingTimeArg);
   if (numAdcAverages < 1) {
     return OperationResult::Failure("Invalid number of ADC averages");
   }
@@ -721,13 +636,21 @@ OperationResult BufferRamp::dacLedBufferRampBase(
     return OperationResult::Failure("Invalid number of steps");
   }
 
-  ParsedLinearRampTail parsed;
-  OperationResult parseResult =
-      parseLinearRampTail(args, index, numDacChannels, numAdcChannels,
-                          parsed);
-  if (!parseResult.isSuccess()) {
-    return parseResult;
+  int* dacChannels = dacChannelsList.data();
+  float* dacV0s = dacV0sList.data();
+  float* dacVfs = dacVfsList.data();
+  int* adcChannels = adcChannelsList.data();
+
+  OperationResult requestValidation = validateLinearDacAdcRamp(
+      numDacChannels, numAdcChannels, dacChannels, dacV0s, dacVfs,
+      adcChannels);
+  if (!requestValidation.isSuccess()) {
+    return requestValidation;
   }
+
+  const uint32_t dacIntervalUs = static_cast<uint32_t>(dacIntervalArg);
+  const uint32_t dacSettlingTimeUs =
+      static_cast<uint32_t>(dacSettlingTimeArg);
 
   uint8_t adcMask = 0u;
   BoardUsage boardUsage{0, std::vector<uint8_t>()};
@@ -735,24 +658,21 @@ OperationResult BufferRamp::dacLedBufferRampBase(
   PeripheralCommsController::dataLedOn();
 
   OperationResult prepareResult = prepareDacLedBufferRampHardware(
-      numAdcChannels, parsed.adcChannels, adcMask, boardUsage);
+      numAdcChannels, adcChannels, adcMask, boardUsage);
   if (!prepareResult.isSuccess()) {
     PeripheralCommsController::dataLedOff();
     return prepareResult;
   }
 
-  TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us,
-                                adcMask);
+  TimingUtil::setupTimersDacLed(dacIntervalUs, dacSettlingTimeUs, adcMask);
   TimingUtil::dacFlag = false;
   TimingUtil::adcFlag = 0;
 
   OperationResult rampResult = runPreparedDacLedBufferRamp(
       numDacChannels, numAdcChannels, numSteps, numAdcAverages,
-      parsed.dacChannels, parsed.dacV0s, parsed.dacVfs,
-      parsed.adcChannels, adcMask);
+      dacChannels, dacV0s, dacVfs, adcChannels, adcMask);
 
-  cleanupDacLedBufferRampHardware(numAdcChannels, parsed.adcChannels,
-                                  boardUsage);
+  cleanupDacLedBufferRampHardware(numAdcChannels, adcChannels, boardUsage);
   PeripheralCommsController::dataLedOff();
 
   if (!rampResult.isSuccess()) {
@@ -930,102 +850,44 @@ void BufferRamp::cleanupDacLedBufferRampHardware(
 
 
 
-OperationResult BufferRamp::OwenRampWrapper(std::vector<float> args) {
+OperationResult BufferRamp::OwenRampWrapper(
+    int numDacChannels, int numAdcChannels, int numLoops,
+    int numDacStepsPerLoop, int numAdcAverages, float dacIntervalArg,
+    List<int, 0>& dacChannelsList,
+    List<int, 1>& adcChannelsList,
+    List<float, 0, 3>& dacVoltageStorage,
+    int specialIndex, int specialWidth, int numStepsPerSpecialRamp,
+    List<float, 0>& specialDacV0s,
+    List<float, 0>& specialDacVfs) {
   // Expected argument order:
   // [numDacChannels, numAdcChannels, numLoops, numDacStepsPerLoop, numAdcAverages, dac_interval_us, <dacChannels...>, <adcChannels...>, <dacVoltageLists...>, specialIndex, specialWidth, numStepsPerSpecialRamp, <specialDacV0s...>, <specialDacVfs...>]
   // The number of DAC and ADC channels determines how many channel indices and voltage lists to expect.
-
-  if (args.size() < 6) {
-    return OperationResult::Failure("Insufficient arguments for OwenRampWrapper");
-  }
-
-  int idx = 0;
-  int numDacChannels = static_cast<int>(args[idx++]);
-  int numAdcChannels = static_cast<int>(args[idx++]);
-  int numLoops = static_cast<int>(args[idx++]);
-  int numDacStepsPerLoop = static_cast<int>(args[idx++]);
-  int numAdcAverages = static_cast<int>(args[idx++]);
-  const float dacIntervalArg = args[idx++];
-
-  // Check for valid channel counts
   if (!isValidDacChannelCount(numDacChannels) ||
       !isValidAdcChannelCount(numAdcChannels) ||
       numLoops < 1 || numDacStepsPerLoop < 1 || numAdcAverages < 1 ||
-      !isUint32AtLeast(dacIntervalArg, 1)) {
-    return OperationResult::Failure("Invalid channel or loop/step/average count");
+      !BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1)) {
+    return OperationResult::Failure(
+        "Invalid channel or loop/step/average count");
   }
-  uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
-
-  const size_t expected =
-      6u + static_cast<size_t>(numDacChannels) +
-      static_cast<size_t>(numAdcChannels) +
-      static_cast<size_t>(numDacChannels) *
-          static_cast<size_t>(numDacStepsPerLoop) +
-      3u + 2u * static_cast<size_t>(numDacChannels);
-  if (args.size() != expected) {
-    return OperationResult::Failure("Invalid argument count for OwenRampWrapper");
-  }
-
-  // Parse DAC channel indices
-  int dacChannels[NUM_DAC_CHANNELS] = {};
-  for (int i = 0; i < numDacChannels; ++i) {
-    dacChannels[i] = static_cast<int>(args[idx++]);
-  }
-
-  // Parse ADC channel indices
-  int adcChannels[NUM_ADC_CHANNELS] = {};
-  for (int i = 0; i < numAdcChannels; ++i) {
-    adcChannels[i] = static_cast<int>(args[idx++]);
-  }
-
-  OperationResult dacValidation =
-      validateDacChannels(dacChannels, numDacChannels);
-  if (!dacValidation.isSuccess()) {
-    return dacValidation;
-  }
-  OperationResult adcValidation =
-      validateAdcChannels(adcChannels, numAdcChannels);
-  if (!adcValidation.isSuccess()) {
-    return adcValidation;
-  }
-
-  // Parse DAC voltage lists
-  std::vector<float> dacVoltageStorage(
-      static_cast<size_t>(numDacChannels) *
-      static_cast<size_t>(numDacStepsPerLoop));
-  float* dacVoltageLists[NUM_DAC_CHANNELS] = {};
-  for (int i = 0; i < numDacChannels; ++i) {
-    dacVoltageLists[i] =
-        &dacVoltageStorage[static_cast<size_t>(i) *
-                           static_cast<size_t>(numDacStepsPerLoop)];
-    for (int j = 0; j < numDacStepsPerLoop; ++j) {
-      dacVoltageLists[i][j] = args[idx++];
-    }
-  }
-
-  // Parse special ramp parameters
-  int specialIndex = static_cast<int>(args[idx++]);
-  int specialWidth = static_cast<int>(args[idx++]);
-  int numStepsPerSpecialRamp = static_cast<int>(args[idx++]);
   if (specialIndex < 0 || specialIndex >= numDacStepsPerLoop ||
       specialWidth < 0 || numStepsPerSpecialRamp < 1) {
     return OperationResult::Failure("Invalid Owen special ramp parameters");
   }
 
-  float specialDacV0s[NUM_DAC_CHANNELS] = {};
+  float* dacVoltageLists[NUM_DAC_CHANNELS] = {};
   for (int i = 0; i < numDacChannels; ++i) {
-    specialDacV0s[i] = args[idx++];
-  }
-  float specialDacVfs[NUM_DAC_CHANNELS] = {};
-  for (int i = 0; i < numDacChannels; ++i) {
-    specialDacVfs[i] = args[idx++];
+    dacVoltageLists[i] =
+        &dacVoltageStorage[static_cast<size_t>(i) *
+                           static_cast<size_t>(numDacStepsPerLoop)];
   }
 
   return OwenRampBase(numDacChannels, numAdcChannels, numLoops,
-                      numDacStepsPerLoop, numAdcAverages, dac_interval_us,
-                      dacChannels, dacVoltageLists, adcChannels,
-                      specialIndex, numStepsPerSpecialRamp, specialDacV0s,
-                      specialDacVfs);
+                      numDacStepsPerLoop, numAdcAverages,
+                      static_cast<uint32_t>(dacIntervalArg),
+                      dacChannelsList.data(), dacVoltageLists,
+                      adcChannelsList.data(), specialIndex,
+                      numStepsPerSpecialRamp, specialDacV0s.data(),
+                      specialDacVfs.data());
 }
 
 
@@ -1050,32 +912,21 @@ OperationResult BufferRamp::OwenRampBase(
       return OperationResult::Failure("Invalid number of channels");
     }
 
-    OperationResult dacValidation =
-        validateDacChannels(dacChannels, numDacChannels);
-    if (!dacValidation.isSuccess()) {
-      return dacValidation;
-    }
-    OperationResult adcValidation =
-        validateAdcChannels(adcChannels, numAdcChannels);
-    if (!adcValidation.isSuccess()) {
-      return adcValidation;
+    OperationResult channelValidation = validateRampChannels(
+        dacChannels, numDacChannels, adcChannels, numAdcChannels);
+    if (!channelValidation.isSuccess()) {
+      return channelValidation;
     }
 
+    OperationResult waveformBounds = validateDacVoltageListBounds(
+        numDacChannels, numDacStepsPerLoop, dacChannels, dacVoltageLists);
+    if (!waveformBounds.isSuccess()) {
+      return waveformBounds;
+    }
     for (int i = 0; i < numDacChannels; i++) {
       int ch = dacChannels[i];
       float lowerBound = DACController::getLowerBound(ch);
       float upperBound = DACController::getUpperBound(ch);
-      for (int j = 0; j < numDacStepsPerLoop; j++) {
-        float voltage = dacVoltageLists[i][j];
-        if (voltage < lowerBound || voltage > upperBound) {
-          return OperationResult::Failure("DAC " + String(ch) +
-                                          " voltage[" + String(j) + "] = " +
-                                          String(voltage, 6) +
-                                          "V out of bounds [" +
-                                          String(lowerBound, 6) + ", " +
-                                          String(upperBound, 6) + "]");
-        }
-      }
       if (specialDacV0s[i] < lowerBound || specialDacV0s[i] > upperBound ||
           specialDacVfs[i] < lowerBound || specialDacVfs[i] > upperBound) {
         return OperationResult::Failure("DAC " + String(ch) +
@@ -1237,46 +1088,22 @@ OperationResult BufferRamp::OwenRampBase(
 
 
 
-OperationResult BufferRamp::AWGBufferRampWrapper(std::vector<float> args) {
+OperationResult BufferRamp::AWGBufferRampWrapper(
+    int numDacChannels, int numSteps, float dacIntervalArg,
+    List<int, 0>& dacChannels,
+    List<float, 0, 1>& channelMajorVoltages) {
   //   AWG_BUFFER_RAMP,<dacN>,<numSteps>,<dacInterval_us>,<dacPorts...>,<voltages...>
   //
   // Voltages are channel-major: all points for DAC0, then all points for DAC1, ...
 
-  if (args.size() < 3) {
-    return OperationResult::Failure("Insufficient arguments for AWG_BUFFER_RAMP");
-  }
-
-  int idx = 0;
-  const int dacN = static_cast<int>(args[idx++]);
-  const int numSteps = static_cast<int>(args[idx++]);
-  const float dacIntervalArg = args[idx++];
-
-  if (!isValidDacChannelCount(dacN) || numSteps < 1 ||
-      !isUint32AtLeast(dacIntervalArg, 1)) {
+  if (!BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1)) {
     return OperationResult::Failure("Invalid number of channels or steps");
   }
-  const uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
 
-  const size_t expected =
-      3u + static_cast<size_t>(dacN) +
-      static_cast<size_t>(dacN) * static_cast<size_t>(numSteps);
-
-  if (args.size() != expected) {
-    return OperationResult::Failure("Invalid argument count for AWG_BUFFER_RAMP");
-  }
-
-  int dacChannels[NUM_DAC_CHANNELS] = {};
-  for (int i = 0; i < dacN; ++i) {
-    dacChannels[i] = static_cast<int>(args[idx++]);
-  }
-
-  OperationResult dacValidation = validateDacChannels(dacChannels, dacN);
-  if (!dacValidation.isSuccess()) {
-    return dacValidation;
-  }
-
-  const float* voltages = &args[idx];
-  return AWGDacOnlyRampBase(dacN, numSteps, dac_interval_us, dacChannels, voltages);
+  return AWGDacOnlyRampBase(numDacChannels, numSteps,
+                            static_cast<uint32_t>(dacIntervalArg),
+                            dacChannels.data(),
+                            channelMajorVoltages.data());
 }
 
 
@@ -1303,19 +1130,17 @@ OperationResult BufferRamp::AWGDacOnlyRampBase(
   std::vector<uint8_t> dacPackets(
       static_cast<size_t>(numDacChannels) * static_cast<size_t>(numSteps) *
       3u);
+  OperationResult waveformBounds = validateDacVoltageListBounds(
+      numDacChannels, numSteps, dacChannels, channelMajorVoltages);
+  if (!waveformBounds.isSuccess()) {
+    return waveformBounds;
+  }
   for (int i = 0; i < numDacChannels; i++) {
     int ch = dacChannels[i];
-    float lowerBound = DACController::getLowerBound(ch);
-    float upperBound = DACController::getUpperBound(ch);
-    const float* vlist = &channelMajorVoltages[static_cast<size_t>(i) * static_cast<size_t>(numSteps)];
+    const float* vlist = &channelMajorVoltages[static_cast<size_t>(i) *
+                                               static_cast<size_t>(numSteps)];
     for (int j = 0; j < numSteps; j++) {
       float v = vlist[j];
-      if (v < lowerBound || v > upperBound) {
-        return OperationResult::Failure("DAC " + String(ch) +
-                                        " voltage[" + String(j) + "] = " + String(v, 6) +
-                                        "V out of bounds [" + String(lowerBound, 6) +
-                                        ", " + String(upperBound, 6) + "]");
-      }
       uint8_t* packet =
           &dacPackets[(static_cast<size_t>(i) * static_cast<size_t>(numSteps) +
                        static_cast<size_t>(j)) *
@@ -1376,52 +1201,21 @@ OperationResult BufferRamp::AWGDacOnlyRampBase(
 // AWG_WITH_ADC: AWG waveform with ADC reading at each step
 // Format: AWG_WITH_ADC,dacN,adcN,numSteps,dac_interval_us,numCycles,dacChannels...,adcChannels...,voltages...
 // Voltages are channel-major: all points for DAC0, then all for DAC1, etc.
-OperationResult BufferRamp::AWGWithADCWrapper(std::vector<float> args) {
-  if (args.size() < 5) {
-    return OperationResult::Failure("Insufficient arguments for AWG_WITH_ADC");
+OperationResult BufferRamp::AWGWithADCWrapper(
+    int numDacChannels, int numAdcChannels, int numSteps,
+    float dacIntervalArg, int numCycles,
+    List<int, 0>& dacChannels,
+    List<int, 1>& adcChannels,
+    List<float, 0, 2>& channelMajorVoltages) {
+  if (!BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1) ||
+      numCycles < 1) {
+    return OperationResult::Failure(
+        "Invalid channel counts or step/cycle count");
   }
-
-  int idx = 0;
-  const int dacN = static_cast<int>(args[idx++]);
-  const int adcN = static_cast<int>(args[idx++]);
-  const int numSteps = static_cast<int>(args[idx++]);
-  const float dacIntervalArg = args[idx++];
-  const int numCycles = static_cast<int>(args[idx++]);
-
-  if (!isValidDacChannelCount(dacN) ||
-      !isValidAdcChannelCount(adcN) ||
-      numSteps < 1 || numCycles < 1 ||
-      !isUint32AtLeast(dacIntervalArg, 1)) {
-    return OperationResult::Failure("Invalid channel counts or step/cycle count");
-  }
-  const uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
-
-  const size_t expected = 5u + dacN + adcN + (static_cast<size_t>(dacN) * numSteps);
-  if (args.size() != expected) {
-    return OperationResult::Failure("Invalid argument count for AWG_WITH_ADC");
-  }
-
-  int dacChannels[NUM_DAC_CHANNELS] = {};
-  for (int i = 0; i < dacN; ++i) {
-    dacChannels[i] = static_cast<int>(args[idx++]);
-  }
-
-  int adcChannels[NUM_ADC_CHANNELS] = {};
-  for (int i = 0; i < adcN; ++i) {
-    adcChannels[i] = static_cast<int>(args[idx++]);
-  }
-
-  OperationResult dacValidation = validateDacChannels(dacChannels, dacN);
-  if (!dacValidation.isSuccess()) {
-    return dacValidation;
-  }
-  OperationResult adcValidation = validateAdcChannels(adcChannels, adcN);
-  if (!adcValidation.isSuccess()) {
-    return adcValidation;
-  }
-
-  const float* voltages = &args[idx];
-  return AWGWithADCBase(dacN, adcN, numSteps, dac_interval_us, numCycles, dacChannels, adcChannels, voltages);
+  return AWGWithADCBase(numDacChannels, numAdcChannels, numSteps,
+                        static_cast<uint32_t>(dacIntervalArg), numCycles,
+                        dacChannels.data(), adcChannels.data(),
+                        channelMajorVoltages.data());
 }
 
 
@@ -1435,36 +1229,21 @@ OperationResult BufferRamp::AWGWithADCBase(
     return OperationResult::Failure("Invalid dac interval");
   }
   if (!isValidDacChannelCount(numDacChannels) ||
-      !isValidAdcChannelCount(numAdcChannels) ||
-      numSteps < 1) {
-    return OperationResult::Failure("Invalid number of channels or steps");
+      !isValidAdcChannelCount(numAdcChannels) || numSteps < 1 ||
+      numCycles < 1) {
+    return OperationResult::Failure(
+        "Invalid channel counts or step/cycle count");
   }
-  OperationResult dacValidation =
-      validateDacChannels(dacChannels, numDacChannels);
-  if (!dacValidation.isSuccess()) {
-    return dacValidation;
-  }
-  OperationResult adcValidation =
-      validateAdcChannels(adcChannels, numAdcChannels);
-  if (!adcValidation.isSuccess()) {
-    return adcValidation;
+  OperationResult channelValidation = validateRampChannels(
+      dacChannels, numDacChannels, adcChannels, numAdcChannels);
+  if (!channelValidation.isSuccess()) {
+    return channelValidation;
   }
 
-  // Bounds check DAC voltages
-  for (int i = 0; i < numDacChannels; i++) {
-    int ch = dacChannels[i];
-    float lowerBound = DACController::getLowerBound(ch);
-    float upperBound = DACController::getUpperBound(ch);
-    const float* vlist = &channelMajorVoltages[static_cast<size_t>(i) * static_cast<size_t>(numSteps)];
-    for (int j = 0; j < numSteps; j++) {
-      float v = vlist[j];
-      if (v < lowerBound || v > upperBound) {
-        return OperationResult::Failure("DAC " + String(ch) +
-                                        " voltage[" + String(j) + "] = " + String(v, 6) +
-                                        "V out of bounds [" + String(lowerBound, 6) +
-                                        ", " + String(upperBound, 6) + "]");
-      }
-    }
+  OperationResult waveformBounds = validateDacVoltageListBounds(
+      numDacChannels, numSteps, dacChannels, channelMajorVoltages);
+  if (!waveformBounds.isSuccess()) {
+    return waveformBounds;
   }
 
     FastGpio::digitalWrite(adc_sync, false);
@@ -1574,21 +1353,10 @@ OperationResult BufferRamp::AWGBufferRampBase(
     return OperationResult::Failure("Invalid number of channels");
   }
 
-  // Check voltage bounds before executing ramp
-  for (int i = 0; i < numDacChannels; i++) {
-    int ch = dacChannels[i];
-    float lowerBound = DACController::getLowerBound(ch);
-    float upperBound = DACController::getUpperBound(ch);
-
-    for (int j = 0; j < numDacStepsPerLoop; j++) {
-      float voltage = dacVoltageLists[i][j];
-      if (voltage < lowerBound || voltage > upperBound) {
-        return OperationResult::Failure("DAC " + String(ch) +
-                                        " voltage[" + String(j) + "] = " + String(voltage, 6) +
-                                        "V out of bounds [" + String(lowerBound, 6) +
-                                        ", " + String(upperBound, 6) + "]");
-      }
-    }
+  OperationResult waveformBounds = validateDacVoltageListBounds(
+      numDacChannels, numDacStepsPerLoop, dacChannels, dacVoltageLists);
+  if (!waveformBounds.isSuccess()) {
+    return waveformBounds;
   }
 
   double packets[NUM_ADC_CHANNELS] = {};
@@ -1744,71 +1512,46 @@ OperationResult BufferRamp::dacChannelCalibration() {
 }
 
 
-OperationResult BufferRamp::boxcarAverageRamp(const std::vector<float>& args) {
-  if (args.size() < 7) {
-    return OperationResult::Failure("Not enough arguments provided");
-  }
-
-  size_t currentIndex = 0;
-
-  // Parse initial parameters
-  int numDacChannels = static_cast<int>(args[currentIndex++]);
-  int numAdcChannels = static_cast<int>(args[currentIndex++]);
-  int numDacSteps = static_cast<int>(args[currentIndex++]);
-  int numAdcMeasuresPerDacStep = static_cast<int>(args[currentIndex++]);
-  int numAdcAverages = static_cast<int>(args[currentIndex++]);
-  int numAdcConversionSkips = static_cast<int>(args[currentIndex++]);
-  const float adcConversionTimeArg = args[currentIndex++];
-
+OperationResult BufferRamp::boxcarAverageRamp(
+    int numDacChannels, int numAdcChannels, int numDacSteps,
+    int numAdcMeasuresPerDacStep, int numAdcAverages,
+    int numAdcConversionSkips, float adcConversionTimeArg,
+    List<int, 0>& dacChannelsList,
+    List<float, 0>& dacV0_1List,
+    List<float, 0>& dacVf_1List,
+    List<float, 0>& dacV0_2List,
+    List<float, 0>& dacVf_2List,
+    List<int, 1>& adcChannelsList) {
   if (!isValidDacChannelCount(numDacChannels) ||
       !isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of channels");
   }
   if (numDacSteps < 1 || numAdcMeasuresPerDacStep < 1 ||
       numAdcAverages < 1 || numAdcConversionSkips < 0 ||
-      !isUint32AtLeast(adcConversionTimeArg, 1)) {
+      !BufferRampCommon::isUint32AtLeast(adcConversionTimeArg, 1)) {
     return OperationResult::Failure("Invalid boxcar timing/count argument");
   }
-  uint32_t adcConversionTime_us =
+
+  int* dacChannels = dacChannelsList.data();
+  float* dacV0_1 = dacV0_1List.data();
+  float* dacVf_1 = dacVf_1List.data();
+  float* dacV0_2 = dacV0_2List.data();
+  float* dacVf_2 = dacVf_2List.data();
+  int* adcChannels = adcChannelsList.data();
+
+  OperationResult channelValidation = validateRampChannels(
+      dacChannels, numDacChannels, adcChannels, numAdcChannels);
+  if (!channelValidation.isSuccess()) {
+    return channelValidation;
+  }
+  OperationResult endpointValidation = RampCommand::validateBoxcarDacEndpoints(
+      numDacChannels, dacChannels, dacV0_1, dacVf_1, dacV0_2, dacVf_2);
+  if (!endpointValidation.isSuccess()) {
+    return endpointValidation;
+  }
+
+  const uint32_t adcConversionTime_us =
       static_cast<uint32_t>(adcConversionTimeArg);
-
-  const size_t expected =
-      7u + static_cast<size_t>(numDacChannels) * 5u +
-      static_cast<size_t>(numAdcChannels);
-  if (args.size() != expected) {
-    return OperationResult::Failure("Incorrect number of arguments");
-  }
-
-  int dacChannels[NUM_DAC_CHANNELS] = {};
-  float dacV0_1[NUM_DAC_CHANNELS] = {};
-  float dacVf_1[NUM_DAC_CHANNELS] = {};
-  float dacV0_2[NUM_DAC_CHANNELS] = {};
-  float dacVf_2[NUM_DAC_CHANNELS] = {};
-
-  for (int i = 0; i < numDacChannels; ++i) {
-    dacChannels[i] = static_cast<int>(args[currentIndex++]);
-    dacV0_1[i] = args[currentIndex++];
-    dacVf_1[i] = args[currentIndex++];
-    dacV0_2[i] = args[currentIndex++];
-    dacVf_2[i] = args[currentIndex++];
-  }
-
-  int adcChannels[NUM_ADC_CHANNELS] = {};
-
-  for (int i = 0; i < numAdcChannels; ++i) {
-    adcChannels[i] = static_cast<int>(args[currentIndex++]);
-  }
-
-  OperationResult dacValidation =
-      validateDacChannels(dacChannels, numDacChannels);
-  if (!dacValidation.isSuccess()) {
-    return dacValidation;
-  }
-  OperationResult adcValidation =
-      validateAdcChannels(adcChannels, numAdcChannels);
-  if (!adcValidation.isSuccess()) {
-    return adcValidation;
-  }
 
   uint32_t actualConversionTime_us = ADCController::presetConversionTime(
       adcChannels[0], adcConversionTime_us, numAdcChannels > 1);
@@ -1827,38 +1570,6 @@ OperationResult BufferRamp::boxcarAverageRamp(const std::vector<float>& args) {
     return OperationResult::Failure("Boxcar DAC period is out of range");
   }
   uint32_t dacPeriod_us = static_cast<uint32_t>(dacPeriod64);
-
-  // Check voltage bounds before executing ramp (both calibrated bounds AND global limits)
-  for (int i = 0; i < numDacChannels; i++) {
-    int ch = dacChannels[i];
-    float lowerBound = DACController::getLowerBound(ch);
-    float upperBound = DACController::getUpperBound(ch);
-
-    if (dacV0_1[i] < lowerBound || dacV0_1[i] > upperBound) {
-      return OperationResult::Failure("DAC " + String(ch) +
-                                      " start voltage 1 " + String(dacV0_1[i], 6) +
-                                      "V out of bounds [" + String(lowerBound, 6) +
-                                      ", " + String(upperBound, 6) + "]");
-    }
-    if (dacVf_1[i] < lowerBound || dacVf_1[i] > upperBound) {
-      return OperationResult::Failure("DAC " + String(ch) +
-                                      " end voltage 1 " + String(dacVf_1[i], 6) +
-                                      "V out of bounds [" + String(lowerBound, 6) +
-                                      ", " + String(upperBound, 6) + "]");
-    }
-    if (dacV0_2[i] < lowerBound || dacV0_2[i] > upperBound) {
-      return OperationResult::Failure("DAC " + String(ch) +
-                                      " start voltage 2 " + String(dacV0_2[i], 6) +
-                                      "V out of bounds [" + String(lowerBound, 6) +
-                                      ", " + String(upperBound, 6) + "]");
-    }
-    if (dacVf_2[i] < lowerBound || dacVf_2[i] > upperBound) {
-      return OperationResult::Failure("DAC " + String(ch) +
-                                      " end voltage 2 " + String(dacVf_2[i], 6) +
-                                      "V out of bounds [" + String(lowerBound, 6) +
-                                      ", " + String(upperBound, 6) + "]");
-    }
-  }
 
   clearWorkerStopRequest();
   PeripheralCommsController::dataLedOn();

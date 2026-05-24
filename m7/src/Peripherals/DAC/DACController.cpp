@@ -21,21 +21,21 @@ bool DACLimits::limits_initialized = false;
 std::vector<DACChannel> DACController::dac_channels;
 
 void DACController::initializeRegistry() {
-  registerMemberFunction(setVoltage, "SET");
-  registerMemberFunction(getVoltage, "GET_DAC");
-  registerMemberFunction(sendCode, "SET_DAC_CODE");
-  registerMemberFunction(setFullScale, "FULL_SCALE");
-  registerMemberFunction(getFullScale, "GET_FULL_SCALE");
-  registerMemberFunction(inquiryOSG, "INQUIRY_OSG");
-  registerMemberFunction(setOSG, "SET_OSG");
-  registerMemberFunction(autoRamp1, "RAMP1");
-  registerMemberFunction(autoRamp2, "RAMP2");
-  registerMemberFunctionVector(autoRampN, "RAMP_N");
-  registerMemberFunction(toggleLdacTest, "TOGGLE_LDAC");
-  registerMemberFunction(setUpperLimit, "SET_UPPER_LIMIT");
-  registerMemberFunction(setLowerLimit, "SET_LOWER_LIMIT");
-  registerMemberFunction(getUpperLimit, "GET_UPPER_LIMIT");
-  registerMemberFunction(getLowerLimit, "GET_LOWER_LIMIT");
+  registerFunction(setVoltage, "SET");
+  registerFunction(getVoltage, "GET_DAC");
+  registerFunction(sendCode, "SET_DAC_CODE");
+  registerFunction(setFullScale, "FULL_SCALE");
+  registerFunction(getFullScale, "GET_FULL_SCALE");
+  registerFunction(inquiryOSG, "INQUIRY_OSG");
+  registerFunction(setOSG, "SET_OSG");
+  registerFunction(autoRamp1, "RAMP1");
+  registerFunction(autoRamp2, "RAMP2");
+  registerFunction(autoRampN, "RAMP_N");
+  registerFunction(toggleLdacTest, "TOGGLE_LDAC");
+  registerFunction(setUpperLimit, "SET_UPPER_LIMIT");
+  registerFunction(setLowerLimit, "SET_LOWER_LIMIT");
+  registerFunction(getUpperLimit, "GET_UPPER_LIMIT");
+  registerFunction(getLowerLimit, "GET_LOWER_LIMIT");
 }
 
 OperationResult DACController::setUpperLimit(int channel, float limit) {
@@ -318,48 +318,50 @@ OperationResult DACController::inquiryOSG() {
 OperationResult DACController::autoRamp1(int dacChannel, float v0, float vf,
                                          int numSteps,
                                          u_long settlingTime_us) {
-  return autoRampN({1, static_cast<float>(numSteps),
-                    static_cast<float>(settlingTime_us),
-                    static_cast<float>(dacChannel), v0, vf});
+  const int dacChannels[1] = {dacChannel};
+  const float dacV0s[1] = {v0};
+  const float dacVfs[1] = {vf};
+  return autoRampNBase(1, numSteps, settlingTime_us, dacChannels, dacV0s,
+                       dacVfs);
 }
 
 OperationResult DACController::autoRamp2(int dacChannel1, int dacChannel2,
                                          float vi1, float vi2, float vf1,
                                          float vf2, int numSteps,
                                          u_long settlingTime_us) {
-  return autoRampN({2, static_cast<float>(numSteps),
-                    static_cast<float>(settlingTime_us),
-                    static_cast<float>(dacChannel1), vi1, vf1,
-                    static_cast<float>(dacChannel2), vi2, vf2});
+  const int dacChannels[2] = {dacChannel1, dacChannel2};
+  const float dacV0s[2] = {vi1, vi2};
+  const float dacVfs[2] = {vf1, vf2};
+  return autoRampNBase(2, numSteps, settlingTime_us, dacChannels, dacV0s,
+                       dacVfs);
 }
 
-OperationResult DACController::autoRampN(const std::vector<float>& args) {
-  if (args.size() < 3) {
-    return OperationResult::Failure("Insufficient arguments provided.");
-  }
+OperationResult DACController::autoRampN(
+    int numDacs, int numSteps, unsigned long settlingTime_us,
+    List<int, 0>& dacChannels,
+    List<float, 0>& dacV0s,
+    List<float, 0>& dacVfs) {
+  return autoRampNBase(numDacs, numSteps, settlingTime_us,
+                       dacChannels.data(), dacV0s.data(), dacVfs.data());
+}
 
-  int numDacs = static_cast<int>(args[0]);
-  int numSteps = static_cast<int>(args[1]);
-  unsigned long settlingTime_us = static_cast<unsigned long>(args[2]);
-
+OperationResult DACController::autoRampNBase(int numDacs, int numSteps,
+                                             unsigned long settlingTime_us,
+                                             const int* dacChannels,
+                                             const float* dacV0s,
+                                             const float* dacVfs) {
   if (numDacs < 1 || numDacs > NUM_DAC_CHANNELS || numSteps < 1 ||
       settlingTime_us < 1) {
     return OperationResult::Failure("Invalid ramp parameters.");
-  }
-
-  if (args.size() != static_cast<size_t>(3 + numDacs * 3)) {
-    return OperationResult::Failure(
-        "Argument count does not match number of DAC channels.");
   }
 
   RampParams rampParams[NUM_DAC_CHANNELS] = {};
   int rampParamsCount = 0;
 
   for (int i = 0; i < numDacs; i++) {
-    int baseIndex = 3 + i * 3;
-    int ch = static_cast<int>(args[baseIndex]);
-    double v0 = args[baseIndex + 1];
-    double vf = args[baseIndex + 2];
+    const int ch = dacChannels[i];
+    const double v0 = dacV0s[i];
+    const double vf = dacVfs[i];
 
     if (!isChannelIndexValid(ch)) {
       return OperationResult::Failure("Invalid channel index " + String(ch));

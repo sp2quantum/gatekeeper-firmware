@@ -88,22 +88,33 @@ To add new commands to a file, you don't have to mess around with user IO, the f
 ```cpp
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
 
-registerMemberFunction(setConversionTime, "CONVERT_TIME");
+registerFunction(setConversionTime, "CONVERT_TIME");
 ```
 
-Note: this only works with functions that have a set number of float or float-castable args (ie floats, ints).
+Note: scalar arguments should be float or float-castable values (for example floats, ints, and bool-like 0/1 flags).
 
-The number of arguments the function takes is automatically inferred by `registerMemberFunction`, so you don't have to worry about that, just register the function and you're good to go! In this example, `setConversionTime` is a function that accepts 2 float arguments and `CONVERT_TIME` is the command that calls `setConversionTime`. So, if I run the command `CONVERT_TIME,0,80`, I am calling `setConversionTime(0.0,80.0)`. In this case, the floats are automatically casted as ints since the function I'm calling only accepts ints.
+The number of arguments the function takes is automatically inferred by `registerFunction`, so you don't have to worry about that, just register the function and you're good to go! In this example, `setConversionTime` is a function that accepts 2 float arguments and `CONVERT_TIME` is the command that calls `setConversionTime`. So, if I run the command `CONVERT_TIME,0,80`, I am calling `setConversionTime(0.0,80.0)`. In this case, the floats are automatically casted as ints since the function I'm calling only accepts ints.
 
-For functions with an arbitrary number of args, you can call:
+For command payloads whose length depends on earlier arguments, use `FunctionRegistryParsing::List`. The parser will read the right number of values and pass them to your function as named lists:
 
 ```cpp
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
+#include "FunctionRegistry/FunctionRegistryArgumentParser.h"
 
-registerMemberFunctionVector(timeSeriesBufferRampWrapper, "TIME_SERIES_BUFFER_RAMP");
+using FunctionRegistryParsing::List;
+
+OperationResult exampleRamp(int numDacs,
+                       List<int, 0>& dacChannels,
+                       List<float, 0>& startVoltages,
+                       List<float, 0>& endVoltages) {
+  // dacChannels, startVoltages, and endVoltages each contain numDacs entries.
+  return OperationResult::Success();
+}
+
+registerFunction(exampleRamp, "EXAMPLE_RAMP");
 ```
 
-This will pass one `std::vector<float>` which contains all args, which you should parse yourself.
+The second template argument is the earlier scalar argument that controls the list length. For matrix-like payloads, add one multiplier argument index: `List<float, 0, 2>` reads `arg0 * arg2` values.
 
 ### Precise Timings (Hardware Timer)
 

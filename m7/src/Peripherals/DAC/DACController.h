@@ -6,8 +6,12 @@
 
 #include "Config.h"
 #include "DACChannel.h"
+#include "FunctionRegistry/FunctionRegistryArgumentParser.h"
 #include "Peripherals/OperationResult.h"
+#include "Peripherals/RampCommand.h"
 #include "Utils/CalibrationData.h"
+
+using FunctionRegistryParsing::List;
 
 class DACController {
  private:
@@ -19,6 +23,11 @@ class DACController {
   };
 
   static std::vector<DACChannel> dac_channels;
+  static OperationResult autoRampNBase(int numDacs, int numSteps,
+                                       unsigned long settlingTime_us,
+                                       const int* dacChannels,
+                                       const float* dacV0s,
+                                       const float* dacVfs);
 
  public:
   static void initializeRegistry();
@@ -56,5 +65,9 @@ class DACController {
   static OperationResult autoRamp2(int dacChannel1, int dacChannel2, float vi1,
                                    float vi2, float vf1, float vf2,
                                    int numSteps, u_long settlingTime_us);
-  static OperationResult autoRampN(const std::vector<float>& args);
+  static OperationResult autoRampN(int numDacs, int numSteps,
+                                   unsigned long settlingTime_us,
+                                   List<int, 0>& dacChannels,
+                                   List<float, 0>& dacV0s,
+                                   List<float, 0>& dacVfs);
 };

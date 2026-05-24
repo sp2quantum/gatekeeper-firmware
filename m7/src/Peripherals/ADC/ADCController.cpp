@@ -49,38 +49,38 @@ void ADCController::clearReadyFlag(int i) {
 }
 
 void ADCController::initializeRegistry() {
-  registerMemberFunction(readChannelVoltage, "GET_ADC");
-  registerMemberFunction(setConversionTime, "CONVERT_TIME");
-  registerMemberFunction(setConversionTimeFW, "CONVERT_TIME_FW");
-  registerMemberFunction(getConversionTime, "GET_CONVERT_TIME");
-  registerMemberFunction(getRevisionRegister, "GET_REVISION_REG");
-  registerMemberFunction(continuousConvertRead, "CONTINUOUS_CONVERT_READ");
-  registerMemberFunction(idleMode, "IDLE_MODE");
-  registerMemberFunction(getChannelsActive, "GET_CHANNELS_ACTIVE");
-  registerMemberFunction(resetAllADCBoards, "RESET");
-  registerMemberFunction(talkADC, "TALK");
-  registerMemberFunction(adcZeroScaleCal, "ADC_ZERO_SC_CAL");
-  registerMemberFunction(adcChannelSystemZeroScaleCal, "ADC_CH_ZERO_SC_CAL");
-  registerMemberFunction(adcChannelSystemFullScaleCal, "ADC_CH_FULL_SC_CAL");
-  registerMemberFunction(setRDYFN, "SET_RDYFN");
-  registerMemberFunction(unsetRDYFN, "UNSET_RDYFN");
-  registerMemberFunction(getChZeroScaleCalibration, "GET_ZERO_SCALE_CAL");
-  registerMemberFunction(getChFullScaleCalibration, "GET_FULL_SCALE_CAL");
-  registerMemberFunction(setChZeroScaleCalibration, "SET_ZERO_SCALE_CAL");
-  registerMemberFunction(setChFullScaleCalibration, "SET_FULL_SCALE_CAL");
-  registerMemberFunction(getSavedChZeroScaleCalibration,
+  registerFunction(readChannelVoltage, "GET_ADC");
+  registerFunction(setConversionTime, "CONVERT_TIME");
+  registerFunction(setConversionTimeFW, "CONVERT_TIME_FW");
+  registerFunction(getConversionTime, "GET_CONVERT_TIME");
+  registerFunction(getRevisionRegister, "GET_REVISION_REG");
+  registerFunction(continuousConvertRead, "CONTINUOUS_CONVERT_READ");
+  registerFunction(idleMode, "IDLE_MODE");
+  registerFunction(getChannelsActive, "GET_CHANNELS_ACTIVE");
+  registerFunction(resetAllADCBoards, "RESET");
+  registerFunction(talkADC, "TALK");
+  registerFunction(adcZeroScaleCal, "ADC_ZERO_SC_CAL");
+  registerFunction(adcChannelSystemZeroScaleCal, "ADC_CH_ZERO_SC_CAL");
+  registerFunction(adcChannelSystemFullScaleCal, "ADC_CH_FULL_SC_CAL");
+  registerFunction(setRDYFN, "SET_RDYFN");
+  registerFunction(unsetRDYFN, "UNSET_RDYFN");
+  registerFunction(getChZeroScaleCalibration, "GET_ZERO_SCALE_CAL");
+  registerFunction(getChFullScaleCalibration, "GET_FULL_SCALE_CAL");
+  registerFunction(setChZeroScaleCalibration, "SET_ZERO_SCALE_CAL");
+  registerFunction(setChFullScaleCalibration, "SET_FULL_SCALE_CAL");
+  registerFunction(getSavedChZeroScaleCalibration,
                          "GET_SAVED_ZERO_SCALE_CAL");
-  registerMemberFunction(getSavedChFullScaleCalibration,
+  registerFunction(getSavedChFullScaleCalibration,
                          "GET_SAVED_FULL_SCALE_CAL");
-  registerMemberFunction(setSavedChZeroScaleCalibration,
+  registerFunction(setSavedChZeroScaleCalibration,
                          "SET_SAVED_ZERO_SCALE_CAL");
-  registerMemberFunction(setSavedChFullScaleCalibration,
+  registerFunction(setSavedChFullScaleCalibration,
                          "SET_SAVED_FULL_SCALE_CAL");
-  registerMemberFunction(resetToPreviousConversionTimesSerial,
+  registerFunction(resetToPreviousConversionTimesSerial,
                          "RESET_MAINTAIN");
-  registerMemberFunction(hardResetAllADCBoards, "HARD_RESET");
-  registerMemberFunction(setChopping, "SET_CHOP");
-  registerMemberFunction(getChopping, "GET_CHOP");
+  registerFunction(hardResetAllADCBoards, "HARD_RESET");
+  registerFunction(setChopping, "SET_CHOP");
+  registerFunction(getChopping, "GET_CHOP");
 }
 
 void ADCController::addBoard(int cs_pin, int data_ready, int reset_pin,

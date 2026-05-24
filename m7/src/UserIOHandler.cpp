@@ -180,12 +180,12 @@ void consumeCommandByte(char c) {
 }  // namespace
 
 void UserIOHandler::setup() {
-  registerMemberFunction(nop, "NOP");
-  registerMemberFunction(id, "*IDN?");
-  registerMemberFunction(rdy, "*RDY?");
-  registerMemberFunction(serialNumber, "SERIAL_NUMBER");
-  registerMemberFunction(getEnvironment, "GET_ENVIRONMENT");
-  registerMemberFunction(getFirmwareVersion, "GET_FIRMWARE_VERSION");
+  registerFunction(nop, "NOP");
+  registerFunction(id, "*IDN?");
+  registerFunction(rdy, "*RDY?");
+  registerFunction(serialNumber, "SERIAL_NUMBER");
+  registerFunction(getEnvironment, "GET_ENVIRONMENT");
+  registerFunction(getFirmwareVersion, "GET_FIRMWARE_VERSION");
 }
 
 OperationResult UserIOHandler::getFirmwareVersion() {
