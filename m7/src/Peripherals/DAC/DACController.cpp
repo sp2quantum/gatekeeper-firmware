@@ -2,354 +2,250 @@
 
 #include <cmath>
 
+#include "Calibration/Calibration.h"
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
+#include "PeripheralCommsController.h"
+#include "Peripherals/ADC/ADCController.h"
 #include "Utils/FastGpio.h"
 #include "Utils/TimingUtil.h"
-#include "Utils/shared_memory.h"
-#include "DACController.h"
+#include "shared_memory.h"
 
 namespace {
+
+constexpr byte kWriteAndUpdateDacCommand = 0x10;
+constexpr byte kReadbackCommand = 0x90;
+constexpr byte kWriteControlRegisterCommand = 0x20;
+constexpr byte kUnclampDacFromGround = 0x02;
+constexpr int kPositiveFullScaleCode = 524287;
+constexpr int kNegativeFullScaleCode = 524288;
+constexpr int kTwosComplementSpan = 1048576;
+constexpr int kDataByteMask = 0xFF;
+constexpr int kDataHighNibbleMask = 0x0F;
+
 bool isFinite(float value) {
   return std::isfinite(static_cast<double>(value));
 }
+
+PeripheralCommsController comms[NUM_DAC_CHANNELS] = {
+    PeripheralCommsController(dac_cs_pins[0]),
+    PeripheralCommsController(dac_cs_pins[1]),
+    PeripheralCommsController(dac_cs_pins[2]),
+    PeripheralCommsController(dac_cs_pins[3]),
+    PeripheralCommsController(dac_cs_pins[4]),
+    PeripheralCommsController(dac_cs_pins[5]),
+    PeripheralCommsController(dac_cs_pins[6]),
+    PeripheralCommsController(dac_cs_pins[7]),
+};
+
+float gain_error[NUM_DAC_CHANNELS];
+float gain_error_inverse[NUM_DAC_CHANNELS];
+float offset_error[NUM_DAC_CHANNELS];
+float voltage_upper_bound[NUM_DAC_CHANNELS];
+float voltage_lower_bound[NUM_DAC_CHANNELS];
+float full_scale_val[NUM_DAC_CHANNELS];
+
+struct DacCalibrationData {
+  float gain[NUM_DAC_CALIBRATION_CHANNELS];
+  float offset[NUM_DAC_CALIBRATION_CHANNELS];
+};
+
+const uint32_t kDacCalibrationId = CalibrationRegistry::sectionId("DAC");
+
+DacCalibrationData* dacCalibration(CalibrationData& data) {
+  return static_cast<DacCalibrationData*>(CalibrationRegistry::getSection(
+      data, kDacCalibrationId, sizeof(DacCalibrationData)));
 }
 
-float DACLimits::upper_voltage_limit[NUM_DAC_CHANNELS];
-float DACLimits::lower_voltage_limit[NUM_DAC_CHANNELS];
-bool DACLimits::limits_initialized = false;
-
-std::vector<DACChannel> DACController::dac_channels;
-
-void DACController::initializeRegistry() {
-  registerFunction(setVoltage, "SET");
-  registerFunction(getVoltage, "GET_DAC");
-  registerFunction(sendCode, "SET_DAC_CODE");
-  registerFunction(setFullScale, "FULL_SCALE");
-  registerFunction(getFullScale, "GET_FULL_SCALE");
-  registerFunction(inquiryOSG, "INQUIRY_OSG");
-  registerFunction(setOSG, "SET_OSG");
-  registerFunction(autoRamp1, "RAMP1");
-  registerFunction(autoRamp2, "RAMP2");
-  registerFunction(autoRampN, "RAMP_N");
-  registerFunction(toggleLdacTest, "TOGGLE_LDAC");
-  registerFunction(setUpperLimit, "SET_UPPER_LIMIT");
-  registerFunction(setLowerLimit, "SET_LOWER_LIMIT");
-  registerFunction(getUpperLimit, "GET_UPPER_LIMIT");
-  registerFunction(getLowerLimit, "GET_LOWER_LIMIT");
+void setDacCalibrationDefaults(void* section) {
+  auto& data = *static_cast<DacCalibrationData*>(section);
+  for (int i = 0; i < NUM_DAC_CALIBRATION_CHANNELS; i++) {
+    data.gain[i] = 1.0f;
+    data.offset[i] = 0.0f;
+  }
 }
 
-OperationResult DACController::setUpperLimit(int channel, float limit) {
-  if (!isChannelIndexValid(channel)) {
+bool validateDacCalibration(const void* section) {
+  const auto& data = *static_cast<const DacCalibrationData*>(section);
+  for (int i = 0; i < NUM_DAC_CALIBRATION_CHANNELS; i++) {
+    if (!std::isfinite(static_cast<double>(data.gain[i])) ||
+        data.gain[i] < 0.5f || data.gain[i] > 1.5f) {
+      return false;
+    }
+    if (!std::isfinite(static_cast<double>(data.offset[i])) ||
+        data.offset[i] < -1.0f || data.offset[i] > 1.0f) {
+      return false;
+    }
+  }
+  return true;
+}
+CALIBRATION_SECTION("DAC", DacCalibrationData, setDacCalibrationDefaults,
+                    validateDacCalibration)
+
+void initChannelDefaults() {
+  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    gain_error[i] = 1.0f;
+    gain_error_inverse[i] = 1.0f;
+    offset_error[i] = 0.0f;
+    voltage_upper_bound[i] = 10.0f;
+    voltage_lower_bound[i] = -10.0f;
+    full_scale_val[i] = 10.0f;
+  }
+}
+
+void voltageToBytes(int ch, float v, byte* DB1, byte* DB2, byte* DB3) {
+  int decimal;
+  if (v >= 0) {
+    decimal = v * kPositiveFullScaleCode / full_scale_val[ch];
+  } else {
+    decimal =
+        v * kNegativeFullScaleCode / full_scale_val[ch] + kTwosComplementSpan;
+  }
+  *DB1 = static_cast<byte>((decimal >> 16) | kWriteAndUpdateDacCommand);
+  *DB2 = static_cast<byte>((decimal >> 8) & kDataByteMask);
+  *DB3 = static_cast<byte>(decimal & kDataByteMask);
+}
+
+int threeByteToInt(byte DB1, byte DB2, byte DB3) {
+  return (((DB1 & kDataHighNibbleMask) << 8 | DB2) << 8) | DB3;
+}
+
+float threeByteToVoltage(int ch, byte DB1, byte DB2, byte DB3) {
+  const int decimal = threeByteToInt(DB1, DB2, DB3);
+  if (decimal <= kPositiveFullScaleCode) {
+    return decimal * full_scale_val[ch] / kPositiveFullScaleCode;
+  }
+  return -(kTwosComplementSpan - decimal) * full_scale_val[ch] /
+         kNegativeFullScaleCode;
+}
+
+bool writeAndLatchPacket(int ch, const byte packet[3]) {
+  byte buf[3] = {packet[0], packet[1], packet[2]};
+  if (!comms[ch].transferDAC(buf, 3)) return false;
+  FastGpio::pulseLowHigh(ldac);
+  return true;
+}
+
+struct RampParams {
+  int channel;
+  double v0;
+  double vf;
+  double stepSize;
+};
+
+OperationResult setUpperLimit(int channel, float limit) {
+  if (!DACController::isChannelIndexValid(channel))
     return OperationResult::Failure("Invalid channel index " + String(channel));
-  }
-  if (!isFinite(limit)) {
+  if (!isFinite(limit))
     return OperationResult::Failure("Invalid voltage limit");
-  }
-  if (limit < DACLimits::lower_voltage_limit[channel]) {
+  if (limit < DACLimits::lower_voltage_limit[channel])
     return OperationResult::Failure("Upper limit must be >= lower limit");
-  }
   DACLimits::upper_voltage_limit[channel] = limit;
   return OperationResult::Success("CH" + String(channel) +
                                   " UPPER LIMIT SET TO " + String(limit, 6) +
                                   " V");
 }
+COMMAND("SET_UPPER_LIMIT", setUpperLimit)
 
-OperationResult DACController::setLowerLimit(int channel, float limit) {
-  if (!isChannelIndexValid(channel)) {
+OperationResult setLowerLimit(int channel, float limit) {
+  if (!DACController::isChannelIndexValid(channel))
     return OperationResult::Failure("Invalid channel index " + String(channel));
-  }
-  if (!isFinite(limit)) {
+  if (!isFinite(limit))
     return OperationResult::Failure("Invalid voltage limit");
-  }
-  if (limit > DACLimits::upper_voltage_limit[channel]) {
+  if (limit > DACLimits::upper_voltage_limit[channel])
     return OperationResult::Failure("Lower limit must be <= upper limit");
-  }
   DACLimits::lower_voltage_limit[channel] = limit;
   return OperationResult::Success("CH" + String(channel) +
                                   " LOWER LIMIT SET TO " + String(limit, 6) +
                                   " V");
 }
+COMMAND("SET_LOWER_LIMIT", setLowerLimit)
 
-OperationResult DACController::getUpperLimit(int channel) {
-  if (!isChannelIndexValid(channel)) {
+OperationResult getUpperLimit(int channel) {
+  if (!DACController::isChannelIndexValid(channel))
     return OperationResult::Failure("Invalid channel index " + String(channel));
-  }
-  return OperationResult::Success(String(DACLimits::upper_voltage_limit[channel],
-                                         6));
+  return OperationResult::Success(
+      String(DACLimits::upper_voltage_limit[channel], 6));
 }
+COMMAND("GET_UPPER_LIMIT", getUpperLimit)
 
-OperationResult DACController::getLowerLimit(int channel) {
-  if (!isChannelIndexValid(channel)) {
+OperationResult getLowerLimit(int channel) {
+  if (!DACController::isChannelIndexValid(channel))
     return OperationResult::Failure("Invalid channel index " + String(channel));
-  }
-  return OperationResult::Success(String(DACLimits::lower_voltage_limit[channel],
-                                         6));
+  return OperationResult::Success(
+      String(DACLimits::lower_voltage_limit[channel], 6));
 }
+COMMAND("GET_LOWER_LIMIT", getLowerLimit)
 
-void DACController::addChannel(int cs_pin) {
-  int channel_index = dac_channels.size();
-  DACChannel newChannel = DACChannel(cs_pin, channel_index);
-  dac_channels.push_back(newChannel);
-}
-
-bool DACController::initialize() {
-  for (auto& channel : dac_channels) {
-    channel.initialize();
-  }
-  return true;
-}
-
-void DACController::setup() {
-  DACLimits::initializeLimits();
-
-  pinMode(ldac, OUTPUT);
-  FastGpio::digitalWrite(ldac, true);
-  initializeRegistry();
-  for (auto& channel : dac_channels) {
-    channel.setup();
-  }
-}
-
-DACChannel DACController::getChannel(int channel_index) {
-  if (!isChannelIndexValid(channel_index)) {
-    return DACChannel(-1);
-  }
-  return dac_channels[channel_index];
-}
-
-bool DACController::isChannelIndexValid(int channelIndex) {
-  return channelIndex >= 0 &&
-         static_cast<size_t>(channelIndex) < dac_channels.size();
-}
-
-OperationResult DACController::setVoltage(int channel_index, float voltage) {
-  if (!isChannelIndexValid(channel_index)) {
-    return OperationResult::Failure("Invalid channel index " +
-                                    String(channel_index));
-  }
-
-  DACChannel& dac_channel = dac_channels[channel_index];
-  if (voltage < dac_channel.getHardwareLowerBound() ||
-      voltage > dac_channel.getHardwareUpperBound()) {
-    return OperationResult::Failure(
-        "Voltage out of bounds for DAC " + String(channel_index) + " (" +
-        String(voltage) + " V must be between " +
-        String(dac_channel.getHardwareLowerBound()) + " and " +
-        String(dac_channel.getHardwareUpperBound()) + " V)");
-  }
-
-  float v = dac_channel.setVoltage(voltage);
-  if (isnan(v)) {
-    return OperationResult::Failure("Voltage out of bounds for DAC " +
-                                    String(channel_index));
-  }
-  return OperationResult::Success("DAC " + String(channel_index) +
-                                  " UPDATED TO " + String(v, 6) + " V");
-}
-
-bool DACController::setVoltageNoTransactionNoLdac(int channel_index,
-                                                  float voltage) {
-  if (!isChannelIndexValid(channel_index)) {
-    return false;
-  }
-
-  DACChannel& dac_channel = dac_channels[channel_index];
-  if (voltage < dac_channel.getHardwareLowerBound() ||
-      voltage > dac_channel.getHardwareUpperBound()) {
-    return false;
-  }
-
-  return dac_channel.setVoltageNoTransactionNoLdac(voltage);
-}
-
-bool DACController::encodeVoltagePacket(int channel_index, float voltage,
-                                        byte packet[3]) {
-  if (!isChannelIndexValid(channel_index)) {
-    return false;
-  }
-
-  DACChannel& dac_channel = dac_channels[channel_index];
-  if (voltage < dac_channel.getHardwareLowerBound() ||
-      voltage > dac_channel.getHardwareUpperBound()) {
-    return false;
-  }
-
-  return dac_channel.encodeVoltagePacket(voltage, packet);
-}
-
-bool DACController::writeVoltagePacketNoLdac(int channel_index,
-                                             const byte packet[3]) {
-  if (!isChannelIndexValid(channel_index)) {
-    return false;
-  }
-
-  return dac_channels[channel_index].writeVoltagePacketNoLdac(packet);
-}
-
-int DACController::getCsPin(int channel_index) {
-  if (!isChannelIndexValid(channel_index)) {
-    return NC;
-  }
-  return dac_channels[channel_index].getCsPin();
-}
-
-OperationResult DACController::toggleLdacTest() {
-  toggleLdac();
+OperationResult toggleLdacTest() {
+  DACController::toggleLdac();
   return OperationResult::Success("LDAC TOGGLED");
 }
+COMMAND("TOGGLE_LDAC", toggleLdacTest)
 
-void DACController::toggleLdac() {
-  FastGpio::pulseLowHigh(ldac);
-}
-
-OperationResult DACController::getVoltage(int channel_index) {
-  if (!isChannelIndexValid(channel_index)) {
+OperationResult setOSG(int channel_index, float off, float g) {
+  if (!DACController::isChannelIndexValid(channel_index))
     return OperationResult::Failure("Invalid channel index " +
                                     String(channel_index));
-  }
-  return OperationResult::Success(
-      String(dac_channels[channel_index].getVoltage(), 6));
-}
-
-OperationResult DACController::setOSG(int channel_index, float offset,
-                                      float gain) {
-  if (!isChannelIndexValid(channel_index)) {
-    return OperationResult::Failure("Invalid channel index " +
-                                    String(channel_index));
-  }
-  if (!isFinite(offset) || !isFinite(gain) ||
-      std::fabs(static_cast<double>(gain)) < 1e-6) {
+  if (!isFinite(off) || !isFinite(g) ||
+      std::fabs(static_cast<double>(g)) < 1e-6)
     return OperationResult::Failure("Invalid calibration offset/gain");
-  }
-  setCalibration(channel_index, offset, gain);
-
+  DACController::setCalibration(channel_index, off, g);
   return OperationResult::Success("OSG SET FOR DAC " + String(channel_index));
 }
+COMMAND("SET_OSG", setOSG)
 
-void DACController::applyCalibration(int channel_index, float offset,
-                                     float gain) {
-  if (!isChannelIndexValid(channel_index)) {
-    return;
-  }
-
-  dac_channels[channel_index].setCalibration(offset, gain);
-}
-
-void DACController::setCalibration(int channel_index, float offset, float gain) {
-  if (!isChannelIndexValid(channel_index)) {
-    return;
-  }
-
-  applyCalibration(channel_index, offset, gain);
-  CalibrationData calibrationData = getCalibrationData();
-  updateCalibrationData(calibrationData);
-}
-
-CalibrationData DACController::getCalibrationData() {
-  CalibrationData calibrationData;
-  readCalibrationData(calibrationData);
-  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
-    calibrationData.offset[i] = dac_channels[i].getOffsetError();
-    calibrationData.gain[i] = dac_channels[i].getGainError();
-  }
-  return calibrationData;
-}
-
-float DACController::getLowerBound(int channel) {
-  if (!isChannelIndexValid(channel)) {
-    return -1;
-  }
-  float calibratedHardwareLower = dac_channels[channel].getHardwareLowerBound();
-  return max(calibratedHardwareLower, DACLimits::lower_voltage_limit[channel]);
-}
-
-float DACController::getUpperBound(int channel) {
-  if (!isChannelIndexValid(channel)) {
-    return -1;
-  }
-  float calibratedHardwareUpper = dac_channels[channel].getHardwareUpperBound();
-  return min(calibratedHardwareUpper, DACLimits::upper_voltage_limit[channel]);
-}
-
-OperationResult DACController::sendCode(int channel, int code) {
-  if (!isChannelIndexValid(channel)) {
+OperationResult sendCode(int channel, int code) {
+  if (!DACController::isChannelIndexValid(channel))
     return OperationResult::Failure("Invalid channel index " + String(channel));
-  }
-  if (code < 0 || code > 1048575) {
+  if (code < 0 || code > 1048575)
     return OperationResult::Failure("CODE OVERRANGE (0-1048575)");
-  }
-  dac_channels[channel].sendCode(code);
+  byte packet[3];
+  packet[0] =
+      static_cast<byte>((code >> 16) | kWriteAndUpdateDacCommand);
+  packet[1] = static_cast<byte>((code >> 8) & kDataByteMask);
+  packet[2] = static_cast<byte>(code & kDataByteMask);
+  writeAndLatchPacket(channel, packet);
   return OperationResult::Success("DAC " + String(channel) +
                                   " CODE UPDATED TO " + String(code));
 }
+COMMAND("SET_DAC_CODE", sendCode)
 
-OperationResult DACController::setFullScale(int channel, float full_scale) {
-  if (!isChannelIndexValid(channel)) {
+OperationResult setFullScale(int channel, float fs) {
+  if (!DACController::isChannelIndexValid(channel))
     return OperationResult::Failure("Invalid channel index " + String(channel));
-  }
-  if (!isFinite(full_scale) || full_scale <= 0.0f) {
+  if (!isFinite(fs) || fs <= 0.0f)
     return OperationResult::Failure("Invalid full scale");
-  }
-  dac_channels[channel].setFullScale(full_scale);
+  full_scale_val[channel] = fs;
+  voltage_upper_bound[channel] =
+      fs * gain_error[channel] + offset_error[channel];
+  voltage_lower_bound[channel] =
+      -fs * gain_error[channel] + offset_error[channel];
   return OperationResult::Success("FULL_SCALE_UPDATED");
 }
+COMMAND("FULL_SCALE", setFullScale)
 
-OperationResult DACController::getFullScale(int channel) {
-  if (!isChannelIndexValid(channel)) {
+OperationResult getFullScale(int channel) {
+  if (!DACController::isChannelIndexValid(channel))
     return OperationResult::Failure("Invalid channel index " + String(channel));
+  return OperationResult::Success(String(full_scale_val[channel], 6));
+}
+COMMAND("GET_FULL_SCALE", getFullScale)
+
+OperationResult inquiryOSG() {
+  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    sendFloatResponseToGateway(&offset_error[i], 1);
   }
-  float full_scale = dac_channels[channel].getFullScale();
-  return OperationResult::Success(String(full_scale, 6));
-}
-
-OperationResult DACController::inquiryOSG() {
-  String output = "";
-  for (auto& channel : dac_channels) {
-    float offset = channel.getOffsetError();
-    sendFloatResponseToGateway(&offset, 1);
+  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    sendFloatResponseToGateway(&gain_error[i], 1);
   }
-  for (auto& channel : dac_channels) {
-    float gain = channel.getGainError();
-    sendFloatResponseToGateway(&gain, 1);
-  }
-  return OperationResult::Success(output);
+  return OperationResult::Success("");
 }
+COMMAND("INQUIRY_OSG", inquiryOSG)
 
-OperationResult DACController::autoRamp1(int dacChannel, float v0, float vf,
-                                         int numSteps,
-                                         u_long settlingTime_us) {
-  const int dacChannels[1] = {dacChannel};
-  const float dacV0s[1] = {v0};
-  const float dacVfs[1] = {vf};
-  return autoRampNBase(1, numSteps, settlingTime_us, dacChannels, dacV0s,
-                       dacVfs);
-}
-
-OperationResult DACController::autoRamp2(int dacChannel1, int dacChannel2,
-                                         float vi1, float vi2, float vf1,
-                                         float vf2, int numSteps,
-                                         u_long settlingTime_us) {
-  const int dacChannels[2] = {dacChannel1, dacChannel2};
-  const float dacV0s[2] = {vi1, vi2};
-  const float dacVfs[2] = {vf1, vf2};
-  return autoRampNBase(2, numSteps, settlingTime_us, dacChannels, dacV0s,
-                       dacVfs);
-}
-
-OperationResult DACController::autoRampN(
-    int numDacs, int numSteps, unsigned long settlingTime_us,
-    List<int, 0>& dacChannels,
-    List<float, 0>& dacV0s,
-    List<float, 0>& dacVfs) {
-  return autoRampNBase(numDacs, numSteps, settlingTime_us,
-                       dacChannels.data(), dacV0s.data(), dacVfs.data());
-}
-
-OperationResult DACController::autoRampNBase(int numDacs, int numSteps,
-                                             unsigned long settlingTime_us,
-                                             const int* dacChannels,
-                                             const float* dacV0s,
-                                             const float* dacVfs) {
+OperationResult runAutoRampN(int numDacs, int numSteps,
+                             unsigned long settlingTime_us,
+                             const int* dacChannels, const float* dacV0s,
+                             const float* dacVfs) {
   if (numDacs < 1 || numDacs > NUM_DAC_CHANNELS || numSteps < 1 ||
       settlingTime_us < 1) {
     return OperationResult::Failure("Invalid ramp parameters.");
@@ -363,15 +259,11 @@ OperationResult DACController::autoRampNBase(int numDacs, int numSteps,
     const double v0 = dacV0s[i];
     const double vf = dacVfs[i];
 
-    if (!isChannelIndexValid(ch)) {
+    if (!DACController::isChannelIndexValid(ch))
       return OperationResult::Failure("Invalid channel index " + String(ch));
-    }
 
-    DACChannel& dacCh = dac_channels[ch];
-    if (v0 < dacCh.getHardwareLowerBound() ||
-        v0 > dacCh.getHardwareUpperBound() ||
-        vf < dacCh.getHardwareLowerBound() ||
-        vf > dacCh.getHardwareUpperBound()) {
+    if (v0 < voltage_lower_bound[ch] || v0 > voltage_upper_bound[ch] ||
+        vf < voltage_lower_bound[ch] || vf > voltage_upper_bound[ch]) {
       return OperationResult::Failure("Voltage out of bounds for DAC " +
                                       String(ch));
     }
@@ -389,13 +281,11 @@ OperationResult DACController::autoRampNBase(int numDacs, int numSteps,
   }
 
   while (currentStep < numSteps) {
-    if (isWorkerStopRequested()) {
-      break;
-    }
+    if (isWorkerStopRequested()) break;
     if (TimingUtil::consumeDacFlag()) {
       for (int i = 0; i < rampParamsCount; i++) {
         const auto& param = rampParams[i];
-        dac_channels[param.channel].setVoltage(currentVoltages[i]);
+        DACController::setVoltage(param.channel, currentVoltages[i]);
         currentVoltages[i] += param.stepSize;
       }
       currentStep++;
@@ -419,3 +309,223 @@ OperationResult DACController::autoRampNBase(int numDacs, int numSteps,
 
   return OperationResult::Success(output);
 }
+
+OperationResult autoRamp1(int dacChannel, float v0, float vf, int numSteps,
+                          u_long settlingTime_us) {
+  const int ch[1] = {dacChannel};
+  const float v0s[1] = {v0};
+  const float vfs[1] = {vf};
+  return runAutoRampN(1, numSteps, settlingTime_us, ch, v0s, vfs);
+}
+COMMAND("RAMP1", autoRamp1)
+
+OperationResult autoRamp2(int dacChannel1, int dacChannel2, float vi1,
+                          float vi2, float vf1, float vf2, int numSteps,
+                          u_long settlingTime_us) {
+  const int ch[2] = {dacChannel1, dacChannel2};
+  const float v0s[2] = {vi1, vi2};
+  const float vfs[2] = {vf1, vf2};
+  return runAutoRampN(2, numSteps, settlingTime_us, ch, v0s, vfs);
+}
+COMMAND("RAMP2", autoRamp2)
+
+OperationResult autoRampN(int numDacs, int numSteps,
+                          unsigned long settlingTime_us,
+                          List<int, 0>& dacChannels, List<float, 0>& dacV0s,
+                          List<float, 0>& dacVfs) {
+  return runAutoRampN(numDacs, numSteps, settlingTime_us, dacChannels.data(),
+                      dacV0s.data(), dacVfs.data());
+}
+COMMAND("RAMP_N", autoRampN)
+
+}  // namespace
+
+float DACLimits::upper_voltage_limit[NUM_DAC_CHANNELS];
+float DACLimits::lower_voltage_limit[NUM_DAC_CHANNELS];
+bool DACLimits::limits_initialized = false;
+
+namespace DACController {
+
+void setup() {
+  DACLimits::initializeLimits();
+  initChannelDefaults();
+  pinMode(ldac, OUTPUT);
+  FastGpio::digitalWrite(ldac, true);
+  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    pinMode(dac_cs_pins[i], OUTPUT);
+    FastGpio::digitalWrite(dac_cs_pins[i], true);
+  }
+}
+ON_SETUP(setup)
+
+void initialize() {
+  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    byte buf[3] = {kWriteControlRegisterCommand, 0, kUnclampDacFromGround};
+    comms[i].transferDAC(buf, 3);
+    setVoltage(i, 0.0);
+  }
+}
+ON_INITIALIZE(initialize)
+
+bool isChannelIndexValid(int ch) {
+  return ch >= 0 && ch < NUM_DAC_CHANNELS;
+}
+
+OperationResult setVoltage(int ch, float voltage) {
+  if (!isChannelIndexValid(ch))
+    return OperationResult::Failure("Invalid channel index " + String(ch));
+  const float lowerBound = getLowerBound(ch);
+  const float upperBound = getUpperBound(ch);
+  if (voltage < lowerBound || voltage > upperBound)
+    return OperationResult::Failure(
+        "Voltage out of bounds for DAC " + String(ch) + " (" +
+        String(voltage) + " V must be between " +
+        String(lowerBound) + " and " + String(upperBound) + " V)");
+
+  byte packet[3];
+  voltageToBytes(ch, voltage * gain_error_inverse[ch] - offset_error[ch],
+                 &packet[0], &packet[1], &packet[2]);
+  if (!writeAndLatchPacket(ch, packet)) {
+    return OperationResult::Failure("Voltage out of bounds for DAC " +
+                                    String(ch));
+  }
+  float v = gain_error[ch] *
+            (threeByteToVoltage(ch, packet[0], packet[1], packet[2]) +
+             offset_error[ch]);
+  return OperationResult::Success("DAC " + String(ch) + " UPDATED TO " +
+                                  String(v, 6) + " V");
+}
+COMMAND("SET", setVoltage)
+
+bool setVoltageNoTransactionNoLdac(int ch, float voltage) {
+  if (!isChannelIndexValid(ch)) return false;
+  if (voltage < voltage_lower_bound[ch] || voltage > voltage_upper_bound[ch])
+    return false;
+  byte buf[3];
+  if (!encodeVoltagePacket(ch, voltage, buf)) return false;
+  return writeVoltagePacketNoLdac(ch, buf);
+}
+
+bool encodeVoltagePacket(int ch, float voltage, byte packet[3]) {
+  if (!isChannelIndexValid(ch)) return false;
+  if (voltage < voltage_lower_bound[ch] || voltage > voltage_upper_bound[ch])
+    return false;
+  if (voltage > DACLimits::upper_voltage_limit[ch] ||
+      voltage < DACLimits::lower_voltage_limit[ch])
+    return false;
+  voltageToBytes(ch, voltage * gain_error_inverse[ch] - offset_error[ch],
+                 &packet[0], &packet[1], &packet[2]);
+  return true;
+}
+
+bool writeVoltagePacketNoLdac(int ch, const byte packet[3]) {
+  if (!isChannelIndexValid(ch)) return false;
+  byte buf[3] = {packet[0], packet[1], packet[2]};
+  return comms[ch].transferDACNoTransaction(buf, 3);
+}
+
+int getCsPin(int ch) {
+  if (!isChannelIndexValid(ch)) return NC;
+  return dac_cs_pins[ch];
+}
+
+void toggleLdac() { FastGpio::pulseLowHigh(ldac); }
+
+OperationResult getVoltage(int ch) {
+  if (!isChannelIndexValid(ch))
+    return OperationResult::Failure("Invalid channel index " + String(ch));
+  byte tx[3] = {kReadbackCommand, 0, 0};
+  byte rx[3] = {0, 0, 0};
+  if (!comms[ch].transferDACRead(tx, 3) || !comms[ch].transferDACRead(rx, 3))
+    return OperationResult::Failure("DAC read failed");
+  float v = gain_error[ch] *
+            (threeByteToVoltage(ch, rx[0], rx[1], rx[2]) + offset_error[ch]);
+  return OperationResult::Success(String(v, 6));
+}
+COMMAND("GET_DAC", getVoltage)
+
+void applySavedCalibration() {
+  while (!isCalibrationDataReady()) {
+    delay(1);
+  }
+
+  CalibrationData calibration_data;
+  readCalibrationData(calibration_data);
+  const DacCalibrationData* dacData = dacCalibration(calibration_data);
+  if (!dacData) return;
+  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    applyCalibration(i, dacData->offset[i], dacData->gain[i]);
+  }
+}
+ON_SETUP_CALIBRATION(applySavedCalibration)
+
+void applyCalibration(int ch, float offset, float gain) {
+  if (!isChannelIndexValid(ch)) return;
+  if (!std::isfinite(static_cast<double>(offset))) offset = 0.0f;
+  if (!std::isfinite(static_cast<double>(gain)) ||
+      std::fabs(static_cast<double>(gain)) < 1e-6)
+    gain = 1.0f;
+  offset_error[ch] = offset;
+  gain_error[ch] = gain;
+  gain_error_inverse[ch] = 1.0f / gain;
+  voltage_upper_bound[ch] =
+      full_scale_val[ch] * gain_error[ch] + offset_error[ch];
+  voltage_lower_bound[ch] =
+      -full_scale_val[ch] * gain_error[ch] + offset_error[ch];
+}
+
+void setCalibration(int ch, float offset, float gain) {
+  if (!isChannelIndexValid(ch)) return;
+  applyCalibration(ch, offset, gain);
+  CalibrationData data;
+  readCalibrationData(data);
+  DacCalibrationData* dacData = dacCalibration(data);
+  if (!dacData) return;
+  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    dacData->offset[i] = offset_error[i];
+    dacData->gain[i] = gain_error[i];
+  }
+  updateCalibrationData(data);
+}
+
+OperationResult dacChannelCalibration() {
+  CalibrationData calibrationData;
+  readCalibrationData(calibrationData);
+  DacCalibrationData* dacData = dacCalibration(calibrationData);
+  if (!dacData) {
+    return OperationResult::Failure("DAC calibration section is missing");
+  }
+
+  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    initialize();
+    applyCalibration(i, 0, 1);
+    setVoltage(i, 0);
+    delay(1);
+    const float offsetError = ADCController::getVoltage(i);
+    applyCalibration(i, offsetError, 1);
+    const float voltSet = 9.0f;
+    setVoltage(i, voltSet);
+    delay(1);
+    const float gainError =
+        (ADCController::getVoltage(i) - offsetError) / voltSet;
+    applyCalibration(i, offsetError, gainError);
+    setVoltage(i, 0);
+    dacData->offset[i] = offsetError;
+    dacData->gain[i] = gainError;
+  }
+  updateCalibrationData(calibrationData);
+  return OperationResult::Success("CALIBRATION_FINISHED");
+}
+COMMAND("DAC_CH_CAL", dacChannelCalibration)
+
+float getLowerBound(int ch) {
+  if (!isChannelIndexValid(ch)) return -1;
+  return max(voltage_lower_bound[ch], DACLimits::lower_voltage_limit[ch]);
+}
+
+float getUpperBound(int ch) {
+  if (!isChannelIndexValid(ch)) return -1;
+  return min(voltage_upper_bound[ch], DACLimits::upper_voltage_limit[ch]);
+}
+
+}  // namespace DACController

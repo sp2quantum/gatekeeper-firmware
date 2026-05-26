@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include "Utils/CalibrationData.h"
+#include "Calibration/CalibrationData.h"
 
 #define CHAR_BUFFER_SIZE 4096
 #define FLOAT_BUFFER_SIZE 256

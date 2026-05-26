@@ -1,7 +1,7 @@
 #include "Utils/TimingUtil.h"
 
 #include "Config.h"
-#include "Peripherals/PeripheralCommsController.h"
+#include "PeripheralCommsController.h"
 #include "Utils/FastGpio.h"
 
 volatile uint8_t TimingUtil::adcFlag = 0;

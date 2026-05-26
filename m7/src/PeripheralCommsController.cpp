@@ -1,9 +1,10 @@
-#include "Peripherals/PeripheralCommsController.h"
+#include "PeripheralCommsController.h"
 
 #include <cstring>
 #include <new>
 
 #include "Config.h"
+#include "FunctionRegistry/FunctionRegistryHelpers.h"
 #include "Utils/FastGpio.h"
 #include "drivers/SPIMaster.h"
 
@@ -279,6 +280,7 @@ void PeripheralCommsController::setup() {
   const bool adcReady = configureBusForTransfer(SpiBus::Adc);
   spiInitialized = dacReady && adcReady;
 }
+ON_SETUP_PLATFORM(PeripheralCommsController::setup)
 
 bool PeripheralCommsController::transferDAC(void* buf, size_t count) {
   return transferBytes(SpiBus::Dac, static_cast<uint8_t*>(buf), count);

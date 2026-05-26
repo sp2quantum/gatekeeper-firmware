@@ -75,46 +75,82 @@ Note for vim users: If you have any issues with linting/LSP with (neo)vim then t
 
 - There are currently no known issues! Please let me know if you find a bug.
 
-### Function Registry
+### Extending Firmware
 
-One of the design goals of the new firmware was to make it easily extensible (add new features/peripherals without dealing with spaghetti code). The way we deal with this is by separating user IO and peripherals.
-
-The general idea is:
-
-command received (UserIOHandler) --> command looked up in FunctionRegistry --> function defined in relevant file executed with args from command.
-
-To add new commands to a file, you don't have to mess around with user IO, the function registry, or any command-executing stuff, simply add the relevant code in whichever file you like and **make sure the command is added to the FunctionRegistry** like so:
+Add a command by writing a normal `OperationResult` function and placing
+`COMMAND` right below it. Argument parsing and argument count checking are
+inferred from the function signature.
 
 ```cpp
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
 
-registerFunction(setConversionTime, "CONVERT_TIME");
-```
-
-Note: scalar arguments should be float or float-castable values (for example floats, ints, and bool-like 0/1 flags).
-
-The number of arguments the function takes is automatically inferred by `registerFunction`, so you don't have to worry about that, just register the function and you're good to go! In this example, `setConversionTime` is a function that accepts 2 float arguments and `CONVERT_TIME` is the command that calls `setConversionTime`. So, if I run the command `CONVERT_TIME,0,80`, I am calling `setConversionTime(0.0,80.0)`. In this case, the floats are automatically casted as ints since the function I'm calling only accepts ints.
-
-For command payloads whose length depends on earlier arguments, use `FunctionRegistryParsing::List`. The parser will read the right number of values and pass them to your function as named lists:
-
-```cpp
-#include "FunctionRegistry/FunctionRegistryHelpers.h"
-#include "FunctionRegistry/FunctionRegistryArgumentParser.h"
-
-using FunctionRegistryParsing::List;
-
-OperationResult exampleRamp(int numDacs,
-                       List<int, 0>& dacChannels,
-                       List<float, 0>& startVoltages,
-                       List<float, 0>& endVoltages) {
-  // dacChannels, startVoltages, and endVoltages each contain numDacs entries.
+OperationResult setThing(int channel, float value) {
   return OperationResult::Success();
 }
-
-registerFunction(exampleRamp, "EXAMPLE_RAMP");
+COMMAND("SET_THING", setThing)
 ```
 
-The second template argument is the earlier scalar argument that controls the list length. For matrix-like payloads, add one multiplier argument index: `List<float, 0, 2>` reads `arg0 * arg2` values.
+For variable-length arguments, use `List<T, N>` where `N` is the earlier scalar
+argument that gives the list length. `List<float, 0, 2>` reads `arg0 * arg2`
+values.
+
+```cpp
+using FunctionRegistryParsing::List;
+
+OperationResult exampleRamp(int numDacs, List<int, 0>& channels,
+                            List<float, 0>& voltages) {
+  return OperationResult::Success();
+}
+COMMAND("EXAMPLE_RAMP", exampleRamp)
+```
+
+Use `ON_SETUP(func)` for work that happens once at boot, before user commands are
+handled: pin modes, hardware objects, default runtime state, etc. Use
+`ON_SETUP_PLATFORM` for lower-level platform setup and `ON_SETUP_CALIBRATION` for
+applying saved calibration after hardware setup. For example:
+
+```cpp
+void setup() {
+  DACLimits::initializeLimits();
+  initChannelDefaults();
+  pinMode(ldac, OUTPUT);
+  FastGpio::digitalWrite(ldac, true);
+}
+ON_SETUP(setup)
+```
+
+Use `ON_INITIALIZE(func)` for work that should happen only when the user sends
+`INITIALIZE`/`INIT`, such as taking a peripheral out of a safe startup state. Below is an example from `DACController.cpp`. `ON_SETUP` configures the pins and
+`INITIALIZE` takes the AD5791 DACs out of tri-state and sets them to zero.
+
+```cpp
+void initialize() {
+  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
+    byte buf[3] = {kWriteControlRegisterCommand, 0, kUnclampDacFromGround};
+    comms[i].transferDAC(buf, 3);
+    setVoltage(i, 0.0);
+  }
+}
+ON_INITIALIZE(initialize)
+```
+
+If a peripheral has saved calibration, define its private calibration struct in
+that controller and register it with `CALIBRATION_SECTION`. The root calibration
+service handles flash persistence and default reset; `main.cpp` does not need to
+know the peripheral exists. For example:
+
+```cpp
+struct DacCalibrationData {
+  float gain[NUM_DAC_CALIBRATION_CHANNELS];
+  float offset[NUM_DAC_CALIBRATION_CHANNELS];
+};
+
+void setDacCalibrationDefaults(void* section) { /* ... */ }
+bool validateDacCalibration(const void* section) { return true; }
+
+CALIBRATION_SECTION("DAC", DacCalibrationData, setDacCalibrationDefaults,
+                    validateDacCalibration)
+```
 
 ### Precise Timings (Hardware Timer)
 

@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 
-#include "Peripherals/OperationResult.h"
+#include "Utils/OperationResult.h"
 
 namespace RampCommand {
 

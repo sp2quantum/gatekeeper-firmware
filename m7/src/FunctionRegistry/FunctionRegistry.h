@@ -3,38 +3,42 @@
 #include <Arduino.h>
 
 #include <functional>
-#include <type_traits>
 #include <vector>
 
-#include "Peripherals/OperationResult.h"
+#include "Utils/OperationResult.h"
 
-class FunctionRegistry {
- public:
-  enum class ExecuteResult { Success, FunctionNotFound, ArgumentError };
+namespace FunctionRegistry {
 
- private:
-  struct FunctionEntry {
-    String name;
-    std::function<OperationResult(const std::vector<float>&)> func;
-    int argCount;
+enum class ExecuteResult { Success, FunctionNotFound, ArgumentError };
 
-    FunctionEntry(const String& n,
-                  std::function<OperationResult(const std::vector<float>&)> f,
-                  int ac);
-  };
-  static std::vector<FunctionEntry> functions;
+using CommandCallback =
+    std::function<OperationResult(const std::vector<float>&)>;
 
+void registerFunction(const String& name, CommandCallback func, int argCount);
 
- public:
-  template <typename Func>
-  static void registerFunction(const String& name, Func&& func, int argCount) {
-    String upper_name = name;
-    upper_name.toUpperCase();
+ExecuteResult execute(const String& name, const std::vector<float>& args,
+                      OperationResult& result);
 
+}  // namespace FunctionRegistry
 
-    functions.emplace_back(upper_name, func, argCount);
-  }
+namespace SetupRegistry {
+using SetupCallback = void (*)();
 
-  static ExecuteResult execute(const String& name, const std::vector<float>& args,
-                               OperationResult& result);
-};
+namespace Priority {
+// Lower priority callbacks run first. Keep platform/shared infrastructure
+// before peripheral setup, and saved calibration restore after hardware setup.
+constexpr int Platform = 0;
+constexpr int Peripheral = 100;
+constexpr int Calibration = 200;
+}  // namespace Priority
+
+void registerCallback(SetupCallback cb,
+                      int priority = Priority::Peripheral);
+void runAll();
+}
+
+namespace InitRegistry {
+using InitCallback = void (*)();
+void registerCallback(InitCallback cb);
+void runAll();
+}

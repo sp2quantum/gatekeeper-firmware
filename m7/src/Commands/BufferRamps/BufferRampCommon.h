@@ -3,7 +3,7 @@
 #include <Arduino.h>
 
 #include "Config.h"
-#include "Peripherals/OperationResult.h"
+#include "Utils/OperationResult.h"
 
 namespace BufferRampCommon {
 
@@ -26,6 +26,11 @@ OperationResult validateRampChannels(const int* dacChannels,
 OperationResult finishRampTimingWatchdog(
     bool includeAdcConversionMissteps = true);
 OperationResult dacWriteFailure(int channel, double voltage);
+
+int maxSelectedAdcChannelsPerBoard(const int* adcChannels,
+                                   int numAdcChannels);
+float maxAdcConversionTimePerBoard(const int* adcChannels,
+                                   int numAdcChannels);
 
 bool sendVoltageFrame(const double* packets, size_t length);
 bool encodeDacVoltagePackets(int numDacChannels, const int* dacChannels,

@@ -5,9 +5,10 @@
 #include <utility>
 #include <vector>
 
+#include "Calibration/Calibration.h"
 #include "FunctionRegistry/FunctionRegistryArgumentParser.h"
 #include "FunctionRegistry/FunctionRegistry.h"
-#include "Peripherals/OperationResult.h"
+#include "Utils/OperationResult.h"
 
 namespace FunctionRegistryDetail {
 
@@ -84,3 +85,27 @@ void registerFunction(Function function, const String& commandName) {
 
   FunctionRegistry::registerFunction(commandName, wrapper, argCount);
 }
+
+#define _REG_CAT2(a, b) a##b
+#define _REG_CAT(a, b) _REG_CAT2(a, b)
+
+#define COMMAND(name, func) \
+  namespace { auto _REG_CAT(_cmd_, __COUNTER__) = \
+      (registerFunction(func, name), 0); }
+
+#define ON_SETUP(func) \
+  _ON_SETUP_WITH_PRIORITY(SetupRegistry::Priority::Peripheral, func)
+
+#define ON_SETUP_PLATFORM(func) \
+  _ON_SETUP_WITH_PRIORITY(SetupRegistry::Priority::Platform, func)
+
+#define ON_SETUP_CALIBRATION(func) \
+  _ON_SETUP_WITH_PRIORITY(SetupRegistry::Priority::Calibration, func)
+
+#define _ON_SETUP_WITH_PRIORITY(priority, func) \
+  namespace { auto _REG_CAT(_setup_, __COUNTER__) = \
+      (SetupRegistry::registerCallback(func, priority), 0); }
+
+#define ON_INITIALIZE(func) \
+  namespace { auto _REG_CAT(_init_, __COUNTER__) = \
+      (InitRegistry::registerCallback(func), 0); }

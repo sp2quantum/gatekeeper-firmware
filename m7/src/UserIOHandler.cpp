@@ -7,7 +7,7 @@
 
 #include "FunctionRegistry/FunctionRegistry.h"
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
-#include "Utils/shared_memory.h"
+#include "shared_memory.h"
 
 #ifndef FIRMWARE_VERSION_HASH
 #define FIRMWARE_VERSION_HASH UNKNOWN
@@ -17,9 +17,6 @@
 #define STRINGIZE(x) #x
 #define STRINGIZE_VALUE_OF(x) STRINGIZE(x)
 #endif
-
-__attribute__((section(".serial_number")))
-const char UserIOHandler::serial_number[29] = "__SERIAL_NUMBER__DA_2025_ABC";
 
 namespace {
 constexpr size_t COMMAND_NAME_CAPACITY = 64;
@@ -179,44 +176,46 @@ void consumeCommandByte(char c) {
 }
 }  // namespace
 
-void UserIOHandler::setup() {
-  registerFunction(nop, "NOP");
-  registerFunction(id, "*IDN?");
-  registerFunction(rdy, "*RDY?");
-  registerFunction(serialNumber, "SERIAL_NUMBER");
-  registerFunction(getEnvironment, "GET_ENVIRONMENT");
-  registerFunction(getFirmwareVersion, "GET_FIRMWARE_VERSION");
-}
+namespace UserIOHandler {
 
-OperationResult UserIOHandler::getFirmwareVersion() {
+__attribute__((section(".serial_number")))
+const char serial_number[29] = "__SERIAL_NUMBER__DA_2025_ABC";
+
+OperationResult getFirmwareVersion() {
 #ifdef FIRMWARE_VERSION_TAG
   return OperationResult::Success(STRINGIZE_VALUE_OF(FIRMWARE_VERSION_TAG));
 #endif
   return OperationResult::Success(String("Commit Hash: ") +
                                   STRINGIZE_VALUE_OF(FIRMWARE_VERSION_HASH));
 }
+COMMAND("GET_FIRMWARE_VERSION", getFirmwareVersion)
 
-OperationResult UserIOHandler::nop() {
+OperationResult nop() {
   return OperationResult::Success("NOP");
 }
+COMMAND("NOP", nop)
 
-OperationResult UserIOHandler::getEnvironment() {
+OperationResult getEnvironment() {
   return OperationResult::Success("GATEKEEPER");
 }
+COMMAND("GET_ENVIRONMENT", getEnvironment)
 
-OperationResult UserIOHandler::id() {
+OperationResult id() {
   return OperationResult::Success("GateKeeper 1.0");
 }
+COMMAND("*IDN?", id)
 
-OperationResult UserIOHandler::rdy() {
+OperationResult rdy() {
   return OperationResult::Success("READY");
 }
+COMMAND("*RDY?", rdy)
 
-OperationResult UserIOHandler::serialNumber() {
+OperationResult serialNumber() {
   return OperationResult::Success(serial_number + 17);
 }
+COMMAND("SERIAL_NUMBER", serialNumber)
 
-void UserIOHandler::handleUserIO() {
+void handleUserIO() {
   char bytes[COMMAND_READ_CHUNK_SIZE];
   while (hasCommandFromGateway()) {
     const size_t count =
@@ -229,3 +228,5 @@ void UserIOHandler::handleUserIO() {
     }
   }
 }
+
+}  // namespace UserIOHandler

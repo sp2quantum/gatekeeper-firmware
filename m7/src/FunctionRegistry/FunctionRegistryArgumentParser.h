@@ -6,7 +6,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "Peripherals/OperationResult.h"
+#include "Utils/OperationResult.h"
 
 namespace FunctionRegistryParsing {
 

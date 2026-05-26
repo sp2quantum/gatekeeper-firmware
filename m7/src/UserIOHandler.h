@@ -2,19 +2,19 @@
 
 #include <Arduino.h>
 
-#include "Peripherals/OperationResult.h"
+#include "Utils/OperationResult.h"
 
-struct UserIOHandler {
-  static void setup();
-  static OperationResult getFirmwareVersion();
-  static OperationResult nop();
-  static OperationResult getEnvironment();
-  static OperationResult id();
-  static OperationResult rdy();
+namespace UserIOHandler {
 
-  __attribute__((section(".serial_number")))
-  static const char serial_number[29];
+OperationResult getFirmwareVersion();
+OperationResult nop();
+OperationResult getEnvironment();
+OperationResult id();
+OperationResult rdy();
 
-  static OperationResult serialNumber();
-  static void handleUserIO();
-};
+__attribute__((section(".serial_number"))) extern const char serial_number[29];
+
+OperationResult serialNumber();
+void handleUserIO();
+
+}  // namespace UserIOHandler

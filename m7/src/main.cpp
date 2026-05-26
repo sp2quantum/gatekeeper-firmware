@@ -1,14 +1,11 @@
 #include <Arduino.h>
 
 #include "Config.h"
-#include "Peripherals/ADC/ADCController.h"
-#include "Peripherals/DAC/DACController.h"
-#include "Peripherals/BufferRamp.h"
-#include "Peripherals/BufferRamp2D.h"
-#include "Peripherals/PeripheralCommsController.h"
+#include "Calibration/Calibration.h"
+#include "Calibration/CalibrationFlash.h"
+#include "FunctionRegistry/FunctionRegistry.h"
+#include "shared_memory.h"
 #include "UserIOHandler.h"
-#include "Utils/flash.h"
-#include "Utils/shared_memory.h"
 
 #if defined(ARDUINO_GIGA) || defined(CORE_STM32H7)
 #include "stm32h7xx.h"
@@ -18,13 +15,6 @@
 
 constexpr char kFlashWriteFailure[] =
     "Failed to write calibration data to flash!";
-
-#define return_if_not_ok(x) \
-  do {                      \
-    int ret = x;            \
-    if (ret != HAL_OK)      \
-      return;               \
-  } while (0);
 
 static void configureSharedMemoryMpu() {
   HAL_MPU_Disable();
@@ -92,12 +82,12 @@ void enableM4() {
     OBInit.OptionType = OPTIONBYTE_USER;
     OBInit.USERType = OB_USER_BCM4;
     OBInit.USERConfig = 0;
-    return_if_not_ok(HAL_FLASH_OB_Unlock());
-    return_if_not_ok(HAL_FLASH_Unlock());
-    return_if_not_ok(HAL_FLASHEx_OBProgram(&OBInit));
-    return_if_not_ok(HAL_FLASH_OB_Launch());
-    return_if_not_ok(HAL_FLASH_OB_Lock());
-    return_if_not_ok(HAL_FLASH_Lock());
+    if (HAL_FLASH_OB_Unlock() != HAL_OK) return;
+    if (HAL_FLASH_Unlock() != HAL_OK) return;
+    if (HAL_FLASHEx_OBProgram(&OBInit) != HAL_OK) return;
+    if (HAL_FLASH_OB_Launch() != HAL_OK) return;
+    if (HAL_FLASH_OB_Lock() != HAL_OK) return;
+    if (HAL_FLASH_Lock() != HAL_OK) return;
     NVIC_SystemReset();
     return;
   }
@@ -109,88 +99,10 @@ void enableM4() {
 }
 
 static CalibrationData loadCalibrationData() {
-  CalibrationData calibration_data;
-  if (!readCalibrationFromFlash(calibration_data)) {
-    for (size_t i = 0; i < NUM_DAC_CALIBRATION_CHANNELS; ++i) {
-      calibration_data.gain[i] = 1.0f;
-      calibration_data.offset[i] = 0.0f;
-    }
-    for (size_t i = 0; i < NUM_ADC_CALIBRATION_CHANNELS; ++i) {
-      calibration_data.adc_offset[i] = 0x800000;
-      calibration_data.adc_gain[i] = 0x200000;
-    }
-    calibration_data.adcCalibrated = false;
-    return calibration_data;
-  }
-
-  for (size_t i = 0; i < NUM_DAC_CALIBRATION_CHANNELS; ++i) {
-    if (calibration_data.gain[i] < 0.5f || calibration_data.gain[i] > 1.5f) {
-      calibration_data.gain[i] = 1.0f;
-    }
-    if (calibration_data.offset[i] < -1.0f ||
-        calibration_data.offset[i] > 1.0f) {
-      calibration_data.offset[i] = 0.0f;
-    }
-  }
-
+  CalibrationData calibration_data = {};
+  const bool loadedFromFlash = readCalibrationFromFlash(calibration_data);
+  CalibrationRegistry::prepare(calibration_data, loadedFromFlash);
   return calibration_data;
-}
-
-static void setupWorker() {
-  UserIOHandler::setup();
-
-  PeripheralCommsController::setup();
-
-  for (int i : dac_cs_pins) {
-    DACController::addChannel(i);
-  }
-
-  for (int i = 0; i < NUM_ADC_BOARDS; i++) {
-    ADCController::addBoard(adc_cs_pins[i], drdy[i], reset[i], i);
-  }
-
-  DACController::setup();
-  ADCController::setup();
-
-  BufferRamp::setup();
-  BufferRamp2D::setup();
-
-  while (!isCalibrationDataReady()) {
-    delay(1);
-  }
-
-  CalibrationData calibration_data;
-  readCalibrationData(calibration_data);
-
-  for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
-    DACController::applyCalibration(i, calibration_data.offset[i],
-                                    calibration_data.gain[i]);
-  }
-
-  if (!calibration_data.adcCalibrated) {
-    ADCController::hardResetAllADCBoards();
-    for (int i = 0; i < NUM_ADC_CHANNELS; i++) {
-      uint32_t zeroScaleCalibration =
-          ADCController::getChZeroScaleCalibration(i).getMessage().toInt();
-      uint32_t fullScaleCalibration =
-          ADCController::getChFullScaleCalibration(i).getMessage().toInt();
-
-      calibration_data.adc_offset[i] = zeroScaleCalibration;
-      calibration_data.adc_gain[i] = fullScaleCalibration;
-      calibration_data.adcCalibrated = true;
-    }
-    updateCalibrationData(calibration_data);
-  } else {
-    for (int i = 0; i < NUM_ADC_CHANNELS; i++) {
-      ADCController::applyChZeroScaleCalibration(i,
-                                                 calibration_data.adc_offset[i]);
-
-      if (calibration_data.adc_gain[i] != 0) {
-        ADCController::applyChFullScaleCalibration(i,
-                                                   calibration_data.adc_gain[i]);
-      }
-    }
-  }
 }
 
 void setup() {
@@ -207,7 +119,7 @@ void setup() {
   CalibrationData calibration_data = loadCalibrationData();
   publishCalibrationData(calibration_data);
 
-  setupWorker();
+  SetupRegistry::runAll();
 }
 
 void loop() {

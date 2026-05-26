@@ -1,9 +1,11 @@
-#include "Peripherals/BufferRampCommon.h"
+#include "Commands/BufferRamps/BufferRampCommon.h"
+
+#include <algorithm>
 
 #include "Peripherals/ADC/ADCController.h"
 #include "Peripherals/DAC/DACController.h"
 #include "Utils/TimingUtil.h"
-#include "Utils/shared_memory.h"
+#include "shared_memory.h"
 
 namespace BufferRampCommon {
 
@@ -110,6 +112,34 @@ OperationResult dacWriteFailure(int channel, double voltage) {
   }
 
   return OperationResult::Failure(message + " source=spi");
+}
+
+int maxSelectedAdcChannelsPerBoard(const int* adcChannels,
+                                   int numAdcChannels) {
+  int boardDepth[NUM_ADC_BOARDS] = {};
+  for (int i = 0; i < numAdcChannels; i++) {
+    const int channel = adcChannels[i];
+    if (channel < 0 || channel >= NUM_ADC_CHANNELS) {
+      continue;
+    }
+    boardDepth[adcBoardForChannel(channel)]++;
+  }
+  return *std::max_element(boardDepth, boardDepth + NUM_ADC_BOARDS);
+}
+
+float maxAdcConversionTimePerBoard(const int* adcChannels,
+                                   int numAdcChannels) {
+  float boardConversionTimeUs[NUM_ADC_BOARDS] = {};
+  for (int i = 0; i < numAdcChannels; i++) {
+    const int channel = adcChannels[i];
+    if (channel < 0 || channel >= NUM_ADC_CHANNELS) {
+      continue;
+    }
+    boardConversionTimeUs[adcBoardForChannel(channel)] +=
+        ADCController::getConversionTimeFloat(channel);
+  }
+  return *std::max_element(boardConversionTimeUs,
+                           boardConversionTimeUs + NUM_ADC_BOARDS);
 }
 
 bool sendVoltageFrame(const double* packets, size_t length) {

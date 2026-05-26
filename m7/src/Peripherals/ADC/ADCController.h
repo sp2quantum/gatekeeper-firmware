@@ -2,91 +2,92 @@
 
 #include <Arduino.h>
 
-#include <vector>
-
 #include "Config.h"
-#include "Peripherals/ADC/ADCBoard.h"
-#include "Peripherals/OperationResult.h"
+#include "Utils/OperationResult.h"
 
-class ADCController {
- private:
-  static std::vector<ADCBoard> adc_boards;
+namespace AdcRegister {
 
-  static int getBoardIndexFromGlobalIndex(int channel_index);
-  static int getChannelIndexFromGlobalIndex(int channel_index);
+constexpr uint8_t kRead = 1u << 6;
+constexpr uint8_t kWrite = 0u;
+constexpr uint8_t kIo = 0x1;
+constexpr uint8_t kRevision = 0x2;
+constexpr uint8_t kAdcStatus = 0x4;
+constexpr uint8_t kAdcZeroScaleCal = 0x6;
 
- public:
-  static void initialize();
-  static void resetToPreviousConversionTimes();
-  static void setup();
-  static void setReadyFlag(int i);
-  static bool getReadyFlag(int i);
-  static void clearReadyFlag(int i);
-  static void initializeRegistry();
-  static void addBoard(int cs_pin, int data_ready, int reset_pin,
-                       int board_idx);
-  static bool isChannelIndexValid(int channelIndex);
-  static bool isSavedChannelIndexValid(int channelIndex);
-  static OperationResult readChannelVoltage(int channel_index);
-  static void toggleSync();
-  static float getVoltage(int channel_index);
-  static OperationResult setChopping(bool chop);
-  static OperationResult getChopping();
-  static OperationResult getRevisionRegister(int board_index);
-  static OperationResult getChZeroScaleCalibration(int channel_index);
-  static OperationResult getChFullScaleCalibration(int channel_index);
-  static OperationResult getSavedChZeroScaleCalibration(int channel_index);
-  static OperationResult getSavedChFullScaleCalibration(int channel_index);
-  static OperationResult setSavedChZeroScaleCalibration(int channel_index,
-                                                        uint32_t value);
-  static OperationResult setSavedChFullScaleCalibration(int channel_index,
-                                                        uint32_t value);
-  static OperationResult setChZeroScaleCalibration(int channel_index,
-                                                   uint32_t value);
-  static OperationResult setChFullScaleCalibration(int channel_index,
-                                                   uint32_t value);
-  static OperationResult applyChZeroScaleCalibration(int channel_index,
-                                                     uint32_t value);
-  static OperationResult applyChFullScaleCalibration(int channel_index,
-                                                     uint32_t value);
-  static OperationResult resetToPreviousConversionTimesSerial();
-  static int getDataReadyPin(int board_index);
-  static int getCsPin(int adc_channel);
-  static bool buildConversionDataRead(int adc_channel, byte packet[4]);
-  static double conversionDataPacketToVoltage(const byte packet[4]);
-  static uint32_t getConversionData(int adc_channel);
-  static OperationResult setRDYFN(int adc_channel);
-  static OperationResult unsetRDYFN(int adc_channel);
-  static double getVoltageData(int adc_channel);
-  static double getVoltageDataNoTransaction(int adc_channel);
-  static void startContinuousConversion(int adc_channel);
-  static OperationResult continuousConvertRead(int channel_index,
-                                               uint32_t frequency_us,
-                                               uint32_t duration_us);
-  static OperationResult idleMode(int adc_channel);
-  static OperationResult getChannelsActive();
+constexpr uint8_t channelData(int ch) {
+  return static_cast<uint8_t>(0x08 + ch);
+}
+constexpr uint8_t channelZeroScaleCal(int ch) {
+  return static_cast<uint8_t>(0x10 + ch);
+}
+constexpr uint8_t channelFullScaleCal(int ch) {
+  return static_cast<uint8_t>(0x18 + ch);
+}
+constexpr uint8_t channelSetup(int ch) {
+  return static_cast<uint8_t>(0x28 + ch);
+}
+constexpr uint8_t channelConversionTime(int ch) {
+  return static_cast<uint8_t>(0x30 + ch);
+}
+constexpr uint8_t mode(int ch) {
+  return static_cast<uint8_t>(0x38 + ch);
+}
 
-  template <typename T>
-  static String parseVector(const std::vector<T>& data) {
-    String result = "";
-    for (const auto& d : data) {
-      result += String(d) + ",";
-    }
-    return result.substring(0, result.length() - 1);
-  }
+constexpr uint8_t kMode24 = 1u << 1;
+constexpr uint8_t kBitMode = kMode24;
+constexpr uint8_t kIdleMode = (0u << 5) | kBitMode;
+constexpr uint8_t kContinuousConversionMode = (1u << 5) | kBitMode;
+constexpr uint8_t kSingleConversionMode = (2u << 5) | kBitMode;
+constexpr uint8_t kZeroScaleSelfCalMode = (4u << 5) | kBitMode;
+constexpr uint8_t kChannelZeroScaleSystemCalMode = (6u << 5) | kBitMode;
+constexpr uint8_t kChannelFullScaleSystemCalMode = (7u << 5) | kBitMode;
+constexpr uint8_t kEnableContinuousConversion = 1u << 3;
 
-  static OperationResult hardResetAllADCBoards();
-  static OperationResult resetAllADCBoards();
-  static OperationResult talkADC(byte command);
-  static OperationResult adcZeroScaleCal();
-  static OperationResult adcChannelSystemZeroScaleCal();
-  static OperationResult adcChannelSystemFullScaleCal();
-  static OperationResult setConversionTime(int adc_channel, float time_us);
-  static OperationResult setConversionTimeFW(int adc_channel, int filter_word);
-  static float presetConversionTime(int adc_channel, int time_us,
-                                    bool isMoreThanOneChannelActive);
-  static float getConversionTimeFloat(int adc_channel);
-  static float getConversionTimeFloat(int adc_channel,
-                                      bool isMoreThanOneChannelActive);
-  static OperationResult getConversionTime(int adc_channel);
-};
+constexpr double kAdcResolution24 = 16777215.0;
+constexpr double kFullScaleRange = 20.0;
+
+inline double toDouble(uint32_t value) {
+  return kFullScaleRange *
+         (static_cast<double>(value) - (kAdcResolution24 / 2.0)) /
+         kAdcResolution24;
+}
+
+}  // namespace AdcRegister
+
+namespace ADCController {
+
+void setup();
+void initialize();
+void resetToPreviousConversionTimes();
+bool isChannelIndexValid(int channelIndex);
+
+OperationResult readChannelVoltage(int channel_index);
+float getVoltage(int channel_index);
+double getVoltageData(int adc_channel);
+double getVoltageDataNoTransaction(int adc_channel);
+
+void startContinuousConversion(int adc_channel);
+OperationResult idleMode(int adc_channel);
+OperationResult setRDYFN(int adc_channel);
+OperationResult unsetRDYFN(int adc_channel);
+
+int getDataReadyPin(int board_index);
+int getCsPin(int adc_channel);
+bool buildConversionDataRead(int adc_channel, byte packet[4]);
+double conversionDataPacketToVoltage(const byte packet[4]);
+
+OperationResult setConversionTime(int adc_channel, float time_us);
+float presetConversionTime(int adc_channel, int time_us,
+                           bool isMoreThanOneChannelActive);
+float getConversionTimeFloat(int adc_channel);
+float getConversionTimeFloat(int adc_channel,
+                             bool isMoreThanOneChannelActive);
+
+OperationResult getChZeroScaleCalibration(int channel_index);
+OperationResult getChFullScaleCalibration(int channel_index);
+OperationResult applyChZeroScaleCalibration(int channel_index, uint32_t value);
+OperationResult applyChFullScaleCalibration(int channel_index, uint32_t value);
+
+OperationResult hardResetAllADCBoards();
+
+}  // namespace ADCController

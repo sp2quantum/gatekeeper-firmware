@@ -1,6 +1,6 @@
-#include "Peripherals/RampCommand.h"
+#include "Commands/BufferRamps/RampCommand.h"
 
-#include "Peripherals/BufferRampCommon.h"
+#include "Commands/BufferRamps/BufferRampCommon.h"
 #include "Peripherals/DAC/DACController.h"
 
 namespace RampCommand {
