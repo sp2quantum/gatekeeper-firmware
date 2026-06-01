@@ -187,6 +187,12 @@ OperationResult dacLedBufferRamp2D(
   if (dacSettlingTimeArg >= dacIntervalArg) {
     return OperationResult::Failure("Invalid interval or settling time");
   }
+  OperationResult minimumTimingValidation =
+      BufferRampCommon::validateDacLedTiming(
+          dacIntervalArg, dacSettlingTimeArg, adcChannels, numAdcChannels);
+  if (!minimumTimingValidation.isSuccess()) {
+    return minimumTimingValidation;
+  }
 
   ADCController::resetToPreviousConversionTimes();
   OperationResult timingValidation =

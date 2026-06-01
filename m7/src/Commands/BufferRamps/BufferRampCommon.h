@@ -7,6 +7,13 @@
 
 namespace BufferRampCommon {
 
+enum class TimeSeriesTimingMode {
+  OneD,
+  TwoDNormal,
+  TwoDRetrace,
+  TwoDSnake,
+};
+
 bool isValidDacChannelCount(int count);
 bool isValidAdcChannelCount(int count);
 bool isUint32AtLeast(float value, uint32_t minimum);
@@ -31,6 +38,31 @@ int maxSelectedAdcChannelsPerBoard(const int* adcChannels,
                                    int numAdcChannels);
 float maxAdcConversionTimePerBoard(const int* adcChannels,
                                    int numAdcChannels);
+
+uint16_t minimumDacLedIntervalUs(const int* adcChannels, int numAdcChannels);
+uint16_t minimumAwgWithAdcIntervalUs(int numDacChannels,
+                                    const int* adcChannels,
+                                    int numAdcChannels);
+uint16_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
+                                        int numAdcChannels,
+                                        TimeSeriesTimingMode mode);
+uint16_t minimumBoxcarConversionTimeUs(const int* adcChannels,
+                                       int numAdcChannels);
+OperationResult validateDacLedTiming(float dacIntervalArg,
+                                     float dacSettlingTimeArg,
+                                     const int* adcChannels,
+                                     int numAdcChannels);
+OperationResult validateTimeSeriesTiming(float adcIntervalArg,
+                                         const int* adcChannels,
+                                         int numAdcChannels,
+                                         TimeSeriesTimingMode mode);
+OperationResult validateAwgWithAdcTiming(float dacIntervalArg,
+                                         int numDacChannels,
+                                         const int* adcChannels,
+                                         int numAdcChannels);
+OperationResult validateBoxcarTiming(float adcConversionTimeArg,
+                                     const int* adcChannels,
+                                     int numAdcChannels);
 
 bool sendVoltageFrame(const double* packets, size_t length);
 bool encodeDacVoltagePackets(int numDacChannels, const int* dacChannels,

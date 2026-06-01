@@ -190,6 +190,90 @@ A `VoltagePacket` is simply a float that is transmitted to LabRAD over serial as
 
 ### Buffer Ramps
 
+#### Minimum Timing Tables
+
+These limits were measured on a real GateKeeper with all ADC conversion times set
+to the hardware minimum request of 82us (82.03125us actual), with
+`dac_settling_time_us = 20` for DAC-led ramps. Calibration commands were not
+run. Rows are the number of selected ADC channels on ADC card 0 and columns are
+the number of selected ADC channels on ADC card 1, so `1/1` and `2/0` are
+intentionally different cases. The firmware hardcodes these limits in
+`BufferRampCommon`.
+
+DAC count did not change the DAC-led minimum in spot checks for N = 1, 2, 4, and
+8 DAC channels. These values apply to `DAC_LED_BUFFER_RAMP` and
+`2D_DAC_LED_BUFFER_RAMP` with normal, retrace, or snake scanning.
+
+| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | - | 120 | 200 | 300 | 400 |
+| 1 | 120 | 120 | 220 | 320 | 420 |
+| 2 | 200 | 220 | 240 | 320 | 420 |
+| 3 | 300 | 320 | 320 | 340 | 440 |
+| 4 | 400 | 420 | 420 | 440 | 460 |
+
+`TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`:
+
+| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | - | 80 | 80 | 100 | 160 |
+| 1 | 80 | 80 | 80 | 80 | 160 |
+| 2 | 80 | 80 | 80 | 180 | 140 |
+| 3 | 100 | 120 | 120 | 200 | 240 |
+| 4 | 160 | 160 | 300 | 240 | 160 |
+
+`2D_TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`, normal mode:
+
+| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | - | 80 | 80 | 80 | 80 |
+| 1 | 80 | 80 | 80 | 80 | 280 |
+| 2 | 80 | 80 | 80 | 120 | 160 |
+| 3 | 80 | 80 | 80 | 120 | 160 |
+| 4 | 80 | 280 | 160 | 160 | 160 |
+
+`2D_TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`, retrace mode:
+
+| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | - | 80 | 80 | 80 | 80 |
+| 1 | 80 | 80 | 80 | 80 | 280 |
+| 2 | 80 | 80 | 80 | 80 | 160 |
+| 3 | 80 | 80 | 80 | 120 | 160 |
+| 4 | 80 | 280 | 160 | 160 | 160 |
+
+`2D_TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`, snake mode:
+
+| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | - | 80 | 80 | 80 | 80 |
+| 1 | 80 | 80 | 80 | 80 | 260 |
+| 2 | 80 | 80 | 80 | 80 | 160 |
+| 3 | 80 | 120 | 80 | 120 | 220 |
+| 4 | 80 | 280 | 160 | 160 | 270 |
+
+`AWG_WITH_ADC` uses the DAC-led table as its base `dac_interval_us`, with a
+DAC-count overhead for heavier DAC updates:
+
+| DAC channels | Additional interval |
+| ---: | ---: |
+| 1-3 | 0 |
+| 4-7 | +20us when the base interval is 200-280us |
+| 8 | +40us |
+
+`BOXCAR_BUFFER_RAMP` enforces a conservative `adc_conversion_time_us` floor
+based on the busiest ADC card. The ramp data were sensible at lower values, but
+the timing watchdog showed ADC timing pressure near the lower and phase-sensitive
+settings; the firmware therefore checks DAC/ADC SPI missteps and ignores the
+persistent ADC-conversion watchdog bit for boxcar cleanup.
+
+| Max selected ADC channels on one card | Minimum `adc_conversion_time_us` |
+| ---: | ---: |
+| 1 | 300 |
+| 2 | 300 |
+| 3 | 500 |
+| 4 | 800 |
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).

@@ -48,6 +48,12 @@ OperationResult boxcarAverageRamp(
   OperationResult channelValidation = validateRampChannels(
       dacChannels, numDacChannels, adcChannels, numAdcChannels);
   if (!channelValidation.isSuccess()) return channelValidation;
+  OperationResult minimumTimingValidation =
+      BufferRampCommon::validateBoxcarTiming(
+          adcConversionTimeArg, adcChannels, numAdcChannels);
+  if (!minimumTimingValidation.isSuccess()) {
+    return minimumTimingValidation;
+  }
   OperationResult endpointValidation =
       RampCommand::validateBoxcarDacEndpoints(numDacChannels, dacChannels,
                                               dacV0_1, dacVf_1, dacV0_2,
@@ -160,7 +166,8 @@ OperationResult boxcarAverageRamp(
   return ctx.finish(
       voltageOverflow
           ? OperationResult::Failure("Voltage output buffer overflow")
-          : OperationResult::Success());
+          : OperationResult::Success(),
+      true, false);
 }
 COMMAND("BOXCAR_BUFFER_RAMP", boxcarAverageRamp)
 

@@ -47,6 +47,12 @@ OperationResult awgWithAdc(int numDacChannels, int numAdcChannels,
   OperationResult channelValidation = validateRampChannels(
       dacChannels, numDacChannels, adcChannels, numAdcChannels);
   if (!channelValidation.isSuccess()) return channelValidation;
+  OperationResult minimumTimingValidation =
+      BufferRampCommon::validateAwgWithAdcTiming(
+          dacIntervalArg, numDacChannels, adcChannels, numAdcChannels);
+  if (!minimumTimingValidation.isSuccess()) {
+    return minimumTimingValidation;
+  }
 
   OperationResult waveformBounds = validateDacVoltageListBounds(
       numDacChannels, numSteps, dacChannels, channelMajorVoltages.data());
