@@ -32,6 +32,16 @@ OperationResult timeSeriesBufferRamp2D(
   const uint32_t adcIntervalUs = static_cast<uint32_t>(adcIntervalArg);
   const bool retrace = retraceArg != 0.0f;
   const bool snake = snakeArg != 0.0f;
+  const BufferRampCommon::TimeSeriesTimingMode timingMode =
+      snake ? BufferRampCommon::TimeSeriesTimingMode::TwoDSnake
+            : (retrace ? BufferRampCommon::TimeSeriesTimingMode::TwoDRetrace
+                       : BufferRampCommon::TimeSeriesTimingMode::TwoDNormal);
+  OperationResult minimumTimingValidation =
+      BufferRampCommon::validateTimeSeriesTiming(
+          adcIntervalArg, adcChannels, numAdcChannels, timingMode);
+  if (!minimumTimingValidation.isSuccess()) {
+    return minimumTimingValidation;
+  }
 
   float slowStepSize[NUM_DAC_CHANNELS] = {};
   for (int i = 0; i < numDacChannels; i++) {

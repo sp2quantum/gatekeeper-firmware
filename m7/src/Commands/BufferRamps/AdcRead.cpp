@@ -30,6 +30,11 @@ OperationResult timeSeriesAdcRead(int numAdcChannels,
       !BufferRampCommon::isUint32AtLeast(totalDurationArg, 82)) {
     return OperationResult::Failure("Invalid total duration");
   }
+  if (conversionTimeArg < 82.0f) {
+    return OperationResult::Failure(
+        "ADC conversion time too short (" + String(conversionTimeArg, 3) +
+        " us < minimum 82 us)");
+  }
 
   int* adcChannels = adcChannelsList.data();
   const uint32_t conversionTimeUs = static_cast<uint32_t>(conversionTimeArg);

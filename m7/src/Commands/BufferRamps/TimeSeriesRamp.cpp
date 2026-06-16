@@ -58,6 +58,13 @@ OperationResult timeSeriesBufferRamp(
   OperationResult endpointValidation = RampCommand::validateDacEndpoints(
       numDacChannels, dacChannels, dacV0s, dacVfs);
   if (!endpointValidation.isSuccess()) return endpointValidation;
+  OperationResult minimumTimingValidation =
+      BufferRampCommon::validateTimeSeriesTiming(
+          adcIntervalArg, adcChannels, numAdcChannels,
+          BufferRampCommon::TimeSeriesTimingMode::OneD);
+  if (!minimumTimingValidation.isSuccess()) {
+    return minimumTimingValidation;
+  }
 
   RampContext ctx;
   OperationResult setupResult =

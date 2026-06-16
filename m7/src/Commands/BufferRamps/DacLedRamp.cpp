@@ -164,6 +164,12 @@ OperationResult dacLedBufferRamp(
   OperationResult endpointValidation = RampCommand::validateDacEndpoints(
       numDacChannels, dacChannels, dacV0s, dacVfs);
   if (!endpointValidation.isSuccess()) return endpointValidation;
+  OperationResult minimumTimingValidation =
+      BufferRampCommon::validateDacLedTiming(
+          dacIntervalArg, dacSettlingTimeArg, adcChannels, numAdcChannels);
+  if (!minimumTimingValidation.isSuccess()) {
+    return minimumTimingValidation;
+  }
 
   ADCController::resetToPreviousConversionTimes();
   OperationResult timingValidation =
