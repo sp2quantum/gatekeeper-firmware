@@ -20,6 +20,8 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
           key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini', 'm4/platformio.ini', 'm7/platformio.ini') }}
 
       # Setup Python environment
@@ -29,15 +31,33 @@ jobs:
 
       # Install PlatformIO Core
       - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --upgrade platformio
+
+      # Install package dependencies before generating variants
+      - name: Install PlatformIO project packages
+        run: |
+          pio pkg install --project-dir m4
+          pio pkg install --project-dir m7
+
+      # Generate variants from the installed Arduino-mbed package
+      - name: Regenerate PlatformIO variants
+        run: |
+          rm -rf platformio_variants/generated
+          python3 platformio_tools/generate_platformio_variants.py
+          test -f platformio_variants/generated/GIGA/pins_arduino.h
+          test -f platformio_variants/generated/GENERIC_STM32H747_M4/pins_arduino.h
 
       # Build the complete firmware bundle through the root PlatformIO entrypoint
       - name: Build Firmware Bundle
-        run: pio run
+        run: pio run -e gatekeeper_firmware
 
       # Rename firmware files
       - name: Rename Firmware Files
         run: |
+          test -f ./.pio/build/gatekeeper_firmware/m4/gatekeeper_m4_usb_gateway/firmware.bin
+          test -f ./.pio/build/gatekeeper_firmware/m7/gatekeeper_m7_worker/firmware.bin
           mkdir -p firmware
           cp ./.pio/build/gatekeeper_firmware/m4/gatekeeper_m4_usb_gateway/firmware.bin ./firmware/firmwareM4.bin
           cp ./.pio/build/gatekeeper_firmware/m7/gatekeeper_m7_worker/firmware.bin ./firmware/firmwareM7.bin

@@ -13,12 +13,28 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
           key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini', 'm4/platformio.ini', 'm7/platformio.ini') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --upgrade platformio
+
+      - name: Install PlatformIO project packages
+        run: |
+          pio pkg install --project-dir m4
+          pio pkg install --project-dir m7
+
+      - name: Regenerate PlatformIO variants
+        run: |
+          rm -rf platformio_variants/generated
+          python3 platformio_tools/generate_platformio_variants.py
+          test -f platformio_variants/generated/GIGA/pins_arduino.h
+          test -f platformio_variants/generated/GENERIC_STM32H747_M4/pins_arduino.h
 
       - name: Build Firmware Bundle
-        run: pio run
+        run: pio run -e gatekeeper_firmware
