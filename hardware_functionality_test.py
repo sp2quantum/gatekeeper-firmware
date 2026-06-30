@@ -755,7 +755,12 @@ class HardwareTest:
             self.record(f"2D_TIME_SERIES_BUFFER_RAMP {label}", ok and sensible, samples=int(arr.shape[0]), message=msg)
             traces[label] = arr
 
-        self.set_all_dacs(0.0)
+        adc_targets = np.arange(NUM_CHANNELS, dtype=float)
+        for ch, target in enumerate(adc_targets):
+            line = self.gk.query_line("SET", ch, float(target), timeout=2.0)
+            if line.startswith("FAILURE:"):
+                raise RuntimeError(line)
+        time.sleep(0.06)
         duration_us = 40_000
         self.gk.ser.reset_input_buffer()
         self.gk.write_command("TIME_SERIES_ADC_READ", NUM_CHANNELS, *channels, 82, duration_us)
@@ -765,15 +770,22 @@ class HardwareTest:
         raw = self.gk.read_exact(expected_samples * NUM_CHANNELS * 4, timeout=6.0)
         msg = self.gk.read_idle_text(timeout=0.5)
         adc_data = np.frombuffer(raw, dtype="<f4").astype(float).reshape((-1, NUM_CHANNELS))
+        adc_means = np.mean(adc_data, axis=0)
+        adc_errors = adc_means - adc_targets
         self.record(
-            "TIME_SERIES_ADC_READ at minimum conversion time",
-            np.all(np.isfinite(adc_data)) and np.max(np.abs(adc_data)) < 0.25 and not msg.startswith("FAILURE:"),
+            "TIME_SERIES_ADC_READ indexed DAC loopback",
+            np.all(np.isfinite(adc_data))
+            and np.max(np.abs(adc_errors)) < 0.15
+            and not msg.startswith("FAILURE:"),
             sample_period_us=sample_period,
             samples=int(adc_data.shape[0]),
-            std_uv=(np.std(adc_data, axis=0) * 1e6).round(3).tolist(),
+            targets=adc_targets.tolist(),
+            means=adc_means.round(6).tolist(),
+            max_abs_error=float(np.max(np.abs(adc_errors))),
+            std_mv=(np.std(adc_data, axis=0) * 1e3).round(3).tolist(),
             message=msg,
         )
-        traces["adc_read_noise"] = adc_data
+        traces["adc_read_indexed_dac"] = adc_data
 
         continuous = self.gk.query_line("CONTINUOUS_CONVERT_READ", 0, 5000, 30000, timeout=3.0)
         values = np.array([float(x) for x in continuous.split(",") if x])

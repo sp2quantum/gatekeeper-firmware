@@ -556,12 +556,20 @@ double getVoltageDataNoTransaction(int ch) {
 void startContinuousConversion(int ch) {
   int b = boardForChannel(ch);
   int lc = localChannel(ch);
-  uint8_t data[4];
-  data[0] = AdcRegister::kWrite | AdcRegister::channelSetup(lc);
-  data[1] = AdcRegister::kEnableContinuousConversion;
-  data[2] = AdcRegister::kWrite | AdcRegister::mode(lc);
-  data[3] = AdcRegister::kContinuousConversionMode;
-  comms[b].transferADC(data, 4);
+  uint8_t setup[2];
+  setup[0] = AdcRegister::kWrite | AdcRegister::channelSetup(lc);
+  setup[1] = AdcRegister::kEnableContinuousConversion;
+  comms[b].transferADC(setup, 2);
+  selectContinuousConversionChannel(ch);
+}
+
+void selectContinuousConversionChannel(int ch) {
+  int b = boardForChannel(ch);
+  int lc = localChannel(ch);
+  uint8_t mode[2];
+  mode[0] = AdcRegister::kWrite | AdcRegister::mode(lc);
+  mode[1] = AdcRegister::kContinuousConversionMode;
+  comms[b].transferADC(mode, 2);
 }
 
 OperationResult idleMode(int ch) {
