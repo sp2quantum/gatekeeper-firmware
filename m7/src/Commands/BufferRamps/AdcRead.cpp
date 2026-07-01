@@ -153,8 +153,9 @@ OperationResult timeSeriesAdcRead(int numAdcChannels,
     samplePeriodUsFloat += slotConversionUs;
   }
 
-  const int samplePeriodUs = static_cast<int>(samplePeriodUsFloat);
-  const int savedDataSize = totalDurationUs / samplePeriodUs;
+  const int savedDataSize =
+      static_cast<int>(static_cast<double>(totalDurationUs) /
+                       samplePeriodUsFloat);
 
   if (!sendVoltageFrame(&samplePeriodUsFloat, 1)) {
     clearWorkerStopRequest();
