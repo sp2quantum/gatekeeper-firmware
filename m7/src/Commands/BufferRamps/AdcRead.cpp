@@ -1,4 +1,8 @@
 #include "Config.h"
+
+#include <array>
+#include <utility>
+
 #include "FunctionRegistry/FunctionRegistryArgumentParser.h"
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
 #include "Peripherals/ADC/ADCController.h"
@@ -15,12 +19,12 @@ namespace {
 using BufferRampCommon::isValidAdcChannelCount;
 using BufferRampCommon::sendVoltageFrame;
 
-volatile uint8_t adcReadExpectedMask = 0;
+volatile AdcBoardMask adcReadExpectedMask = 0;
 
 template <int boardIndex>
 void adcReadDataReadyISR() {
-  const uint8_t bit = static_cast<uint8_t>(1u << boardIndex);
-  TimingUtil::adcConversionInProgressMask &= static_cast<uint8_t>(~bit);
+  const AdcBoardMask bit = TimingUtil::adcBoardBit(boardIndex);
+  TimingUtil::adcConversionInProgressMask &= ~bit;
   TimingUtil::adcFlag |= bit;
   if (adcReadExpectedMask != 0 &&
       (TimingUtil::adcFlag & adcReadExpectedMask) == adcReadExpectedMask) {
@@ -31,10 +35,14 @@ void adcReadDataReadyISR() {
 
 using AdcIsr = void (*)();
 
-AdcIsr kAdcReadIsrFunctions[NUM_ADC_BOARDS] = {
-    adcReadDataReadyISR<0>,
-    adcReadDataReadyISR<1>,
-};
+template <size_t... Indices>
+std::array<AdcIsr, sizeof...(Indices)> makeAdcReadIsrFunctions(
+    std::index_sequence<Indices...>) {
+  return {{adcReadDataReadyISR<Indices>...}};
+}
+
+const auto kAdcReadIsrFunctions =
+    makeAdcReadIsrFunctions(std::make_index_sequence<NUM_ADC_BOARDS>{});
 
 void clearAdcReadFlags() {
   __disable_irq();
@@ -46,7 +54,7 @@ void clearAdcReadFlags() {
   __enable_irq();
 }
 
-bool consumeExpectedAdcFlag(uint8_t expectedMask) {
+bool consumeExpectedAdcFlag(AdcBoardMask expectedMask) {
   if (expectedMask == 0 ||
       (TimingUtil::adcFlag & expectedMask) != expectedMask) {
     return false;
@@ -56,16 +64,16 @@ bool consumeExpectedAdcFlag(uint8_t expectedMask) {
   const bool pending =
       (TimingUtil::adcFlag & expectedMask) == expectedMask;
   if (pending) {
-    TimingUtil::adcFlag &= static_cast<uint8_t>(~expectedMask);
+    TimingUtil::adcFlag &= ~expectedMask;
     adcReadExpectedMask = 0;
   }
   __enable_irq();
   return pending;
 }
 
-void attachDataReadyInterrupts(uint8_t boardMask) {
+void attachDataReadyInterrupts(AdcBoardMask boardMask) {
   for (int board = 0; board < NUM_ADC_BOARDS; board++) {
-    if ((boardMask & (1u << board)) == 0) continue;
+    if ((boardMask & TimingUtil::adcBoardBit(board)) == 0) continue;
     const int pin = ADCController::getDataReadyPin(board);
     if (pin == NC) continue;
     attachInterrupt(digitalPinToInterrupt(pin), kAdcReadIsrFunctions[board],
@@ -73,9 +81,9 @@ void attachDataReadyInterrupts(uint8_t boardMask) {
   }
 }
 
-void detachDataReadyInterrupts(uint8_t boardMask) {
+void detachDataReadyInterrupts(AdcBoardMask boardMask) {
   for (int board = 0; board < NUM_ADC_BOARDS; board++) {
-    if ((boardMask & (1u << board)) == 0) continue;
+    if ((boardMask & TimingUtil::adcBoardBit(board)) == 0) continue;
     const int pin = ADCController::getDataReadyPin(board);
     if (pin == NC) continue;
     detachInterrupt(digitalPinToInterrupt(pin));
@@ -107,7 +115,7 @@ OperationResult timeSeriesAdcRead(int numAdcChannels,
   const uint32_t totalDurationUs = static_cast<uint32_t>(totalDurationArg);
 
   uint8_t boardDepth[NUM_ADC_BOARDS] = {};
-  uint8_t boardMask = 0;
+  AdcBoardMask boardMask = 0;
   uint8_t maxDepth = 0;
   int channelAtSlot[NUM_ADC_BOARDS][NUM_CHANNELS_PER_ADC_BOARD] = {};
   int outputIndexAtSlot[NUM_ADC_BOARDS][NUM_CHANNELS_PER_ADC_BOARD] = {};
@@ -118,7 +126,7 @@ OperationResult timeSeriesAdcRead(int numAdcChannels,
     const uint8_t slot = boardDepth[board]++;
     channelAtSlot[board][slot] = channel;
     outputIndexAtSlot[board][slot] = outputIndex;
-    boardMask |= static_cast<uint8_t>(1u << board);
+    boardMask |= TimingUtil::adcBoardBit(board);
     if (boardDepth[board] > maxDepth) {
       maxDepth = boardDepth[board];
     }
@@ -167,17 +175,17 @@ OperationResult timeSeriesAdcRead(int numAdcChannels,
   }
 
   auto activeMaskForSlot = [&](int slot) {
-    uint8_t mask = 0;
+    AdcBoardMask mask = 0;
     for (int board = 0; board < NUM_ADC_BOARDS; board++) {
       if (boardDepth[board] > slot) {
-        mask |= static_cast<uint8_t>(1u << board);
+        mask |= TimingUtil::adcBoardBit(board);
       }
     }
     return mask;
   };
 
   auto startSlot = [&](int slot) {
-    const uint8_t expectedMask = activeMaskForSlot(slot);
+    const AdcBoardMask expectedMask = activeMaskForSlot(slot);
     FastGpio::digitalWrite(adc_sync, false);
     for (int board = 0; board < NUM_ADC_BOARDS; board++) {
       if (boardDepth[board] <= slot) continue;
@@ -233,7 +241,7 @@ OperationResult timeSeriesAdcRead(int numAdcChannels,
 
   int samplesCaptured = 0;
   int currentSlot = 0;
-  uint8_t expectedMask = startSlot(currentSlot);
+  AdcBoardMask expectedMask = startSlot(currentSlot);
   double packets[NUM_ADC_CHANNELS] = {};
   bool voltageOverflow = false;
 
@@ -249,7 +257,7 @@ OperationResult timeSeriesAdcRead(int numAdcChannels,
         !completedFrame || (samplesCaptured + 1 < savedDataSize);
     const int nextSlot = completedFrame ? 0 : completedSlot + 1;
 
-    uint8_t nextExpectedMask = 0;
+    AdcBoardMask nextExpectedMask = 0;
     if (needNextConversion) {
       nextExpectedMask = startSlot(nextSlot);
     } else {

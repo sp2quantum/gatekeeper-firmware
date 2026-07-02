@@ -1,6 +1,8 @@
 #include "Peripherals/DAC/DACController.h"
 
+#include <array>
 #include <cmath>
+#include <utility>
 
 #include "Calibration/Calibration.h"
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
@@ -26,16 +28,18 @@ bool isFinite(float value) {
   return std::isfinite(static_cast<double>(value));
 }
 
-PeripheralCommsController comms[NUM_DAC_CHANNELS] = {
-    PeripheralCommsController(dac_cs_pins[0]),
-    PeripheralCommsController(dac_cs_pins[1]),
-    PeripheralCommsController(dac_cs_pins[2]),
-    PeripheralCommsController(dac_cs_pins[3]),
-    PeripheralCommsController(dac_cs_pins[4]),
-    PeripheralCommsController(dac_cs_pins[5]),
-    PeripheralCommsController(dac_cs_pins[6]),
-    PeripheralCommsController(dac_cs_pins[7]),
-};
+bool isValidCalibrationPair(float offset, float gain) {
+  return isFinite(gain) && gain >= 0.5f && gain <= 1.5f &&
+         isFinite(offset) && offset >= -1.0f && offset <= 1.0f;
+}
+
+template <size_t... Indices>
+std::array<PeripheralCommsController, sizeof...(Indices)> makeDacComms(
+    std::index_sequence<Indices...>) {
+  return {{PeripheralCommsController(dac_cs_pins[Indices])...}};
+}
+
+auto comms = makeDacComms(std::make_index_sequence<NUM_DAC_CHANNELS>{});
 
 float gain_error[NUM_DAC_CHANNELS];
 float gain_error_inverse[NUM_DAC_CHANNELS];
@@ -67,12 +71,7 @@ void setDacCalibrationDefaults(void* section) {
 bool validateDacCalibration(const void* section) {
   const auto& data = *static_cast<const DacCalibrationData*>(section);
   for (int i = 0; i < NUM_DAC_CALIBRATION_CHANNELS; i++) {
-    if (!std::isfinite(static_cast<double>(data.gain[i])) ||
-        data.gain[i] < 0.5f || data.gain[i] > 1.5f) {
-      return false;
-    }
-    if (!std::isfinite(static_cast<double>(data.offset[i])) ||
-        data.offset[i] < -1.0f || data.offset[i] > 1.0f) {
+    if (!isValidCalibrationPair(data.offset[i], data.gain[i])) {
       return false;
     }
   }
@@ -186,8 +185,7 @@ OperationResult setOSG(int channel_index, float off, float g) {
   if (!DACController::isChannelIndexValid(channel_index))
     return OperationResult::Failure("Invalid channel index " +
                                     String(channel_index));
-  if (!isFinite(off) || !isFinite(g) ||
-      std::fabs(static_cast<double>(g)) < 1e-6)
+  if (!isValidCalibrationPair(off, g))
     return OperationResult::Failure("Invalid calibration offset/gain");
   DACController::setCalibration(channel_index, off, g);
   return OperationResult::Success("OSG SET FOR DAC " + String(channel_index));

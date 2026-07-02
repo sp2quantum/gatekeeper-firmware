@@ -4,13 +4,13 @@
 #include "PeripheralCommsController.h"
 #include "Utils/FastGpio.h"
 
-volatile uint8_t TimingUtil::adcFlag = 0;
+volatile AdcBoardMask TimingUtil::adcFlag = 0;
 volatile bool TimingUtil::dacFlag = false;
 volatile uint32_t TimingUtil::dacSpiMisstepEvents = 0;
 volatile uint32_t TimingUtil::adcSpiMisstepEvents = 0;
 volatile uint32_t TimingUtil::adcConversionMisstepEvents = 0;
-volatile uint8_t TimingUtil::adcConversionInProgressMask = 0;
-volatile uint8_t TimingUtil::adcConversionWatchMask = 0;
+volatile AdcBoardMask TimingUtil::adcConversionInProgressMask = 0;
+volatile AdcBoardMask TimingUtil::adcConversionWatchMask = 0;
 volatile bool TimingUtil::adcConversionStartedFlag = false;
 
 namespace {
@@ -97,7 +97,7 @@ void TimingUtil::resetTimers() {
   delayMicroseconds(5);
 }
 
-void TimingUtil::resetTimingWatchdog(uint8_t adc_watch_mask) {
+void TimingUtil::resetTimingWatchdog(AdcBoardMask adc_watch_mask) {
   __disable_irq();
   dacSpiMisstepEvents = 0;
   adcSpiMisstepEvents = 0;
@@ -175,7 +175,7 @@ void TimingUtil::setupTimersOnlyADC(uint32_t adc_period_us) {
 
 void TimingUtil::setupTimersTimeSeries(uint32_t dac_period_us,
                                        uint32_t adc_period_us,
-                                       uint8_t adc_watch_mask) {
+                                       AdcBoardMask adc_watch_mask) {
   resetTimers();
   resetTimingWatchdog(adc_watch_mask);
 
@@ -216,7 +216,7 @@ void TimingUtil::setupTimersTimeSeries(uint32_t dac_period_us,
 
 void TimingUtil::setupTimersTimeSeriesRamp(uint32_t dac_period_us,
                                            uint32_t adc_period_us,
-                                           uint8_t adc_watch_mask) {
+                                           AdcBoardMask adc_watch_mask) {
   if (dac_period_us == adc_period_us &&
       kTimeSeriesAdcStartDelayUs < adc_period_us) {
     setupTimersDacLed(dac_period_us, kTimeSeriesAdcStartDelayUs,
@@ -228,7 +228,7 @@ void TimingUtil::setupTimersTimeSeriesRamp(uint32_t dac_period_us,
 
 void TimingUtil::setupTimersDacLed(uint64_t period_us,
                                    uint64_t phase_shift_us,
-                                   uint8_t adc_watch_mask) {
+                                   AdcBoardMask adc_watch_mask) {
   resetTimers();
   resetTimingWatchdog(adc_watch_mask);
 
@@ -310,7 +310,7 @@ bool TimingUtil::consumeDacFlag() {
   return pending;
 }
 
-bool TimingUtil::consumeAdcFlag(uint8_t expectedMask) {
+bool TimingUtil::consumeAdcFlag(AdcBoardMask expectedMask) {
   if (adcFlag != expectedMask) {
     return false;
   }

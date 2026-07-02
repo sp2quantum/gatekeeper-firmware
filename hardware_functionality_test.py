@@ -29,7 +29,13 @@ import serial
 import serial.tools.list_ports
 
 
-NUM_CHANNELS = 8
+NUM_CHANNELS_PER_DAC_BOARD = 4
+NUM_CHANNELS_PER_ADC_BOARD = 4
+NUM_DAC_BOARDS = 2
+NUM_ADC_BOARDS = 2
+NUM_DAC_CHANNELS = NUM_DAC_BOARDS * NUM_CHANNELS_PER_DAC_BOARD
+NUM_ADC_CHANNELS = NUM_ADC_BOARDS * NUM_CHANNELS_PER_ADC_BOARD
+NUM_CHANNELS = min(NUM_DAC_CHANNELS, NUM_ADC_CHANNELS)
 GATEKEEPER_VID = 0x2341
 GATEKEEPER_PID = 0x0266
 
@@ -371,7 +377,7 @@ class HardwareTest:
             self.query_required_line("INITIALIZATION COMPLETE", alias)
 
     def run_adc_dac_register_tests(self) -> None:
-        for board in range(2):
+        for board in range(NUM_ADC_BOARDS):
             rev = self.query_float("GET_REVISION_REG", board)
             self.record(f"ADC board {board} revision register", int(rev) == 34, revision=rev)
 
@@ -381,7 +387,7 @@ class HardwareTest:
 
         talk = self.gk.query_multiline("TALK", 0, timeout=1.0)
         talk_values = [x.strip() for x in talk.splitlines() if x.strip()]
-        self.record("TALK command returns one response per ADC board", len(talk_values) == 2, response=talk_values)
+        self.record("TALK command returns one response per ADC board", len(talk_values) == NUM_ADC_BOARDS, response=talk_values)
 
         active = self.gk.query_line("GET_CHANNELS_ACTIVE")
         self.record("GET_CHANNELS_ACTIVE returns a parseable response", bool(active), response=active)

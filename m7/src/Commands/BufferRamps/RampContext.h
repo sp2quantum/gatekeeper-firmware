@@ -22,7 +22,7 @@ class RampContext {
   OperationResult beginAdcOnly(int* adcChannels, int numAdcChannels);
   void beginDacOnly();
 
-  uint8_t adcMask() const { return adcMask_; }
+  AdcBoardMask adcMask() const { return adcMask_; }
   bool stopped() const;
 
   OperationResult finish(OperationResult rampResult,
@@ -33,7 +33,7 @@ class RampContext {
   int* adcChannels_ = nullptr;
   int numAdcChannels_ = 0;
   BoardUsage boardUsage_;
-  uint8_t adcMask_ = 0;
+  AdcBoardMask adcMask_ = 0;
   bool begun_ = false;
   bool finished_ = false;
   bool hasAdc_ = false;

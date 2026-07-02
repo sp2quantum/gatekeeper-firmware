@@ -30,7 +30,7 @@ using BufferRampCommon::writeDacPackets;
 OperationResult runPrepared(int numDacChannels, int numAdcChannels,
                             int numSteps, int numAdcAverages,
                             int* dacChannels, float* dacV0s, float* dacVfs,
-                            int* adcChannels, uint8_t adcMask) {
+                            int* adcChannels, AdcBoardMask adcMask) {
   double packets[NUM_ADC_CHANNELS] = {};
   double voltageStepSize[NUM_DAC_CHANNELS] = {};
   for (int i = 0; i < numDacChannels; i++) {

@@ -53,7 +53,7 @@ OperationResult runPrepared(
     int numStepsSlow, bool retrace, bool snake, int numAdcAverages,
     uint32_t dac_interval_us, uint32_t dac_settling_time_us,
     int* dacChannels, float* startPoint, float* fastAxisVector,
-    float* slowAxisVector, int* adcChannels, uint8_t adcMask) {
+    float* slowAxisVector, int* adcChannels, AdcBoardMask adcMask) {
   const int scansPerSlowStep = (retrace && !snake) ? 2 : 1;
   const int totalPoints = numStepsFast * numStepsSlow * scansPerSlowStep;
   if (totalPoints < 1) {

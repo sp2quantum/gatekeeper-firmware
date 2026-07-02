@@ -11,7 +11,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
                             int numSteps, uint32_t dac_interval_us,
                             uint32_t adc_interval_us, int* dacChannels,
                             float* dacV0s, float* dacVfs, int* adcChannels,
-                            uint8_t adcMask);
+                            AdcBoardMask adcMask);
 }
 
 namespace DacLedRamp {

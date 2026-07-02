@@ -18,7 +18,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
                             int numSteps, uint32_t dac_interval_us,
                             uint32_t adc_interval_us, int* dacChannels,
                             float* dacV0s, float* dacVfs, int* adcChannels,
-                            uint8_t adcMask);
+                            AdcBoardMask adcMask);
 
 namespace {
 
@@ -87,7 +87,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
                             int numSteps, uint32_t dac_interval_us,
                             uint32_t adc_interval_us, int* dacChannels,
                             float* dacV0s, float* dacVfs, int* adcChannels,
-                            uint8_t adcMask) {
+                            AdcBoardMask adcMask) {
   int dacStepsLoaded = 0;
   int framesCaptured = 0;
   const uint64_t savedDataSize64 =

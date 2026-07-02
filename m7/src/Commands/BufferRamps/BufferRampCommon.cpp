@@ -15,32 +15,37 @@ constexpr uint16_t kInvalidTiming = 0;
 constexpr uint16_t kMinDacLedSettlingUs = 20;
 constexpr uint16_t kMinAdcConversionUs = 82;
 
-struct AdcCardLoad {
-  uint8_t card0;
-  uint8_t card1;
-};
-
-AdcCardLoad adcCardLoadForChannels(const int* adcChannels,
-                                   int numAdcChannels) {
-  AdcCardLoad load = {};
+void sortedAdcBoardDepths(const int* adcChannels, int numAdcChannels,
+                          uint8_t boardDepth[NUM_ADC_BOARDS]) {
+  std::fill(boardDepth, boardDepth + NUM_ADC_BOARDS, 0);
   for (int i = 0; i < numAdcChannels; i++) {
     const int channel = adcChannels[i];
     if (channel < 0 || channel >= NUM_ADC_CHANNELS) continue;
-    if (adcBoardForChannel(channel) == 0) {
-      load.card0++;
-    } else {
-      load.card1++;
-    }
+    const uint8_t board = adcBoardForChannel(channel);
+    if (board >= NUM_ADC_BOARDS) continue;
+    boardDepth[board]++;
   }
-  return load;
+  std::sort(boardDepth, boardDepth + NUM_ADC_BOARDS,
+            [](uint8_t a, uint8_t b) { return a > b; });
 }
 
 uint16_t lookupTiming(const uint16_t table[5][5], const int* adcChannels,
                       int numAdcChannels) {
-  const AdcCardLoad load =
-      adcCardLoadForChannels(adcChannels, numAdcChannels);
-  if (load.card0 > 4 || load.card1 > 4) return kInvalidTiming;
-  return table[load.card0][load.card1];
+  uint8_t boardDepth[NUM_ADC_BOARDS] = {};
+  sortedAdcBoardDepths(adcChannels, numAdcChannels, boardDepth);
+  for (int i = 0; i < NUM_ADC_BOARDS; i++) {
+    if (boardDepth[i] > NUM_CHANNELS_PER_ADC_BOARD ||
+        boardDepth[i] > 4) {
+      return kInvalidTiming;
+    }
+  }
+
+  uint32_t timing = table[boardDepth[0]][NUM_ADC_BOARDS > 1 ? boardDepth[1] : 0];
+  for (int i = 2; i < NUM_ADC_BOARDS && boardDepth[i] > 0; i++) {
+    timing += table[boardDepth[i]][0];
+  }
+  if (timing > 65535) return 65535;
+  return static_cast<uint16_t>(timing);
 }
 
 OperationResult validateMinimumTiming(const char* label, float actual,
@@ -210,7 +215,7 @@ uint16_t minimumAwgWithAdcIntervalUs(int numDacChannels,
   if (base == kInvalidTiming) return base;
   uint16_t extra = 0;
   if (numDacChannels >= 8) {
-    extra = 40;
+    extra = 40 * static_cast<uint16_t>((numDacChannels + 7) / 8);
   } else if (numDacChannels >= 4 && base >= 200 && base < 300) {
     extra = 20;
   }
@@ -264,9 +269,9 @@ uint16_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
 
 uint16_t minimumBoxcarConversionTimeUs(const int* adcChannels,
                                        int numAdcChannels) {
-  const AdcCardLoad load =
-      adcCardLoadForChannels(adcChannels, numAdcChannels);
-  const uint8_t maxDepth = max(load.card0, load.card1);
+  uint8_t boardDepth[NUM_ADC_BOARDS] = {};
+  sortedAdcBoardDepths(adcChannels, numAdcChannels, boardDepth);
+  const uint8_t maxDepth = boardDepth[0];
   if (maxDepth == 0 || maxDepth > 4) return kInvalidTiming;
   static constexpr uint16_t kByMaxCardDepth[5] = {0, 300, 300, 500, 800};
   return kByMaxCardDepth[maxDepth];

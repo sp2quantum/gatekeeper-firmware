@@ -1,6 +1,13 @@
 #pragma once
 #include <Arduino.h>
 
+struct SequentialPins {
+  int first;
+  constexpr int operator[](int index) const { return first + index; }
+};
+
+using AdcBoardMask = uint32_t;
+
 constexpr int NUM_CHANNELS_PER_DAC_BOARD = 4;
 constexpr int NUM_CHANNELS_PER_ADC_BOARD = 4;
 constexpr int NUM_DAC_BOARDS = 2;
@@ -9,11 +16,15 @@ constexpr int NUM_DAC_CHANNELS = NUM_DAC_BOARDS * NUM_CHANNELS_PER_DAC_BOARD;
 constexpr int NUM_ADC_CHANNELS = NUM_ADC_BOARDS * NUM_CHANNELS_PER_ADC_BOARD;
 constexpr int NUM_DAC_CALIBRATION_CHANNELS = NUM_DAC_CHANNELS;
 constexpr int NUM_ADC_CALIBRATION_CHANNELS = NUM_ADC_CHANNELS;
-constexpr int adc_cs_pins[NUM_ADC_BOARDS] = {39, 40};
-constexpr int dac_cs_pins[NUM_DAC_CHANNELS] = {23, 24, 25, 26, 27, 28, 29, 30};
+constexpr SequentialPins adc_cs_pins{39};
+constexpr SequentialPins dac_cs_pins{23};
 constexpr int ldac = 22;
-constexpr int reset[NUM_ADC_BOARDS] = {43, 44};
-constexpr int drdy[NUM_ADC_BOARDS] = {47, 48};
+constexpr SequentialPins reset{43};
+constexpr SequentialPins drdy{47};
+static_assert(NUM_DAC_BOARDS > 0 && NUM_ADC_BOARDS > 0,
+              "At least one DAC and ADC board must be configured");
+static_assert(NUM_ADC_BOARDS <= static_cast<int>(sizeof(AdcBoardMask) * 8),
+              "AdcBoardMask cannot represent all configured ADC boards");
 
 constexpr int GPIO_0 = 52;
 constexpr int GPIO_1 = 53;
@@ -25,7 +36,7 @@ constexpr int adc_sync = 51;
 constexpr int led = 7;
 constexpr int data_pin = 6;
 constexpr int err = 11;
-constexpr uint32_t DAC_SPI_FREQUENCY_HZ = 18000000;
+constexpr uint32_t DAC_SPI_FREQUENCY_HZ = 5000000;
 constexpr uint8_t DAC_SPI_MODE = 1;
 constexpr uint8_t DAC_READ_SPI_MODE = 3;
 constexpr uint32_t ADC_SPI_FREQUENCY_HZ = 5000000;

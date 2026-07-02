@@ -1,5 +1,8 @@
 #include "Commands/BufferRamps/RampContext.h"
 
+#include <array>
+#include <utility>
+
 #include "Commands/BufferRamps/BufferRampCommon.h"
 #include "Peripherals/ADC/ADCController.h"
 #include "Utils/FastGpio.h"
@@ -11,17 +14,21 @@ namespace {
 
 using AdcIsr = void (*)();
 
-AdcIsr kAdcSyncIsrFunctions[NUM_ADC_BOARDS] = {
-    TimingUtil::adcSyncISR<0>,
-    TimingUtil::adcSyncISR<1>,
-};
+template <size_t... Indices>
+std::array<AdcIsr, sizeof...(Indices)> makeAdcSyncIsrFunctions(
+    std::index_sequence<Indices...>) {
+  return {{TimingUtil::adcSyncISR<Indices>...}};
+}
+
+const auto kAdcSyncIsrFunctions =
+    makeAdcSyncIsrFunctions(std::make_index_sequence<NUM_ADC_BOARDS>{});
 
 void attachAdcSyncInterrupts(const BoardUsage& boardUsage) {
   for (int i = 0; i < boardUsage.numBoards; i++) {
     const int pin = ADCController::getDataReadyPin(boardUsage.idx[i]);
     if (pin == NC) continue;
-    attachInterrupt(digitalPinToInterrupt(pin), kAdcSyncIsrFunctions[i],
-                    FALLING);
+    AdcIsr isr = kAdcSyncIsrFunctions[i];
+    attachInterrupt(digitalPinToInterrupt(pin), isr, FALLING);
   }
 }
 
@@ -33,10 +40,10 @@ void detachAdcSyncInterrupts(const BoardUsage& boardUsage) {
   }
 }
 
-uint8_t adcMaskForBoardUsage(const BoardUsage& boardUsage) {
-  uint8_t mask = 0u;
+AdcBoardMask adcMaskForBoardUsage(const BoardUsage& boardUsage) {
+  AdcBoardMask mask = 0;
   for (int i = 0; i < boardUsage.numBoards; i++) {
-    mask |= 1 << i;
+    mask |= TimingUtil::adcBoardBit(i);
   }
   return mask;
 }

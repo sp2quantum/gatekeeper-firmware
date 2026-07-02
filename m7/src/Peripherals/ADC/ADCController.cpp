@@ -1,5 +1,8 @@
 #include "Peripherals/ADC/ADCController.h"
 
+#include <array>
+#include <utility>
+
 #include "Calibration/Calibration.h"
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
 #include "PeripheralCommsController.h"
@@ -14,12 +17,21 @@ constexpr uint8_t kReadyFunctionIoRegister = 0b00011001;
 int boardForChannel(int ch) { return ch / NUM_CHANNELS_PER_ADC_BOARD; }
 int localChannel(int ch) { return ch % NUM_CHANNELS_PER_ADC_BOARD; }
 
-PeripheralCommsController comms[NUM_ADC_BOARDS] = {
-    PeripheralCommsController(adc_cs_pins[0]),
-    PeripheralCommsController(adc_cs_pins[1]),
-};
+template <size_t... Indices>
+std::array<PeripheralCommsController, sizeof...(Indices)> makeAdcComms(
+    std::index_sequence<Indices...>) {
+  return {{PeripheralCommsController(adc_cs_pins[Indices])...}};
+}
 
-bool chopEnabled[NUM_ADC_BOARDS] = {true, true};
+template <size_t... Indices>
+std::array<bool, sizeof...(Indices)> makeChopEnabled(
+    std::index_sequence<Indices...>) {
+  return {{((void)Indices, true)...}};
+}
+
+auto comms = makeAdcComms(std::make_index_sequence<NUM_ADC_BOARDS>{});
+auto chopEnabled =
+    makeChopEnabled(std::make_index_sequence<NUM_ADC_BOARDS>{});
 
 struct AdcCalibrationData {
   bool calibrated;
@@ -86,13 +98,14 @@ void writeRegister24(int board, uint8_t address, uint32_t value) {
   comms[board].transferADC(data, 4);
 }
 
-void waitDataReady(int board) {
+bool waitDataReady(int board) {
   int count = 0;
   while (digitalRead(drdy[board]) == HIGH && count < 20000) {
     count++;
     delay(1);
   }
   FastGpio::digitalWrite(adc_sync, false);
+  return count < 20000;
 }
 
 void boardIdleMode(int board, int local_ch) {
@@ -306,12 +319,16 @@ OperationResult adcChannelSystemZeroScaleCal(int channel) {
   int b = channel / NUM_CHANNELS_PER_ADC_BOARD;
   int i = channel % NUM_CHANNELS_PER_ADC_BOARD;
   byte data[2] = {
-      static_cast<byte>(AdcRegister::kWrite | AdcRegister::mode(channel)),
+      static_cast<byte>(AdcRegister::kWrite | AdcRegister::mode(i)),
       AdcRegister::kChannelZeroScaleSystemCalMode};
   FastGpio::digitalWrite(adc_sync, true);
   comms[b].transferADC(data, 2);
-  waitDataReady(b);
-  uint32_t cal = readRegister24(b, AdcRegister::channelZeroScaleCal(channel));
+  if (!waitDataReady(b)) {
+    boardIdleMode(b, i);
+    return OperationResult::Failure("ADC calibration timed out for channel " +
+                                    String(channel));
+  }
+  uint32_t cal = readRegister24(b, AdcRegister::channelZeroScaleCal(i));
   CalibrationData cd;
   readCalibrationData(cd);
   AdcCalibrationData* adcData = adcCalibration(cd);
@@ -319,6 +336,7 @@ OperationResult adcChannelSystemZeroScaleCal(int channel) {
     return OperationResult::Failure("ADC calibration section is missing");
   }
   adcData->offset[channel] = cal;
+  adcData->calibrated = true;
   updateCalibrationData(cd);
   return OperationResult::Success("Calibration finished for channel " + String(channel));
 }
@@ -331,7 +349,7 @@ OperationResult adcAllChannelsSystemZeroScaleCal() {
   }
   return OperationResult::Success("Calibration finished for all channels");
 }
-COMMAND("CALIBRATE_ALL_ADC_CHANNELS_ZERO_SCALE", adcChannelSystemZeroScaleCal)
+COMMAND("CALIBRATE_ALL_ADC_CHANNELS_ZERO_SCALE", adcAllChannelsSystemZeroScaleCal)
 
 
 OperationResult adcChannelSystemFullScaleCal(int channel) {
@@ -341,12 +359,16 @@ OperationResult adcChannelSystemFullScaleCal(int channel) {
   int b = channel / NUM_CHANNELS_PER_ADC_BOARD;
   int i = channel % NUM_CHANNELS_PER_ADC_BOARD;
   byte data[2] = {
-      static_cast<byte>(AdcRegister::kWrite | AdcRegister::mode(channel)),
+      static_cast<byte>(AdcRegister::kWrite | AdcRegister::mode(i)),
       AdcRegister::kChannelFullScaleSystemCalMode};
   FastGpio::digitalWrite(adc_sync, true);
   comms[b].transferADC(data, 2);
-  waitDataReady(b);
-  uint32_t cal = readRegister24(b, AdcRegister::channelFullScaleCal(channel));
+  if (!waitDataReady(b)) {
+    boardIdleMode(b, i);
+    return OperationResult::Failure("ADC calibration timed out for channel " +
+                                    String(channel));
+  }
+  uint32_t cal = readRegister24(b, AdcRegister::channelFullScaleCal(i));
   CalibrationData cd;
   readCalibrationData(cd);
   AdcCalibrationData* adcData = adcCalibration(cd);
@@ -354,6 +376,7 @@ OperationResult adcChannelSystemFullScaleCal(int channel) {
     return OperationResult::Failure("ADC calibration section is missing");
   }
   adcData->gain[channel] = cal;
+  adcData->calibrated = true;
   updateCalibrationData(cd);
   return OperationResult::Success("Calibration finished for channel " + String(channel));
 }
@@ -366,7 +389,7 @@ OperationResult adcAllChannelsSystemFullScaleCal() {
   }
   return OperationResult::Success("Calibration finished for all channels");
 }
-COMMAND("CALIBRATE_ALL_ADC_CHANNELS_FULL_SCALE", adcChannelSystemFullScaleCal)
+COMMAND("CALIBRATE_ALL_ADC_CHANNELS_FULL_SCALE", adcAllChannelsSystemFullScaleCal)
 
 
 OperationResult getSavedChZeroScaleCalibration(int ch) {
