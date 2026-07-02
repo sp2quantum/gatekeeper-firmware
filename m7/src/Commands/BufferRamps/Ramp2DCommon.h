@@ -7,11 +7,17 @@
 #include "Utils/OperationResult.h"
 
 namespace TimeSeriesRamp {
+enum class Mode {
+  Streaming,
+  Buffered2DRow,
+};
+
 OperationResult runPrepared(int numDacChannels, int numAdcChannels,
                             int numSteps, uint32_t dac_interval_us,
                             uint32_t adc_interval_us, int* dacChannels,
                             float* dacV0s, float* dacVfs, int* adcChannels,
-                            AdcBoardMask adcMask);
+                            AdcBoardMask adcMask,
+                            Mode mode = Mode::Streaming);
 }
 
 namespace DacLedRamp {

@@ -92,6 +92,7 @@ OperationResult runDacOnly(int numDacChannels, int numSteps,
 
   TimingUtil::setupTimerOnlyDac(dac_interval_us);
   TimingUtil::dacFlag = false;
+  TimingUtil::dacFlagCount = 0;
 
   int step = 1;
   while (!ctx.stopped()) {
@@ -160,6 +161,7 @@ OperationResult runLoop(int numDacChannels, int numAdcChannels, int numLoops,
 
   TimingUtil::setupTimerOnlyDac(dac_interval_us);
   TimingUtil::dacFlag = false;
+  TimingUtil::dacFlagCount = 0;
 
   int currentLoop = 0;
   int currentDacStep = 1;

@@ -88,6 +88,7 @@ void RampContext::setupAdcHardware(int* adcChannels, int numAdcChannels) {
   }
 
   TimingUtil::dacFlag = false;
+  TimingUtil::dacFlagCount = 0;
   TimingUtil::adcFlag = 0;
 }
 
@@ -124,6 +125,7 @@ void RampContext::cleanup() {
   TimingUtil::disableDacInterrupt();
   TimingUtil::disableAdcInterrupt();
   TimingUtil::dacFlag = false;
+  TimingUtil::dacFlagCount = 0;
   TimingUtil::adcFlag = 0;
 
   if (hasAdc_) {

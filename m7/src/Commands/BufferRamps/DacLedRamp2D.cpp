@@ -99,6 +99,7 @@ OperationResult runPrepared(
   TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us,
                                 adcMask);
   TimingUtil::dacFlag = false;
+  TimingUtil::dacFlagCount = 0;
   TimingUtil::adcFlag = 0;
 
   double packets[NUM_ADC_CHANNELS] = {};

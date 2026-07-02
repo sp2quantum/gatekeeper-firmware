@@ -188,6 +188,7 @@ OperationResult dacLedBufferRamp(
   TimingUtil::setupTimersDacLed(dacIntervalUs, dacSettlingTimeUs,
                                 ctx.adcMask());
   TimingUtil::dacFlag = false;
+  TimingUtil::dacFlagCount = 0;
   TimingUtil::adcFlag = 0;
 
   OperationResult rampResult =

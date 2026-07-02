@@ -6,6 +6,7 @@
 
 volatile AdcBoardMask TimingUtil::adcFlag = 0;
 volatile bool TimingUtil::dacFlag = false;
+volatile uint32_t TimingUtil::dacFlagCount = 0;
 volatile uint32_t TimingUtil::dacSpiMisstepEvents = 0;
 volatile uint32_t TimingUtil::adcSpiMisstepEvents = 0;
 volatile uint32_t TimingUtil::adcConversionMisstepEvents = 0;
@@ -89,6 +90,7 @@ void TimingUtil::resetTimers() {
 
   adcFlag = 0;
   dacFlag = false;
+  dacFlagCount = 0;
   adcConversionInProgressMask = 0;
   adcConversionWatchMask = 0;
   adcConversionStartedFlag = false;
@@ -121,6 +123,7 @@ void TimingUtil::stopTimeSeriesTimers() {
   disableDacInterrupt();
   disableAdcInterrupt();
   dacFlag = false;
+  dacFlagCount = 0;
   adcFlag = 0;
   adcConversionInProgressMask = 0;
   adcConversionStartedFlag = false;
@@ -300,12 +303,15 @@ void TimingUtil::disableAdcInterrupt() {
 }
 
 bool TimingUtil::consumeDacFlag() {
-  if (!dacFlag) {
+  if (dacFlagCount == 0) {
     return false;
   }
   __disable_irq();
-  const bool pending = dacFlag;
-  dacFlag = false;
+  const bool pending = dacFlagCount > 0;
+  if (pending) {
+    dacFlagCount--;
+    dacFlag = dacFlagCount > 0;
+  }
   __enable_irq();
   return pending;
 }
@@ -358,6 +364,7 @@ extern "C" void TIM1_UP_IRQHandler(void) {
       TimingUtil::adcConversionMisstepEvents++;
     }
     FastGpio::pulseLowHigh(ldac);
+    TimingUtil::dacFlagCount++;
     TimingUtil::dacFlag = true;
     __SEV();
   }

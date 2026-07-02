@@ -73,6 +73,7 @@ OperationResult awgWithAdc(int numDacChannels, int numAdcChannels,
 
   TimingUtil::setupTimerOnlyDac(dac_interval_us);
   TimingUtil::dacFlag = false;
+  TimingUtil::dacFlagCount = 0;
   TimingUtil::adcFlag = 0;
 
   const int totalSteps = numSteps * numCycles;

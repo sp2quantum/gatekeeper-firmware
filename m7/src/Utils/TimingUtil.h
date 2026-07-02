@@ -8,6 +8,7 @@
 namespace TimingUtil {
 extern volatile AdcBoardMask adcFlag;
 extern volatile bool dacFlag;
+extern volatile uint32_t dacFlagCount;
 extern volatile uint32_t dacSpiMisstepEvents;
 extern volatile uint32_t adcSpiMisstepEvents;
 extern volatile uint32_t adcConversionMisstepEvents;

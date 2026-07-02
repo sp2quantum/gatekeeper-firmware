@@ -91,6 +91,7 @@ OperationResult runOwenRamp(
 
   TimingUtil::setupTimerOnlyDac(dac_interval_us);
   TimingUtil::dacFlag = false;
+  TimingUtil::dacFlagCount = 0;
 
   int currentLoop = 0;
   int currentDacStep = 1;
