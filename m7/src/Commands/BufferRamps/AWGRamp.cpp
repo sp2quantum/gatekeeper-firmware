@@ -29,18 +29,41 @@ using BufferRampCommon::validateDacChannels;
 using BufferRampCommon::validateRampChannels;
 using RampCommand::validateDacVoltageListBounds;
 
-OperationResult awgBufferRamp(int numDacChannels, int numSteps,
-                              float dacIntervalArg,
-                              List<int, 0>& dacChannels,
-                              List<float, 0, 1>& channelMajorVoltages) {
+OperationResult awgBufferRampImpl(
+    int numDacChannels, int numSteps, float dacIntervalArg,
+    List<int, 0>& dacChannels,
+    List<float, 0, 1>& channelMajorVoltages, bool enforceTiming) {
   if (!BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1)) {
     return OperationResult::Failure("Invalid number of channels or steps");
+  }
+  if (enforceTiming) {
+    OperationResult timingValidation =
+        BufferRampCommon::validateDacOnlyTiming(dacIntervalArg,
+                                                numDacChannels);
+    if (!timingValidation.isSuccess()) return timingValidation;
   }
   return AWGRamp::runDacOnly(numDacChannels, numSteps,
                              static_cast<uint32_t>(dacIntervalArg),
                              dacChannels.data(), channelMajorVoltages.data());
 }
+
+OperationResult awgBufferRamp(int numDacChannels, int numSteps,
+                              float dacIntervalArg,
+                              List<int, 0>& dacChannels,
+                              List<float, 0, 1>& channelMajorVoltages) {
+  return awgBufferRampImpl(numDacChannels, numSteps, dacIntervalArg,
+                           dacChannels, channelMajorVoltages, true);
+}
 COMMAND("AWG_BUFFER_RAMP", awgBufferRamp)
+
+OperationResult awgBufferRampSudo(int numDacChannels, int numSteps,
+                                  float dacIntervalArg,
+                                  List<int, 0>& dacChannels,
+                                  List<float, 0, 1>& channelMajorVoltages) {
+  return awgBufferRampImpl(numDacChannels, numSteps, dacIntervalArg,
+                           dacChannels, channelMajorVoltages, false);
+}
+COMMAND("AWG_BUFFER_RAMP_SUDO", awgBufferRampSudo)
 
 }  // namespace
 

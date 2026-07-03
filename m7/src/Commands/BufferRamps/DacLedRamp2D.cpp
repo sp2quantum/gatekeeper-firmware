@@ -162,13 +162,13 @@ OperationResult runPrepared(
   return OperationResult::Success();
 }
 
-OperationResult dacLedBufferRamp2D(
+OperationResult dacLedBufferRamp2DImpl(
     int numDacChannels, int numAdcChannels, int numStepsFast,
     int numStepsSlow, float dacIntervalArg, float dacSettlingTimeArg,
     float retraceArg, float snakeArg, int numAdcAverages,
     List<int, 0>& dacChannelsList, List<float, 0>& startPointList,
     List<float, 0>& fastAxisVectorList, List<float, 0>& slowAxisVectorList,
-    List<int, 1>& adcChannelsList) {
+    List<int, 1>& adcChannelsList, bool enforceTiming) {
   if (numAdcAverages < 1) {
     return OperationResult::Failure("Invalid number of ADC averages");
   }
@@ -188,11 +188,13 @@ OperationResult dacLedBufferRamp2D(
   if (dacSettlingTimeArg >= dacIntervalArg) {
     return OperationResult::Failure("Invalid interval or settling time");
   }
-  OperationResult minimumTimingValidation =
-      BufferRampCommon::validateDacLedTiming(
-          dacIntervalArg, dacSettlingTimeArg, adcChannels, numAdcChannels);
-  if (!minimumTimingValidation.isSuccess()) {
-    return minimumTimingValidation;
+  if (enforceTiming) {
+    OperationResult minimumTimingValidation =
+        BufferRampCommon::validateDacLedTiming(
+            dacIntervalArg, dacSettlingTimeArg, adcChannels, numAdcChannels);
+    if (!minimumTimingValidation.isSuccess()) {
+      return minimumTimingValidation;
+    }
   }
 
   ADCController::resetToPreviousConversionTimes();
@@ -219,6 +221,35 @@ OperationResult dacLedBufferRamp2D(
 
   return ctx.finish(rampResult);
 }
+
+OperationResult dacLedBufferRamp2D(
+    int numDacChannels, int numAdcChannels, int numStepsFast,
+    int numStepsSlow, float dacIntervalArg, float dacSettlingTimeArg,
+    float retraceArg, float snakeArg, int numAdcAverages,
+    List<int, 0>& dacChannelsList, List<float, 0>& startPointList,
+    List<float, 0>& fastAxisVectorList, List<float, 0>& slowAxisVectorList,
+    List<int, 1>& adcChannelsList) {
+  return dacLedBufferRamp2DImpl(
+      numDacChannels, numAdcChannels, numStepsFast, numStepsSlow,
+      dacIntervalArg, dacSettlingTimeArg, retraceArg, snakeArg,
+      numAdcAverages, dacChannelsList, startPointList, fastAxisVectorList,
+      slowAxisVectorList, adcChannelsList, true);
+}
 COMMAND("2D_DAC_LED_BUFFER_RAMP", dacLedBufferRamp2D)
+
+OperationResult dacLedBufferRamp2DSudo(
+    int numDacChannels, int numAdcChannels, int numStepsFast,
+    int numStepsSlow, float dacIntervalArg, float dacSettlingTimeArg,
+    float retraceArg, float snakeArg, int numAdcAverages,
+    List<int, 0>& dacChannelsList, List<float, 0>& startPointList,
+    List<float, 0>& fastAxisVectorList, List<float, 0>& slowAxisVectorList,
+    List<int, 1>& adcChannelsList) {
+  return dacLedBufferRamp2DImpl(
+      numDacChannels, numAdcChannels, numStepsFast, numStepsSlow,
+      dacIntervalArg, dacSettlingTimeArg, retraceArg, snakeArg,
+      numAdcAverages, dacChannelsList, startPointList, fastAxisVectorList,
+      slowAxisVectorList, adcChannelsList, false);
+}
+COMMAND("2D_DAC_LED_BUFFER_RAMP_SUDO", dacLedBufferRamp2DSudo)
 
 }  // namespace

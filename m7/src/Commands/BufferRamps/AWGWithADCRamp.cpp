@@ -20,11 +20,11 @@ using BufferRampCommon::sendVoltageFrame;
 using BufferRampCommon::validateRampChannels;
 using RampCommand::validateDacVoltageListBounds;
 
-OperationResult awgWithAdc(int numDacChannels, int numAdcChannels,
-                           int numSteps, float dacIntervalArg, int numCycles,
-                           List<int, 0>& dacChannelsList,
-                           List<int, 1>& adcChannelsList,
-                           List<float, 0, 2>& channelMajorVoltages) {
+OperationResult awgWithAdcImpl(
+    int numDacChannels, int numAdcChannels, int numSteps,
+    float dacIntervalArg, int numCycles, List<int, 0>& dacChannelsList,
+    List<int, 1>& adcChannelsList,
+    List<float, 0, 2>& channelMajorVoltages, bool enforceTiming) {
   if (!BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1) ||
       numCycles < 1) {
     return OperationResult::Failure(
@@ -47,11 +47,13 @@ OperationResult awgWithAdc(int numDacChannels, int numAdcChannels,
   OperationResult channelValidation = validateRampChannels(
       dacChannels, numDacChannels, adcChannels, numAdcChannels);
   if (!channelValidation.isSuccess()) return channelValidation;
-  OperationResult minimumTimingValidation =
-      BufferRampCommon::validateAwgWithAdcTiming(
-          dacIntervalArg, numDacChannels, adcChannels, numAdcChannels);
-  if (!minimumTimingValidation.isSuccess()) {
-    return minimumTimingValidation;
+  if (enforceTiming) {
+    OperationResult minimumTimingValidation =
+        BufferRampCommon::validateAwgWithAdcTiming(
+            dacIntervalArg, numDacChannels, adcChannels, numAdcChannels);
+    if (!minimumTimingValidation.isSuccess()) {
+      return minimumTimingValidation;
+    }
   }
 
   OperationResult waveformBounds = validateDacVoltageListBounds(
@@ -114,6 +116,28 @@ OperationResult awgWithAdc(int numDacChannels, int numAdcChannels,
           ? OperationResult::Failure("Voltage output buffer overflow")
           : OperationResult::Success());
 }
+
+OperationResult awgWithAdc(int numDacChannels, int numAdcChannels,
+                           int numSteps, float dacIntervalArg, int numCycles,
+                           List<int, 0>& dacChannelsList,
+                           List<int, 1>& adcChannelsList,
+                           List<float, 0, 2>& channelMajorVoltages) {
+  return awgWithAdcImpl(numDacChannels, numAdcChannels, numSteps,
+                        dacIntervalArg, numCycles, dacChannelsList,
+                        adcChannelsList, channelMajorVoltages, true);
+}
 COMMAND("AWG_WITH_ADC", awgWithAdc)
+
+OperationResult awgWithAdcSudo(int numDacChannels, int numAdcChannels,
+                               int numSteps, float dacIntervalArg,
+                               int numCycles,
+                               List<int, 0>& dacChannelsList,
+                               List<int, 1>& adcChannelsList,
+                               List<float, 0, 2>& channelMajorVoltages) {
+  return awgWithAdcImpl(numDacChannels, numAdcChannels, numSteps,
+                        dacIntervalArg, numCycles, dacChannelsList,
+                        adcChannelsList, channelMajorVoltages, false);
+}
+COMMAND("AWG_WITH_ADC_SUDO", awgWithAdcSudo)
 
 }  // namespace

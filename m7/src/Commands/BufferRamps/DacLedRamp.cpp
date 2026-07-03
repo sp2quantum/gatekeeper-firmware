@@ -132,11 +132,12 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
   return OperationResult::Success();
 }
 
-OperationResult dacLedBufferRamp(
+OperationResult dacLedBufferRampImpl(
     int numDacChannels, int numAdcChannels, int numSteps, int numAdcAverages,
     float dacIntervalArg, float dacSettlingTimeArg,
     List<int, 0>& dacChannelsList, List<float, 0>& dacV0sList,
-    List<float, 0>& dacVfsList, List<int, 1>& adcChannelsList) {
+    List<float, 0>& dacVfsList, List<int, 1>& adcChannelsList,
+    bool enforceTiming) {
   if (!isValidDacChannelCount(numDacChannels) ||
       !isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of channels");
@@ -164,11 +165,13 @@ OperationResult dacLedBufferRamp(
   OperationResult endpointValidation = RampCommand::validateDacEndpoints(
       numDacChannels, dacChannels, dacV0s, dacVfs);
   if (!endpointValidation.isSuccess()) return endpointValidation;
-  OperationResult minimumTimingValidation =
-      BufferRampCommon::validateDacLedTiming(
-          dacIntervalArg, dacSettlingTimeArg, adcChannels, numAdcChannels);
-  if (!minimumTimingValidation.isSuccess()) {
-    return minimumTimingValidation;
+  if (enforceTiming) {
+    OperationResult minimumTimingValidation =
+        BufferRampCommon::validateDacLedTiming(
+            dacIntervalArg, dacSettlingTimeArg, adcChannels, numAdcChannels);
+    if (!minimumTimingValidation.isSuccess()) {
+      return minimumTimingValidation;
+    }
   }
 
   ADCController::resetToPreviousConversionTimes();
@@ -197,7 +200,30 @@ OperationResult dacLedBufferRamp(
 
   return ctx.finish(rampResult);
 }
+
+OperationResult dacLedBufferRamp(
+    int numDacChannels, int numAdcChannels, int numSteps, int numAdcAverages,
+    float dacIntervalArg, float dacSettlingTimeArg,
+    List<int, 0>& dacChannelsList, List<float, 0>& dacV0sList,
+    List<float, 0>& dacVfsList, List<int, 1>& adcChannelsList) {
+  return dacLedBufferRampImpl(numDacChannels, numAdcChannels, numSteps,
+                              numAdcAverages, dacIntervalArg,
+                              dacSettlingTimeArg, dacChannelsList, dacV0sList,
+                              dacVfsList, adcChannelsList, true);
+}
 COMMAND("DAC_LED_BUFFER_RAMP", dacLedBufferRamp)
+
+OperationResult dacLedBufferRampSudo(
+    int numDacChannels, int numAdcChannels, int numSteps, int numAdcAverages,
+    float dacIntervalArg, float dacSettlingTimeArg,
+    List<int, 0>& dacChannelsList, List<float, 0>& dacV0sList,
+    List<float, 0>& dacVfsList, List<int, 1>& adcChannelsList) {
+  return dacLedBufferRampImpl(numDacChannels, numAdcChannels, numSteps,
+                              numAdcAverages, dacIntervalArg,
+                              dacSettlingTimeArg, dacChannelsList, dacV0sList,
+                              dacVfsList, adcChannelsList, false);
+}
+COMMAND("DAC_LED_BUFFER_RAMP_SUDO", dacLedBufferRampSudo)
 
 }  // namespace
 

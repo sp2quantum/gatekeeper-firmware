@@ -34,11 +34,12 @@ using BufferRampCommon::sendVoltageFrame;
 using BufferRampCommon::validateRampChannels;
 using BufferRampCommon::writeDacPackets;
 
-OperationResult timeSeriesBufferRamp(
+OperationResult timeSeriesBufferRampImpl(
     int numDacChannels, int numAdcChannels, int numSteps,
     float dacIntervalArg, float adcIntervalArg,
     List<int, 0>& dacChannelsList, List<float, 0>& dacV0sList,
-    List<float, 0>& dacVfsList, List<int, 1>& adcChannelsList) {
+    List<float, 0>& dacVfsList, List<int, 1>& adcChannelsList,
+    bool enforceTiming) {
   if (!isValidDacChannelCount(numDacChannels) ||
       !isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of channels");
@@ -62,6 +63,15 @@ OperationResult timeSeriesBufferRamp(
   OperationResult endpointValidation = RampCommand::validateDacEndpoints(
       numDacChannels, dacChannels, dacV0s, dacVfs);
   if (!endpointValidation.isSuccess()) return endpointValidation;
+  if (enforceTiming) {
+    OperationResult minimumTimingValidation =
+        BufferRampCommon::validateTimeSeriesTiming(
+            adcIntervalArg, adcChannels, numAdcChannels,
+            BufferRampCommon::TimeSeriesTimingMode::OneD);
+    if (!minimumTimingValidation.isSuccess()) {
+      return minimumTimingValidation;
+    }
+  }
 
   RampContext ctx;
   OperationResult setupResult =
@@ -76,7 +86,30 @@ OperationResult timeSeriesBufferRamp(
 
   return ctx.finish(rampResult, true, false);
 }
+
+OperationResult timeSeriesBufferRamp(
+    int numDacChannels, int numAdcChannels, int numSteps,
+    float dacIntervalArg, float adcIntervalArg,
+    List<int, 0>& dacChannelsList, List<float, 0>& dacV0sList,
+    List<float, 0>& dacVfsList, List<int, 1>& adcChannelsList) {
+  return timeSeriesBufferRampImpl(
+      numDacChannels, numAdcChannels, numSteps, dacIntervalArg,
+      adcIntervalArg, dacChannelsList, dacV0sList, dacVfsList,
+      adcChannelsList, true);
+}
 COMMAND("TIME_SERIES_BUFFER_RAMP", timeSeriesBufferRamp)
+
+OperationResult timeSeriesBufferRampSudo(
+    int numDacChannels, int numAdcChannels, int numSteps,
+    float dacIntervalArg, float adcIntervalArg,
+    List<int, 0>& dacChannelsList, List<float, 0>& dacV0sList,
+    List<float, 0>& dacVfsList, List<int, 1>& adcChannelsList) {
+  return timeSeriesBufferRampImpl(
+      numDacChannels, numAdcChannels, numSteps, dacIntervalArg,
+      adcIntervalArg, dacChannelsList, dacV0sList, dacVfsList,
+      adcChannelsList, false);
+}
+COMMAND("TIME_SERIES_BUFFER_RAMP_SUDO", timeSeriesBufferRampSudo)
 
 }  // namespace
 

@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "FunctionRegistry/FunctionRegistryArgumentParser.h"
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
+#include "Commands/BufferRamps/BufferRampCommon.h"
 #include "Commands/BufferRamps/RampCommand.h"
 #include "Commands/BufferRamps/RampContext.h"
 #include "Commands/BufferRamps/Ramp2DCommon.h"
@@ -9,12 +10,13 @@ using FunctionRegistryParsing::List;
 
 namespace {
 
-OperationResult timeSeriesBufferRamp2D(
+OperationResult timeSeriesBufferRamp2DImpl(
     int numDacChannels, int numAdcChannels, int numStepsFast,
     int numStepsSlow, float dacIntervalArg, float adcIntervalArg,
     float retraceArg, float snakeArg, List<int, 0>& dacChannelsList,
     List<float, 0>& startPointList, List<float, 0>& fastAxisVectorList,
-    List<float, 0>& slowAxisVectorList, List<int, 1>& adcChannelsList) {
+    List<float, 0>& slowAxisVectorList, List<int, 1>& adcChannelsList,
+    bool enforceTiming) {
   int* dacChannels = dacChannelsList.data();
   float* startPoint = startPointList.data();
   float* fastAxisVector = fastAxisVectorList.data();
@@ -32,6 +34,18 @@ OperationResult timeSeriesBufferRamp2D(
   const uint32_t adcIntervalUs = static_cast<uint32_t>(adcIntervalArg);
   const bool retrace = retraceArg != 0.0f;
   const bool snake = snakeArg != 0.0f;
+  if (enforceTiming) {
+    const BufferRampCommon::TimeSeriesTimingMode timingMode =
+        snake ? BufferRampCommon::TimeSeriesTimingMode::TwoDSnake
+              : (retrace ? BufferRampCommon::TimeSeriesTimingMode::TwoDRetrace
+                         : BufferRampCommon::TimeSeriesTimingMode::TwoDNormal);
+    OperationResult minimumTimingValidation =
+        BufferRampCommon::validateTimeSeriesTiming(
+            adcIntervalArg, adcChannels, numAdcChannels, timingMode);
+    if (!minimumTimingValidation.isSuccess()) {
+      return minimumTimingValidation;
+    }
+  }
   float slowStepSize[NUM_DAC_CHANNELS] = {};
   for (int i = 0; i < numDacChannels; i++) {
     slowStepSize[i] = numStepsSlow > 1
@@ -99,6 +113,33 @@ OperationResult timeSeriesBufferRamp2D(
 
   return ctx.finish(rampResult, true, false);
 }
+
+OperationResult timeSeriesBufferRamp2D(
+    int numDacChannels, int numAdcChannels, int numStepsFast,
+    int numStepsSlow, float dacIntervalArg, float adcIntervalArg,
+    float retraceArg, float snakeArg, List<int, 0>& dacChannelsList,
+    List<float, 0>& startPointList, List<float, 0>& fastAxisVectorList,
+    List<float, 0>& slowAxisVectorList, List<int, 1>& adcChannelsList) {
+  return timeSeriesBufferRamp2DImpl(
+      numDacChannels, numAdcChannels, numStepsFast, numStepsSlow,
+      dacIntervalArg, adcIntervalArg, retraceArg, snakeArg, dacChannelsList,
+      startPointList, fastAxisVectorList, slowAxisVectorList, adcChannelsList,
+      true);
+}
 COMMAND("2D_TIME_SERIES_BUFFER_RAMP", timeSeriesBufferRamp2D)
+
+OperationResult timeSeriesBufferRamp2DSudo(
+    int numDacChannels, int numAdcChannels, int numStepsFast,
+    int numStepsSlow, float dacIntervalArg, float adcIntervalArg,
+    float retraceArg, float snakeArg, List<int, 0>& dacChannelsList,
+    List<float, 0>& startPointList, List<float, 0>& fastAxisVectorList,
+    List<float, 0>& slowAxisVectorList, List<int, 1>& adcChannelsList) {
+  return timeSeriesBufferRamp2DImpl(
+      numDacChannels, numAdcChannels, numStepsFast, numStepsSlow,
+      dacIntervalArg, adcIntervalArg, retraceArg, snakeArg, dacChannelsList,
+      startPointList, fastAxisVectorList, slowAxisVectorList, adcChannelsList,
+      false);
+}
+COMMAND("2D_TIME_SERIES_BUFFER_RAMP_SUDO", timeSeriesBufferRamp2DSudo)
 
 }  // namespace

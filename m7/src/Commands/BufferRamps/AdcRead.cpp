@@ -90,10 +90,11 @@ void detachDataReadyInterrupts(AdcBoardMask boardMask) {
   }
 }
 
-OperationResult timeSeriesAdcRead(int numAdcChannels,
-                                  List<int, 0>& adcChannelsList,
-                                  float conversionTimeArg,
-                                  float totalDurationArg) {
+OperationResult timeSeriesAdcReadImpl(int numAdcChannels,
+                                      List<int, 0>& adcChannelsList,
+                                      float conversionTimeArg,
+                                      float totalDurationArg,
+                                      bool enforceTiming) {
   if (!isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of ADC channels");
   }
@@ -104,7 +105,7 @@ OperationResult timeSeriesAdcRead(int numAdcChannels,
       !BufferRampCommon::isUint32AtLeast(totalDurationArg, 82)) {
     return OperationResult::Failure("Invalid total duration");
   }
-  if (conversionTimeArg < 82.0f) {
+  if (enforceTiming && conversionTimeArg < 82.0f) {
     return OperationResult::Failure(
         "ADC conversion time too short (" + String(conversionTimeArg, 3) +
         " us < minimum 82 us)");
@@ -290,6 +291,23 @@ OperationResult timeSeriesAdcRead(int numAdcChannels,
   }
   return OperationResult::Success();
 }
+
+OperationResult timeSeriesAdcRead(int numAdcChannels,
+                                  List<int, 0>& adcChannelsList,
+                                  float conversionTimeArg,
+                                  float totalDurationArg) {
+  return timeSeriesAdcReadImpl(numAdcChannels, adcChannelsList,
+                               conversionTimeArg, totalDurationArg, true);
+}
 COMMAND("TIME_SERIES_ADC_READ", timeSeriesAdcRead)
+
+OperationResult timeSeriesAdcReadSudo(int numAdcChannels,
+                                      List<int, 0>& adcChannelsList,
+                                      float conversionTimeArg,
+                                      float totalDurationArg) {
+  return timeSeriesAdcReadImpl(numAdcChannels, adcChannelsList,
+                               conversionTimeArg, totalDurationArg, false);
+}
+COMMAND("TIME_SERIES_ADC_READ_SUDO", timeSeriesAdcReadSudo)
 
 }  // namespace

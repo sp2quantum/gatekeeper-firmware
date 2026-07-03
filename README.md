@@ -192,19 +192,58 @@ A `VoltagePacket` is simply a float that is transmitted to LabRAD over serial as
 
 #### Minimum Timing Tables
 
-These limits were measured on a real GateKeeper with all ADC conversion times set
-to the hardware minimum request of 82us (82.03125us actual), with
-`dac_settling_time_us = 20` for DAC-led ramps. Calibration commands were not
-run. Rows are the number of selected ADC channels on ADC card 0 and columns are
-the number of selected ADC channels on ADC card 1, so `1/1` and `2/0` are
-intentionally different cases. The firmware hardcodes these limits in
-`BufferRampCommon`.
+Normal ramp commands reject known-unsafe timing parameters before starting the
+ramp. `_SUDO` commands use the same arguments but skip only these timing guards;
+channel validation, voltage bounds, and argument validation still run.
 
-DAC count did not change the DAC-led minimum in spot checks for N = 1, 2, 4, and
-8 DAC channels. These values apply to `DAC_LED_BUFFER_RAMP` and
-`2D_DAC_LED_BUFFER_RAMP` with normal, retrace, or snake scanning.
+For normal commands, a timing-watchdog failure during or after a ramp is a
+firmware bug unless the command was `_SUDO`. Non-timing failures, such as a host
+not reading fast enough from the finite output buffer, can still occur at run
+time.
 
-| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+All values below are microseconds. The table rows are selected ADC channels on
+the busiest ADC card; columns are selected ADC channels on the second-busiest
+ADC card. With the current 2-ADC-board hardware, an 8-channel read is row `4`,
+column `4`.
+
+For `DAC_LED_BUFFER_RAMP`, `2D_DAC_LED_BUFFER_RAMP`,
+`TIME_SERIES_BUFFER_RAMP`, `2D_TIME_SERIES_BUFFER_RAMP`, and `AWG_WITH_ADC`,
+the table value applies when every selected ADC conversion is at the minimum
+setting (`CONVERT_TIME,ch,82`, about `82.03125us` actual). For slower ADC
+conversions, the minimum is:
+
+```text
+max(table_value, ceil(1.2 * busiest_adc_card_conversion_sum_us))
+```
+
+`busiest_adc_card_conversion_sum_us` is the sum of actual conversion times for
+the selected ADC channels on the busiest ADC card.
+
+| Command | Checked parameter | Minimum |
+| --- | --- | --- |
+| `DAC_LED_BUFFER_RAMP` | `dac_interval_us` | DAC-led table, with slower-conversion formula above |
+| `DAC_LED_BUFFER_RAMP` | `dac_settling_time_us` | `20`; must also be less than `dac_interval_us` |
+| `2D_DAC_LED_BUFFER_RAMP` | `dac_interval_us` | DAC-led table, with slower-conversion formula above |
+| `2D_DAC_LED_BUFFER_RAMP` | `dac_settling_time_us` | `20`; must also be less than `dac_interval_us` |
+| `TIME_SERIES_BUFFER_RAMP` | `adc_interval_us` | 1D time-series table, with slower-conversion formula above |
+| `2D_TIME_SERIES_BUFFER_RAMP` normal mode | `adc_interval_us` | 2D normal table, with slower-conversion formula above |
+| `2D_TIME_SERIES_BUFFER_RAMP` retrace mode | `adc_interval_us` | 2D retrace table, with slower-conversion formula above |
+| `2D_TIME_SERIES_BUFFER_RAMP` snake mode | `adc_interval_us` | 2D snake table, with slower-conversion formula above |
+| `TIME_SERIES_ADC_READ` | `conversion_time_us` | `82` |
+| `AWG_BUFFER_RAMP` | `dac_interval_us` | `20` for 1-4 DAC channels; `40` for 5-8 DAC channels |
+| `AWG_WITH_ADC` | `dac_interval_us` | DAC-led minimum plus AWG-with-ADC DAC overhead table |
+| `BOXCAR_BUFFER_RAMP` | `adc_conversion_time_us` | Boxcar table |
+
+`_SUDO` aliases: `DAC_LED_BUFFER_RAMP_SUDO`,
+`2D_DAC_LED_BUFFER_RAMP_SUDO`, `TIME_SERIES_BUFFER_RAMP_SUDO`,
+`2D_TIME_SERIES_BUFFER_RAMP_SUDO`, `TIME_SERIES_ADC_READ_SUDO`,
+`AWG_BUFFER_RAMP_SUDO`, `AWG_WITH_ADC_SUDO`, and
+`BOXCAR_BUFFER_RAMP_SUDO`.
+
+`DAC_LED_BUFFER_RAMP` / `2D_DAC_LED_BUFFER_RAMP` minimum
+`dac_interval_us`:
+
+| Busiest ADC card \ second-busiest | 0 | 1 | 2 | 3 | 4 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 0 | - | 120 | 200 | 300 | 400 |
 | 1 | 120 | 120 | 220 | 320 | 420 |
@@ -214,7 +253,7 @@ DAC count did not change the DAC-led minimum in spot checks for N = 1, 2, 4, and
 
 `TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`:
 
-| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+| Busiest ADC card \ second-busiest | 0 | 1 | 2 | 3 | 4 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 0 | - | 80 | 80 | 100 | 160 |
 | 1 | 80 | 80 | 80 | 80 | 160 |
@@ -224,7 +263,7 @@ DAC count did not change the DAC-led minimum in spot checks for N = 1, 2, 4, and
 
 `2D_TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`, normal mode:
 
-| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+| Busiest ADC card \ second-busiest | 0 | 1 | 2 | 3 | 4 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 0 | - | 80 | 80 | 80 | 80 |
 | 1 | 80 | 80 | 80 | 80 | 280 |
@@ -234,7 +273,7 @@ DAC count did not change the DAC-led minimum in spot checks for N = 1, 2, 4, and
 
 `2D_TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`, retrace mode:
 
-| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+| Busiest ADC card \ second-busiest | 0 | 1 | 2 | 3 | 4 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 0 | - | 80 | 80 | 80 | 80 |
 | 1 | 80 | 80 | 80 | 80 | 280 |
@@ -244,7 +283,7 @@ DAC count did not change the DAC-led minimum in spot checks for N = 1, 2, 4, and
 
 `2D_TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`, snake mode:
 
-| ADC card 0 \ ADC card 1 | 0 | 1 | 2 | 3 | 4 |
+| Busiest ADC card \ second-busiest | 0 | 1 | 2 | 3 | 4 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 0 | - | 80 | 80 | 80 | 80 |
 | 1 | 80 | 80 | 80 | 80 | 260 |
@@ -252,22 +291,17 @@ DAC count did not change the DAC-led minimum in spot checks for N = 1, 2, 4, and
 | 3 | 80 | 120 | 80 | 120 | 220 |
 | 4 | 80 | 280 | 160 | 160 | 270 |
 
-`AWG_WITH_ADC` uses the DAC-led table as its base `dac_interval_us`, with a
-DAC-count overhead for heavier DAC updates:
+`AWG_WITH_ADC` DAC overhead:
 
-| DAC channels | Additional interval |
+| DAC channels | Add to DAC-led minimum |
 | ---: | ---: |
-| 1-3 | 0 |
-| 4-7 | +20us when the base interval is 200-280us |
-| 8 | +40us |
+| 1-3 | `0` |
+| 4-7 | `20` when DAC-led minimum is `200-299`; otherwise `0` |
+| 8 | `40` |
 
-`BOXCAR_BUFFER_RAMP` enforces a conservative `adc_conversion_time_us` floor
-based on the busiest ADC card. The ramp data were sensible at lower values, but
-the timing watchdog showed ADC timing pressure near the lower and phase-sensitive
-settings; the firmware therefore checks DAC/ADC SPI missteps and ignores the
-persistent ADC-conversion watchdog bit for boxcar cleanup.
+`BOXCAR_BUFFER_RAMP` minimum `adc_conversion_time_us`:
 
-| Max selected ADC channels on one card | Minimum `adc_conversion_time_us` |
+| Busiest ADC card channel count | Minimum |
 | ---: | ---: |
 | 1 | 300 |
 | 2 | 300 |

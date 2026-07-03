@@ -43,6 +43,7 @@ uint16_t minimumDacLedIntervalUs(const int* adcChannels, int numAdcChannels);
 uint16_t minimumAwgWithAdcIntervalUs(int numDacChannels,
                                     const int* adcChannels,
                                     int numAdcChannels);
+uint16_t minimumDacOnlyIntervalUs(int numDacChannels);
 uint16_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
                                         int numAdcChannels,
                                         TimeSeriesTimingMode mode);
@@ -60,6 +61,8 @@ OperationResult validateAwgWithAdcTiming(float dacIntervalArg,
                                          int numDacChannels,
                                          const int* adcChannels,
                                          int numAdcChannels);
+OperationResult validateDacOnlyTiming(float dacIntervalArg,
+                                      int numDacChannels);
 OperationResult validateBoxcarTiming(float adcConversionTimeArg,
                                      const int* adcChannels,
                                      int numAdcChannels);

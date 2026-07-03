@@ -205,7 +205,26 @@ uint16_t minimumDacLedIntervalUs(const int* adcChannels, int numAdcChannels) {
       {300, 320, 320, 340, 440},
       {400, 420, 420, 440, 460},
   };
-  return lookupTiming(kTable, adcChannels, numAdcChannels);
+  const uint16_t tableMinimum = lookupTiming(kTable, adcChannels, numAdcChannels);
+  if (tableMinimum == kInvalidTiming) return tableMinimum;
+
+  float maxSingleConversionUs = 0.0f;
+  for (int i = 0; i < numAdcChannels; i++) {
+    const float conversionUs =
+        ADCController::getConversionTimeFloat(adcChannels[i]);
+    if (conversionUs > maxSingleConversionUs) {
+      maxSingleConversionUs = conversionUs;
+    }
+  }
+  if (maxSingleConversionUs <= 90.0f) return tableMinimum;
+
+  const float maxBoardConversionUs =
+      maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
+  const uint32_t conversionMinimum =
+      static_cast<uint32_t>(maxBoardConversionUs * 1.2f + 0.999f);
+  const uint32_t minimum =
+      std::max<uint32_t>(tableMinimum, conversionMinimum);
+  return minimum > 65535 ? 65535 : static_cast<uint16_t>(minimum);
 }
 
 uint16_t minimumAwgWithAdcIntervalUs(int numDacChannels,
@@ -220,6 +239,12 @@ uint16_t minimumAwgWithAdcIntervalUs(int numDacChannels,
     extra = 20;
   }
   return base + extra;
+}
+
+uint16_t minimumDacOnlyIntervalUs(int numDacChannels) {
+  if (numDacChannels <= 0) return kInvalidTiming;
+  if (numDacChannels <= 4) return 20;
+  return 40;
 }
 
 uint16_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
@@ -254,17 +279,40 @@ uint16_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
       {80, 280, 160, 160, 270},
   };
 
+  uint16_t tableMinimum = kInvalidTiming;
   switch (mode) {
     case TimeSeriesTimingMode::OneD:
-      return lookupTiming(kOneD, adcChannels, numAdcChannels);
+      tableMinimum = lookupTiming(kOneD, adcChannels, numAdcChannels);
+      break;
     case TimeSeriesTimingMode::TwoDNormal:
-      return lookupTiming(kTwoDNormal, adcChannels, numAdcChannels);
+      tableMinimum = lookupTiming(kTwoDNormal, adcChannels, numAdcChannels);
+      break;
     case TimeSeriesTimingMode::TwoDRetrace:
-      return lookupTiming(kTwoDRetrace, adcChannels, numAdcChannels);
+      tableMinimum = lookupTiming(kTwoDRetrace, adcChannels, numAdcChannels);
+      break;
     case TimeSeriesTimingMode::TwoDSnake:
-      return lookupTiming(kTwoDSnake, adcChannels, numAdcChannels);
+      tableMinimum = lookupTiming(kTwoDSnake, adcChannels, numAdcChannels);
+      break;
   }
-  return kInvalidTiming;
+  if (tableMinimum == kInvalidTiming) return tableMinimum;
+
+  float maxSingleConversionUs = 0.0f;
+  for (int i = 0; i < numAdcChannels; i++) {
+    const float conversionUs =
+        ADCController::getConversionTimeFloat(adcChannels[i]);
+    if (conversionUs > maxSingleConversionUs) {
+      maxSingleConversionUs = conversionUs;
+    }
+  }
+  if (maxSingleConversionUs <= 90.0f) return tableMinimum;
+
+  const float maxBoardConversionUs =
+      maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
+  const uint32_t conversionMinimum =
+      static_cast<uint32_t>(maxBoardConversionUs * 1.2f + 0.999f);
+  const uint32_t minimum =
+      std::max<uint32_t>(tableMinimum, conversionMinimum);
+  return minimum > 65535 ? 65535 : static_cast<uint16_t>(minimum);
 }
 
 uint16_t minimumBoxcarConversionTimeUs(const int* adcChannels,
@@ -306,6 +354,12 @@ OperationResult validateAwgWithAdcTiming(float dacIntervalArg,
       "DAC interval", dacIntervalArg,
       minimumAwgWithAdcIntervalUs(numDacChannels, adcChannels,
                                   numAdcChannels));
+}
+
+OperationResult validateDacOnlyTiming(float dacIntervalArg,
+                                      int numDacChannels) {
+  return validateMinimumTiming("DAC interval", dacIntervalArg,
+                               minimumDacOnlyIntervalUs(numDacChannels));
 }
 
 OperationResult validateBoxcarTiming(float adcConversionTimeArg,

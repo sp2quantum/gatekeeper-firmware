@@ -21,13 +21,14 @@ using BufferRampCommon::isValidDacChannelCount;
 using BufferRampCommon::sendVoltageFrame;
 using BufferRampCommon::validateRampChannels;
 
-OperationResult boxcarAverageRamp(
+OperationResult boxcarAverageRampImpl(
     int numDacChannels, int numAdcChannels, int numDacSteps,
     int numAdcMeasuresPerDacStep, int numAdcAverages,
     float adcConversionTimeArg, List<int, 0>& dacChannelsList,
     List<float, 0>& dacV0_1List,
     List<float, 0>& dacVf_1List, List<float, 0>& dacV0_2List,
-    List<float, 0>& dacVf_2List, List<int, 1>& adcChannelsList) {
+    List<float, 0>& dacVf_2List, List<int, 1>& adcChannelsList,
+    bool enforceTiming) {
   if (!isValidDacChannelCount(numDacChannels) ||
       !isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of channels");
@@ -48,11 +49,13 @@ OperationResult boxcarAverageRamp(
   OperationResult channelValidation = validateRampChannels(
       dacChannels, numDacChannels, adcChannels, numAdcChannels);
   if (!channelValidation.isSuccess()) return channelValidation;
-  OperationResult minimumTimingValidation =
-      BufferRampCommon::validateBoxcarTiming(
-          adcConversionTimeArg, adcChannels, numAdcChannels);
-  if (!minimumTimingValidation.isSuccess()) {
-    return minimumTimingValidation;
+  if (enforceTiming) {
+    OperationResult minimumTimingValidation =
+        BufferRampCommon::validateBoxcarTiming(
+            adcConversionTimeArg, adcChannels, numAdcChannels);
+    if (!minimumTimingValidation.isSuccess()) {
+      return minimumTimingValidation;
+    }
   }
   OperationResult endpointValidation =
       RampCommand::validateBoxcarDacEndpoints(numDacChannels, dacChannels,
@@ -169,6 +172,35 @@ OperationResult boxcarAverageRamp(
           : OperationResult::Success(),
       true, false);
 }
+
+OperationResult boxcarAverageRamp(
+    int numDacChannels, int numAdcChannels, int numDacSteps,
+    int numAdcMeasuresPerDacStep, int numAdcAverages,
+    float adcConversionTimeArg, List<int, 0>& dacChannelsList,
+    List<float, 0>& dacV0_1List,
+    List<float, 0>& dacVf_1List, List<float, 0>& dacV0_2List,
+    List<float, 0>& dacVf_2List, List<int, 1>& adcChannelsList) {
+  return boxcarAverageRampImpl(
+      numDacChannels, numAdcChannels, numDacSteps,
+      numAdcMeasuresPerDacStep, numAdcAverages, adcConversionTimeArg,
+      dacChannelsList, dacV0_1List, dacVf_1List, dacV0_2List, dacVf_2List,
+      adcChannelsList, true);
+}
 COMMAND("BOXCAR_BUFFER_RAMP", boxcarAverageRamp)
+
+OperationResult boxcarAverageRampSudo(
+    int numDacChannels, int numAdcChannels, int numDacSteps,
+    int numAdcMeasuresPerDacStep, int numAdcAverages,
+    float adcConversionTimeArg, List<int, 0>& dacChannelsList,
+    List<float, 0>& dacV0_1List,
+    List<float, 0>& dacVf_1List, List<float, 0>& dacV0_2List,
+    List<float, 0>& dacVf_2List, List<int, 1>& adcChannelsList) {
+  return boxcarAverageRampImpl(
+      numDacChannels, numAdcChannels, numDacSteps,
+      numAdcMeasuresPerDacStep, numAdcAverages, adcConversionTimeArg,
+      dacChannelsList, dacV0_1List, dacVf_1List, dacV0_2List, dacVf_2List,
+      adcChannelsList, false);
+}
+COMMAND("BOXCAR_BUFFER_RAMP_SUDO", boxcarAverageRampSudo)
 
 }  // namespace
