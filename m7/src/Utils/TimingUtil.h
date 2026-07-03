@@ -15,6 +15,8 @@ extern volatile uint32_t adcConversionMisstepEvents;
 extern volatile AdcBoardMask adcConversionInProgressMask;
 extern volatile AdcBoardMask adcConversionWatchMask;
 extern volatile bool adcConversionStartedFlag;
+extern volatile uint32_t adcSampleFlagCount;
+extern volatile bool adcSampleTimerMode;
 
 void resetTimers();
 void resetTimingWatchdog(AdcBoardMask adc_watch_mask = 0);
@@ -28,6 +30,8 @@ void setupTimersTimeSeries(uint32_t dac_period_us,
 void setupTimersTimeSeriesRamp(uint32_t dac_period_us,
                                uint32_t adc_period_us,
                                AdcBoardMask adc_watch_mask);
+void setupTimersTimeSeriesSampled(uint32_t dac_period_us,
+                                  uint32_t adc_period_us);
 void stopTimeSeriesTimers();
 void setupTimersDacLed(uint64_t period_us, uint64_t phase_shift_us,
                        AdcBoardMask adc_watch_mask);
@@ -37,6 +41,7 @@ bool consumeDacFlag();
 bool consumeAdcFlag(AdcBoardMask expectedMask);
 bool consumeAnyAdcFlag();
 bool consumeAdcConversionStartedFlag();
+bool consumeAdcSampleFlag();
 
 constexpr AdcBoardMask adcBoardBit(int boardIndex) {
   return static_cast<AdcBoardMask>(1) << boardIndex;

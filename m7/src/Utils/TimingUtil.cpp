@@ -13,6 +13,8 @@ volatile uint32_t TimingUtil::adcConversionMisstepEvents = 0;
 volatile AdcBoardMask TimingUtil::adcConversionInProgressMask = 0;
 volatile AdcBoardMask TimingUtil::adcConversionWatchMask = 0;
 volatile bool TimingUtil::adcConversionStartedFlag = false;
+volatile uint32_t TimingUtil::adcSampleFlagCount = 0;
+volatile bool TimingUtil::adcSampleTimerMode = false;
 
 namespace {
 constexpr uint32_t kTimeSeriesAdcStartDelayUs = 10;
@@ -94,6 +96,8 @@ void TimingUtil::resetTimers() {
   adcConversionInProgressMask = 0;
   adcConversionWatchMask = 0;
   adcConversionStartedFlag = false;
+  adcSampleFlagCount = 0;
+  adcSampleTimerMode = false;
 
   __enable_irq();
   delayMicroseconds(5);
@@ -107,6 +111,7 @@ void TimingUtil::resetTimingWatchdog(AdcBoardMask adc_watch_mask) {
   adcConversionInProgressMask = 0;
   adcConversionWatchMask = adc_watch_mask;
   adcConversionStartedFlag = false;
+  adcSampleFlagCount = 0;
   __enable_irq();
 }
 
@@ -127,6 +132,8 @@ void TimingUtil::stopTimeSeriesTimers() {
   adcFlag = 0;
   adcConversionInProgressMask = 0;
   adcConversionStartedFlag = false;
+  adcSampleFlagCount = 0;
+  adcSampleTimerMode = false;
   stopAndResetAdcTimer();
   FastGpio::digitalWrite(adc_sync, false);
 }
@@ -227,6 +234,47 @@ void TimingUtil::setupTimersTimeSeriesRamp(uint32_t dac_period_us,
     return;
   }
   setupTimersTimeSeries(dac_period_us, adc_period_us, adc_watch_mask);
+}
+
+void TimingUtil::setupTimersTimeSeriesSampled(uint32_t dac_period_us,
+                                              uint32_t adc_period_us) {
+  resetTimers();
+  resetTimingWatchdog();
+  adcSampleTimerMode = true;
+
+  enableTimerClock(RCC_APB2ENR_TIM1EN | RCC_APB2ENR_TIM8EN);
+
+  const uint64_t timerClock = 2 * HAL_RCC_GetPCLK2Freq();
+  const TimerPeriod dacPeriod =
+      timerPeriodForMicros(dac_period_us, timerClock);
+  const TimerPeriod adcPeriod =
+      timerPeriodForMicros(adc_period_us, timerClock);
+
+  TIM1->CR1 &= ~TIM_CR1_CEN;
+  TIM1->PSC = dacPeriod.prescaler;
+  TIM1->ARR = dacPeriod.autoReload;
+  TIM1->CR1 = TIM_CR1_ARPE;
+  TIM1->DIER |= TIM_DIER_UIE;
+
+  TIM1->EGR |= 0x01;
+  TIM1->SR &= ~TIM_SR_UIF;
+
+  TIM8->CR1 &= ~TIM_CR1_CEN;
+  TIM8->PSC = adcPeriod.prescaler;
+  TIM8->ARR = adcPeriod.autoReload;
+  TIM8->CR1 = TIM_CR1_ARPE;
+  TIM8->DIER |= TIM_DIER_UIE;
+
+  TIM8->EGR |= 0x01;
+  TIM8->SR &= ~TIM_SR_UIF;
+
+  NVIC_SetPriority(TIM1_UP_IRQn, 0);
+  NVIC_EnableIRQ(TIM1_UP_IRQn);
+  NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 3);
+  NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
+
+  TIM1->CR1 |= TIM_CR1_CEN;
+  TIM8->CR1 |= TIM_CR1_CEN;
 }
 
 void TimingUtil::setupTimersDacLed(uint64_t period_us,
@@ -353,6 +401,19 @@ bool TimingUtil::consumeAdcConversionStartedFlag() {
   return pending;
 }
 
+bool TimingUtil::consumeAdcSampleFlag() {
+  if (adcSampleFlagCount == 0) {
+    return false;
+  }
+  __disable_irq();
+  const bool pending = adcSampleFlagCount > 0;
+  if (pending) {
+    adcSampleFlagCount--;
+  }
+  __enable_irq();
+  return pending;
+}
+
 extern "C" void TIM1_UP_IRQHandler(void) {
   if (TIM1->SR & TIM_SR_UIF) {
     TIM1->SR &= ~TIM_SR_UIF;
@@ -373,7 +434,16 @@ extern "C" void TIM1_UP_IRQHandler(void) {
 extern "C" void TIM8_UP_TIM13_IRQHandler(void) {
   if (TIM8->SR & TIM_SR_UIF) {
     TIM8->SR &= ~TIM_SR_UIF;
-    handleAdcTimerStartEvent();
+    if (TimingUtil::adcSampleTimerMode) {
+      if (spiStillClocking(
+              SPI5, PeripheralCommsController::adcSpiTransferInProgress)) {
+        TimingUtil::adcSpiMisstepEvents++;
+      }
+      TimingUtil::adcSampleFlagCount++;
+      __SEV();
+    } else {
+      handleAdcTimerStartEvent();
+    }
   }
 }
 

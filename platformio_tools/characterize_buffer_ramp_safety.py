@@ -50,25 +50,25 @@ TIME_SERIES_1D_TABLE = [
 ]
 TIME_SERIES_2D_TABLES = {
     "normal": [
-        [0, 80, 80, 80, 80],
-        [80, 80, 80, 80, 280],
-        [80, 80, 80, 120, 160],
-        [80, 80, 80, 120, 160],
-        [80, 280, 160, 160, 160],
+        [0, 105, 102, 150, 131],
+        [105, 119, 107, 156, 204],
+        [102, 107, 114, 163, 208],
+        [150, 156, 163, 171, 434],
+        [131, 204, 208, 434, 452],
     ],
     "retrace": [
-        [0, 80, 80, 80, 80],
-        [80, 80, 80, 80, 280],
-        [80, 80, 80, 80, 160],
-        [80, 80, 80, 120, 160],
-        [80, 280, 160, 160, 160],
+        [0, 105, 102, 151, 197],
+        [105, 119, 107, 156, 204],
+        [102, 107, 114, 163, 208],
+        [151, 156, 163, 171, 434],
+        [197, 204, 208, 434, 448],
     ],
     "snake": [
-        [0, 80, 80, 80, 80],
-        [80, 80, 80, 80, 260],
-        [80, 80, 80, 80, 160],
-        [80, 120, 80, 120, 220],
-        [80, 280, 160, 160, 270],
+        [0, 107, 101, 148, 131],
+        [107, 119, 107, 156, 204],
+        [101, 107, 114, 164, 209],
+        [148, 156, 164, 170, 442],
+        [131, 204, 209, 442, 454],
     ],
 }
 BOXCAR_BY_MAX_ADC_PER_BOARD = {1: 300, 2: 300, 3: 500, 4: 800}
@@ -227,11 +227,7 @@ def max_board_conversion_sum(adc_channels: list[int], actual_by_channel: dict[in
 def time_series_minimum(
     table: list[list[int]], adc_channels: list[int], actual_by_channel: dict[int, float]
 ) -> int:
-    base = table_lookup(table, adc_channels)
-    max_single = max(actual_by_channel[ch] for ch in adc_channels)
-    if max_single <= 90.0:
-        return base
-    return max(base, math.ceil(1.2 * max_board_conversion_sum(adc_channels, actual_by_channel)))
+    return table_lookup(table, adc_channels)
 
 
 def dac_led_minimum(adc_channels: list[int], actual_by_channel: dict[int, float]) -> int:

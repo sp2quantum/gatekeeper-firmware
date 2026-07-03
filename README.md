@@ -206,8 +206,7 @@ the busiest ADC card; columns are selected ADC channels on the second-busiest
 ADC card. With the current 2-ADC-board hardware, an 8-channel read is row `4`,
 column `4`.
 
-For `DAC_LED_BUFFER_RAMP`, `2D_DAC_LED_BUFFER_RAMP`,
-`TIME_SERIES_BUFFER_RAMP`, `2D_TIME_SERIES_BUFFER_RAMP`, and `AWG_WITH_ADC`,
+For `DAC_LED_BUFFER_RAMP`, `2D_DAC_LED_BUFFER_RAMP`, and `AWG_WITH_ADC`,
 the table value applies when every selected ADC conversion is at the minimum
 setting (`CONVERT_TIME,ch,82`, about `82.03125us` actual). For slower ADC
 conversions, the minimum is:
@@ -219,16 +218,22 @@ max(table_value, ceil(1.2 * busiest_adc_card_conversion_sum_us))
 `busiest_adc_card_conversion_sum_us` is the sum of actual conversion times for
 the selected ADC channels on the busiest ADC card.
 
+For `TIME_SERIES_BUFFER_RAMP` and `2D_TIME_SERIES_BUFFER_RAMP`,
+`adc_interval_us` is the sampling/readout clock. The ADCs free-run at their
+configured conversion times, so the time-series minimum is only the empirical
+table floor for the selected ADC-board split and is not conversion-time
+dependent.
+
 | Command | Checked parameter | Minimum |
 | --- | --- | --- |
 | `DAC_LED_BUFFER_RAMP` | `dac_interval_us` | DAC-led table, with slower-conversion formula above |
 | `DAC_LED_BUFFER_RAMP` | `dac_settling_time_us` | `20`; must also be less than `dac_interval_us` |
 | `2D_DAC_LED_BUFFER_RAMP` | `dac_interval_us` | DAC-led table, with slower-conversion formula above |
 | `2D_DAC_LED_BUFFER_RAMP` | `dac_settling_time_us` | `20`; must also be less than `dac_interval_us` |
-| `TIME_SERIES_BUFFER_RAMP` | `adc_interval_us` | 1D time-series table, with slower-conversion formula above |
-| `2D_TIME_SERIES_BUFFER_RAMP` normal mode | `adc_interval_us` | 2D normal table, with slower-conversion formula above |
-| `2D_TIME_SERIES_BUFFER_RAMP` retrace mode | `adc_interval_us` | 2D retrace table, with slower-conversion formula above |
-| `2D_TIME_SERIES_BUFFER_RAMP` snake mode | `adc_interval_us` | 2D snake table, with slower-conversion formula above |
+| `TIME_SERIES_BUFFER_RAMP` | `adc_interval_us` | 1D time-series table |
+| `2D_TIME_SERIES_BUFFER_RAMP` normal mode | `adc_interval_us` | 2D normal table |
+| `2D_TIME_SERIES_BUFFER_RAMP` retrace mode | `adc_interval_us` | 2D retrace table |
+| `2D_TIME_SERIES_BUFFER_RAMP` snake mode | `adc_interval_us` | 2D snake table |
 | `TIME_SERIES_ADC_READ` | `conversion_time_us` | `82` |
 | `AWG_BUFFER_RAMP` | `dac_interval_us` | `20` for 1-4 DAC channels; `40` for 5-8 DAC channels |
 | `AWG_WITH_ADC` | `dac_interval_us` | DAC-led minimum plus AWG-with-ADC DAC overhead table |
@@ -265,31 +270,31 @@ the selected ADC channels on the busiest ADC card.
 
 | Busiest ADC card \ second-busiest | 0 | 1 | 2 | 3 | 4 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 0 | - | 80 | 80 | 80 | 80 |
-| 1 | 80 | 80 | 80 | 80 | 280 |
-| 2 | 80 | 80 | 80 | 120 | 160 |
-| 3 | 80 | 80 | 80 | 120 | 160 |
-| 4 | 80 | 280 | 160 | 160 | 160 |
+| 0 | - | 105 | 102 | 150 | 131 |
+| 1 | 105 | 119 | 107 | 156 | 204 |
+| 2 | 102 | 107 | 114 | 163 | 208 |
+| 3 | 150 | 156 | 163 | 171 | 434 |
+| 4 | 131 | 204 | 208 | 434 | 452 |
 
 `2D_TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`, retrace mode:
 
 | Busiest ADC card \ second-busiest | 0 | 1 | 2 | 3 | 4 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 0 | - | 80 | 80 | 80 | 80 |
-| 1 | 80 | 80 | 80 | 80 | 280 |
-| 2 | 80 | 80 | 80 | 80 | 160 |
-| 3 | 80 | 80 | 80 | 120 | 160 |
-| 4 | 80 | 280 | 160 | 160 | 160 |
+| 0 | - | 105 | 102 | 151 | 197 |
+| 1 | 105 | 119 | 107 | 156 | 204 |
+| 2 | 102 | 107 | 114 | 163 | 208 |
+| 3 | 151 | 156 | 163 | 171 | 434 |
+| 4 | 197 | 204 | 208 | 434 | 448 |
 
 `2D_TIME_SERIES_BUFFER_RAMP` minimum `adc_interval_us`, snake mode:
 
 | Busiest ADC card \ second-busiest | 0 | 1 | 2 | 3 | 4 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 0 | - | 80 | 80 | 80 | 80 |
-| 1 | 80 | 80 | 80 | 80 | 260 |
-| 2 | 80 | 80 | 80 | 80 | 160 |
-| 3 | 80 | 120 | 80 | 120 | 220 |
-| 4 | 80 | 280 | 160 | 160 | 270 |
+| 0 | - | 107 | 101 | 148 | 131 |
+| 1 | 107 | 119 | 107 | 156 | 204 |
+| 2 | 101 | 107 | 114 | 164 | 209 |
+| 3 | 148 | 156 | 164 | 170 | 442 |
+| 4 | 131 | 204 | 209 | 442 | 454 |
 
 `AWG_WITH_ADC` DAC overhead:
 

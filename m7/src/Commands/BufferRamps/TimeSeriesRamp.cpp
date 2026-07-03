@@ -1,7 +1,5 @@
 #include "Config.h"
 
-#include <vector>
-
 #include "FunctionRegistry/FunctionRegistryArgumentParser.h"
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
 #include "Peripherals/ADC/ADCController.h"
@@ -22,7 +20,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
                             int numSteps, uint32_t dac_interval_us,
                             uint32_t adc_interval_us, int* dacChannels,
                             float* dacV0s, float* dacVfs, int* adcChannels,
-                            AdcBoardMask adcMask, Mode mode);
+                            AdcBoardMask adcMask);
 
 namespace {
 
@@ -82,7 +80,7 @@ OperationResult timeSeriesBufferRampImpl(
       numDacChannels, numAdcChannels, numSteps,
       static_cast<uint32_t>(dacIntervalArg),
       static_cast<uint32_t>(adcIntervalArg), dacChannels, dacV0s, dacVfs,
-      adcChannels, ctx.adcMask(), Mode::Streaming);
+      adcChannels, ctx.adcMask());
 
   return ctx.finish(rampResult, true, false);
 }
@@ -117,8 +115,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
                             int numSteps, uint32_t dac_interval_us,
                             uint32_t adc_interval_us, int* dacChannels,
                             float* dacV0s, float* dacVfs, int* adcChannels,
-                            AdcBoardMask adcMask, Mode mode) {
-  const bool buffered2DRow = mode == Mode::Buffered2DRow;
+                            AdcBoardMask adcMask) {
   int dacStepsLoaded = 0;
   int framesCaptured = 0;
   const uint64_t savedDataSize64 =
@@ -128,11 +125,6 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
   }
   const int savedDataSize = static_cast<int>(savedDataSize64);
   bool voltageOverflow = false;
-  std::vector<double> bufferedFrames;
-  if (buffered2DRow) {
-    bufferedFrames.resize(static_cast<size_t>(savedDataSize) *
-                          static_cast<size_t>(numAdcChannels));
-  }
 
   double voltageStepSize[NUM_DAC_CHANNELS] = {};
   for (int i = 0; i < numDacChannels; i++) {
@@ -181,13 +173,8 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
     return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
   }
 
-  FastGpio::digitalWrite(adc_sync, false);
-  for (int i = 0; i < numAdcChannels; i++) {
-    ADCController::startContinuousConversion(adcChannels[i]);
-    ADCController::setRDYFN(adcChannels[i]);
-  }
-  TimingUtil::setupTimersTimeSeriesRamp(dac_interval_us, adc_interval_us,
-                                        adcMask);
+  FastGpio::digitalWrite(adc_sync, true);
+  TimingUtil::setupTimersTimeSeriesSampled(dac_interval_us, adc_interval_us);
   TimingUtil::dacFlag = false;
   TimingUtil::dacFlagCount = 0;
   TimingUtil::adcFlag = 0;
@@ -196,7 +183,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
          !isWorkerStopRequested()) {
     bool didWork = false;
     const bool adcPending = framesCaptured < savedDataSize &&
-                            TimingUtil::consumeAdcFlag(adcMask);
+                            TimingUtil::consumeAdcSampleFlag();
 
     double packets[NUM_ADC_CHANNELS] = {};
     bool haveAdcPackets = false;
@@ -205,7 +192,6 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
         packets[i] =
             ADCController::getVoltageDataNoTransaction(adcChannels[i]);
       }
-      FastGpio::digitalWrite(adc_sync, false);
       haveAdcPackets = true;
       didWork = true;
     }
@@ -219,14 +205,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
     }
 
     if (haveAdcPackets) {
-      if (buffered2DRow) {
-        const size_t frameOffset =
-            static_cast<size_t>(framesCaptured) *
-            static_cast<size_t>(numAdcChannels);
-        for (int i = 0; i < numAdcChannels; i++) {
-          bufferedFrames[frameOffset + static_cast<size_t>(i)] = packets[i];
-        }
-      } else if (!sendVoltageFrame(packets, numAdcChannels)) {
+      if (!sendVoltageFrame(packets, numAdcChannels)) {
         voltageOverflow = true;
         break;
       }
@@ -239,28 +218,6 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
   }
 
   TimingUtil::stopTimeSeriesTimers();
-
-  if (isWorkerStopRequested()) {
-    if (voltageOverflow) {
-      return OperationResult::Failure("Voltage output buffer overflow");
-    }
-    return OperationResult::Failure("RAMPING_STOPPED");
-  }
-  if (voltageOverflow) {
-    return OperationResult::Failure("Voltage output buffer overflow");
-  }
-
-  if (buffered2DRow) {
-    for (int frame = 0; frame < savedDataSize && !isWorkerStopRequested();
-         frame++) {
-      const size_t frameOffset = static_cast<size_t>(frame) *
-                                 static_cast<size_t>(numAdcChannels);
-      if (!sendVoltageFrame(&bufferedFrames[frameOffset], numAdcChannels)) {
-        voltageOverflow = true;
-        break;
-      }
-    }
-  }
 
   if (isWorkerStopRequested()) {
     if (voltageOverflow) {

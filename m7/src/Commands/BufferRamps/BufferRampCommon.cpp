@@ -62,6 +62,76 @@ OperationResult validateMinimumTiming(const char* label, float actual,
   return OperationResult::Success();
 }
 
+String formatAdcTimingDetails(const int* adcChannels, int numAdcChannels) {
+  float boardConversionTimeUs[NUM_ADC_BOARDS] = {};
+  String channels = "selected ADC conversion times: ";
+  for (int i = 0; i < numAdcChannels; i++) {
+    const int channel = adcChannels[i];
+    if (i > 0) channels += ", ";
+    channels += "ch" + String(channel) + "=";
+    if (channel < 0 || channel >= NUM_ADC_CHANNELS) {
+      channels += "invalid";
+      continue;
+    }
+    const float conversionUs =
+        ADCController::getConversionTimeFloat(channel);
+    boardConversionTimeUs[adcBoardForChannel(channel)] += conversionUs;
+    channels += String(conversionUs, 3) + " us";
+  }
+
+  channels += "; same-board conversion sums: ";
+  for (int board = 0; board < NUM_ADC_BOARDS; board++) {
+    if (board > 0) channels += ", ";
+    channels += "board" + String(board) + "=" +
+                String(boardConversionTimeUs[board], 3) + " us";
+  }
+  return channels;
+}
+
+uint16_t timeSeriesTableMinimumUs(const int* adcChannels, int numAdcChannels,
+                                  TimeSeriesTimingMode mode) {
+  static constexpr uint16_t kOneD[5][5] = {
+      {0, 80, 80, 100, 160},
+      {80, 80, 80, 80, 160},
+      {80, 80, 80, 180, 140},
+      {100, 120, 120, 200, 240},
+      {160, 160, 300, 240, 160},
+  };
+  static constexpr uint16_t kTwoDNormal[5][5] = {
+      {0, 105, 102, 150, 131},
+      {105, 119, 107, 156, 204},
+      {102, 107, 114, 163, 208},
+      {150, 156, 163, 171, 434},
+      {131, 204, 208, 434, 452},
+  };
+  static constexpr uint16_t kTwoDRetrace[5][5] = {
+      {0, 105, 102, 151, 197},
+      {105, 119, 107, 156, 204},
+      {102, 107, 114, 163, 208},
+      {151, 156, 163, 171, 434},
+      {197, 204, 208, 434, 448},
+  };
+  static constexpr uint16_t kTwoDSnake[5][5] = {
+      {0, 107, 101, 148, 131},
+      {107, 119, 107, 156, 204},
+      {101, 107, 114, 164, 209},
+      {148, 156, 164, 170, 442},
+      {131, 204, 209, 442, 454},
+  };
+
+  switch (mode) {
+    case TimeSeriesTimingMode::OneD:
+      return lookupTiming(kOneD, adcChannels, numAdcChannels);
+    case TimeSeriesTimingMode::TwoDNormal:
+      return lookupTiming(kTwoDNormal, adcChannels, numAdcChannels);
+    case TimeSeriesTimingMode::TwoDRetrace:
+      return lookupTiming(kTwoDRetrace, adcChannels, numAdcChannels);
+    case TimeSeriesTimingMode::TwoDSnake:
+      return lookupTiming(kTwoDSnake, adcChannels, numAdcChannels);
+  }
+  return kInvalidTiming;
+}
+
 }  // namespace
 
 bool isValidDacChannelCount(int count) {
@@ -250,69 +320,9 @@ uint16_t minimumDacOnlyIntervalUs(int numDacChannels) {
 uint16_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
                                         int numAdcChannels,
                                         TimeSeriesTimingMode mode) {
-  static constexpr uint16_t kOneD[5][5] = {
-      {0, 80, 80, 100, 160},
-      {80, 80, 80, 80, 160},
-      {80, 80, 80, 180, 140},
-      {100, 120, 120, 200, 240},
-      {160, 160, 300, 240, 160},
-  };
-  static constexpr uint16_t kTwoDNormal[5][5] = {
-      {0, 80, 80, 80, 80},
-      {80, 80, 80, 80, 280},
-      {80, 80, 80, 120, 160},
-      {80, 80, 80, 120, 160},
-      {80, 280, 160, 160, 160},
-  };
-  static constexpr uint16_t kTwoDRetrace[5][5] = {
-      {0, 80, 80, 80, 80},
-      {80, 80, 80, 80, 280},
-      {80, 80, 80, 80, 160},
-      {80, 80, 80, 120, 160},
-      {80, 280, 160, 160, 160},
-  };
-  static constexpr uint16_t kTwoDSnake[5][5] = {
-      {0, 80, 80, 80, 80},
-      {80, 80, 80, 80, 260},
-      {80, 80, 80, 80, 160},
-      {80, 120, 80, 120, 220},
-      {80, 280, 160, 160, 270},
-  };
-
-  uint16_t tableMinimum = kInvalidTiming;
-  switch (mode) {
-    case TimeSeriesTimingMode::OneD:
-      tableMinimum = lookupTiming(kOneD, adcChannels, numAdcChannels);
-      break;
-    case TimeSeriesTimingMode::TwoDNormal:
-      tableMinimum = lookupTiming(kTwoDNormal, adcChannels, numAdcChannels);
-      break;
-    case TimeSeriesTimingMode::TwoDRetrace:
-      tableMinimum = lookupTiming(kTwoDRetrace, adcChannels, numAdcChannels);
-      break;
-    case TimeSeriesTimingMode::TwoDSnake:
-      tableMinimum = lookupTiming(kTwoDSnake, adcChannels, numAdcChannels);
-      break;
-  }
-  if (tableMinimum == kInvalidTiming) return tableMinimum;
-
-  float maxSingleConversionUs = 0.0f;
-  for (int i = 0; i < numAdcChannels; i++) {
-    const float conversionUs =
-        ADCController::getConversionTimeFloat(adcChannels[i]);
-    if (conversionUs > maxSingleConversionUs) {
-      maxSingleConversionUs = conversionUs;
-    }
-  }
-  if (maxSingleConversionUs <= 90.0f) return tableMinimum;
-
-  const float maxBoardConversionUs =
-      maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
-  const uint32_t conversionMinimum =
-      static_cast<uint32_t>(maxBoardConversionUs * 1.2f + 0.999f);
-  const uint32_t minimum =
-      std::max<uint32_t>(tableMinimum, conversionMinimum);
-  return minimum > 65535 ? 65535 : static_cast<uint16_t>(minimum);
+  const uint16_t tableMinimum =
+      timeSeriesTableMinimumUs(adcChannels, numAdcChannels, mode);
+  return tableMinimum;
 }
 
 uint16_t minimumBoxcarConversionTimeUs(const int* adcChannels,
@@ -341,9 +351,25 @@ OperationResult validateTimeSeriesTiming(float adcIntervalArg,
                                          const int* adcChannels,
                                          int numAdcChannels,
                                          TimeSeriesTimingMode mode) {
-  return validateMinimumTiming(
-      "ADC interval", adcIntervalArg,
-      minimumTimeSeriesAdcIntervalUs(adcChannels, numAdcChannels, mode));
+  const uint16_t minimum =
+      minimumTimeSeriesAdcIntervalUs(adcChannels, numAdcChannels, mode);
+  if (minimum == kInvalidTiming) {
+    return OperationResult::Failure("Invalid ADC channel timing split");
+  }
+  if (adcIntervalArg >= static_cast<float>(minimum)) {
+    return OperationResult::Success();
+  }
+
+  const uint16_t tableMinimum =
+      timeSeriesTableMinimumUs(adcChannels, numAdcChannels, mode);
+  return OperationResult::Failure(
+      "ADC interval too short for time-series ramp (" +
+      String(adcIntervalArg, 3) + " us < computed minimum " +
+      String(minimum) +
+      " us). Minimum is the empirical table floor for the selected "
+      "ADC-board split. " +
+      formatAdcTimingDetails(adcChannels, numAdcChannels) +
+      "; empirical table floor=" + String(tableMinimum) + " us");
 }
 
 OperationResult validateAwgWithAdcTiming(float dacIntervalArg,

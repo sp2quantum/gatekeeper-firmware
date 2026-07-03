@@ -274,13 +274,14 @@ void loop() {
 
   if (hasVoltageFrameFromWorker()) {
     static double response[VOLTAGE_BUFFER_SIZE];
+    static uint8_t bytes[VOLTAGE_BUFFER_SIZE * sizeof(float)];
     size_t size = VOLTAGE_BUFFER_SIZE;
     if (receiveVoltageFrameFromWorker(response, size)) {
       for (size_t i = 0; i < size; ++i) {
-        binaryFloat send;
-        send.floatingPoint = static_cast<float>(response[i]);
-        usbWrite(send.binary, 4);
+        const float value = static_cast<float>(response[i]);
+        memcpy(&bytes[i * sizeof(float)], &value, sizeof(value));
       }
+      usbWrite(bytes, static_cast<uint32_t>(size * sizeof(float)));
     }
   }
 }
