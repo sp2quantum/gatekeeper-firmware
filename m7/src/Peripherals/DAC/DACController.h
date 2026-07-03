@@ -16,7 +16,7 @@ void initialize();
 bool isChannelIndexValid(int channelIndex);
 
 OperationResult setVoltage(int channel_index, float voltage);
-bool setVoltageNoTransactionNoLdac(int channel_index, float voltage);
+bool setVoltageNoLdac(int channel_index, float voltage);
 bool encodeVoltagePacket(int channel_index, float voltage, byte packet[3]);
 bool writeVoltagePacketNoLdac(int channel_index, const byte packet[3]);
 int getCsPin(int channel_index);

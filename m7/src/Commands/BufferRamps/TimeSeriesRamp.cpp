@@ -24,6 +24,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
 
 namespace {
 
+using BufferRampCommon::dacSetWriteFailure;
 using BufferRampCommon::dacWriteFailure;
 using BufferRampCommon::encodeDacVoltagePackets;
 using BufferRampCommon::isValidAdcChannelCount;
@@ -160,7 +161,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
   };
 
   for (int i = 0; i < numDacChannels; i++) {
-    if (!DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
+    if (!DACController::setVoltageNoLdac(dacChannels[i],
                                                       dacV0s[i])) {
       return dacWriteFailure(dacChannels[i], dacV0s[i]);
     }
@@ -170,7 +171,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
   dacStepsLoaded++;
   if (dacStepsLoaded < numSteps &&
       (!prepareNextDacPackets() || !queuePreparedDacStep())) {
-    return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+    return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltageSet);
   }
 
   FastGpio::digitalWrite(adc_sync, true);
@@ -190,7 +191,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
     if (adcPending) {
       for (int i = 0; i < numAdcChannels; i++) {
         packets[i] =
-            ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+            ADCController::getVoltageData(adcChannels[i]);
       }
       haveAdcPackets = true;
       didWork = true;
@@ -199,7 +200,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
     while (dacStepsLoaded < numSteps && TimingUtil::consumeDacFlag()) {
       if (!queuePreparedDacStep()) {
         TimingUtil::stopTimeSeriesTimers();
-        return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+        return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltageSet);
       }
       didWork = true;
     }

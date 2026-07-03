@@ -25,25 +25,26 @@ OperationResult awgWithAdcImpl(
     float dacIntervalArg, int numCycles, List<int, 0>& dacChannelsList,
     List<int, 1>& adcChannelsList,
     List<float, 0, 2>& channelMajorVoltages, bool enforceTiming) {
-  if (!BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1) ||
-      numCycles < 1) {
-    return OperationResult::Failure(
-        "Invalid channel counts or step/cycle count");
+  if (!isValidDacChannelCount(numDacChannels) ||
+      !isValidAdcChannelCount(numAdcChannels)) {
+    return OperationResult::Failure("Invalid number of channels");
+  }
+  if (numSteps < 1 || numCycles < 1) {
+    return OperationResult::Failure("Invalid step/cycle count");
+  }
+  if (!BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1)) {
+    return OperationResult::Failure("Invalid dac interval");
+  }
+  const uint64_t totalSteps64 =
+      static_cast<uint64_t>(numSteps) * static_cast<uint64_t>(numCycles);
+  if (totalSteps64 > 2147483647ULL) {
+    return OperationResult::Failure("Invalid step/cycle count");
   }
 
   int* dacChannels = dacChannelsList.data();
   int* adcChannels = adcChannelsList.data();
   const uint32_t dac_interval_us = static_cast<uint32_t>(dacIntervalArg);
 
-  if (dac_interval_us < 1) {
-    return OperationResult::Failure("Invalid dac interval");
-  }
-  if (!isValidDacChannelCount(numDacChannels) ||
-      !isValidAdcChannelCount(numAdcChannels) || numSteps < 1 ||
-      numCycles < 1) {
-    return OperationResult::Failure(
-        "Invalid channel counts or step/cycle count");
-  }
   OperationResult channelValidation = validateRampChannels(
       dacChannels, numDacChannels, adcChannels, numAdcChannels);
   if (!channelValidation.isSuccess()) return channelValidation;
@@ -70,7 +71,7 @@ OperationResult awgWithAdcImpl(
   for (int i = 0; i < numDacChannels; i++) {
     const float v0 = channelMajorVoltages[static_cast<size_t>(i) *
                                           static_cast<size_t>(numSteps)];
-    DACController::setVoltageNoTransactionNoLdac(dacChannels[i], v0);
+    DACController::setVoltageNoLdac(dacChannels[i], v0);
   }
 
   TimingUtil::setupTimerOnlyDac(dac_interval_us);
@@ -78,23 +79,30 @@ OperationResult awgWithAdcImpl(
   TimingUtil::dacFlagCount = 0;
   TimingUtil::adcFlag = 0;
 
-  const int totalSteps = numSteps * numCycles;
-  int stepsWritten = 0;
+  const int totalSteps = static_cast<int>(totalSteps64);
+  // Step 0 is preloaded into the DAC input registers above; each timer tick
+  // latches the previously written step, so the loop stays one step ahead:
+  // tick k latches step k-1, starts its conversion, and queues step k.
+  int stepsLatched = 0;
+  int stepsWritten = 1;
   int framesCaptured = 0;
-  while ((stepsWritten < totalSteps || framesCaptured < totalSteps) &&
+  while ((stepsLatched < totalSteps || framesCaptured < totalSteps) &&
          !ctx.stopped()) {
     __WFE();
-    if (stepsWritten < totalSteps && TimingUtil::consumeDacFlag()) {
-      const int step = stepsWritten % numSteps;
-      for (int i = 0; i < numDacChannels; i++) {
-        const float v =
-            channelMajorVoltages[static_cast<size_t>(i) *
-                                     static_cast<size_t>(numSteps) +
-                                 static_cast<size_t>(step)];
-        DACController::setVoltageNoTransactionNoLdac(dacChannels[i], v);
+    if (stepsLatched < totalSteps && TimingUtil::consumeDacFlag()) {
+      if (stepsWritten < totalSteps) {
+        const int step = stepsWritten % numSteps;
+        for (int i = 0; i < numDacChannels; i++) {
+          const float v =
+              channelMajorVoltages[static_cast<size_t>(i) *
+                                       static_cast<size_t>(numSteps) +
+                                   static_cast<size_t>(step)];
+          DACController::setVoltageNoLdac(dacChannels[i], v);
+        }
+        stepsWritten++;
       }
       FastGpio::digitalWrite(adc_sync, true);
-      stepsWritten++;
+      stepsLatched++;
     }
 
     if (framesCaptured < totalSteps &&

@@ -33,6 +33,10 @@ OperationResult validateRampChannels(const int* dacChannels,
 OperationResult finishRampTimingWatchdog(
     bool includeAdcConversionMissteps = true);
 OperationResult dacWriteFailure(int channel, double voltage);
+// Diagnoses a failed multi-channel DAC write: reports the first channel whose
+// requested voltage is invalid, falling back to an SPI failure on channel 0.
+OperationResult dacSetWriteFailure(int numDacChannels, const int* dacChannels,
+                                   const double* voltages);
 
 int maxSelectedAdcChannelsPerBoard(const int* adcChannels,
                                    int numAdcChannels);

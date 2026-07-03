@@ -103,6 +103,8 @@ static bool charBufferSend(CharCircularBuffer* buffer, const char* data,
     write_index = (write_index + 1) % CHAR_BUFFER_SIZE;
   }
 
+  // Ensure the payload is visible to the M4 before publishing the index.
+  __DMB();
   buffer->write_index = write_index;
   return true;
 }
@@ -132,6 +134,8 @@ static bool floatBufferSend(FloatCircularBuffer* buffer, const float* data,
     write_index = (write_index + 1) % FLOAT_BUFFER_SIZE;
   }
 
+  // Ensure the payload is visible to the M4 before publishing the index.
+  __DMB();
   buffer->write_index = write_index;
   return true;
 }
@@ -149,11 +153,15 @@ static bool voltageBufferSend(VoltageCircularBuffer* buffer,
 
   if (length > available_space) return false;
 
+  uint32_t write_index = buffer->write_index;
   for (size_t i = 0; i < length; ++i) {
-    buffer->buffer[buffer->write_index] = data[i];
-    buffer->write_index = (buffer->write_index + 1) % VOLTAGE_BUFFER_SIZE;
+    buffer->buffer[write_index] = data[i];
+    write_index = (write_index + 1) % VOLTAGE_BUFFER_SIZE;
   }
 
+  // Ensure the payload is visible to the M4 before publishing the index.
+  __DMB();
+  buffer->write_index = write_index;
   return true;
 }
 

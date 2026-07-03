@@ -19,7 +19,6 @@ class RampContext {
   RampContext& operator=(const RampContext&) = delete;
 
   OperationResult beginDacAndAdc(int* adcChannels, int numAdcChannels);
-  OperationResult beginAdcOnly(int* adcChannels, int numAdcChannels);
   void beginDacOnly();
 
   AdcBoardMask adcMask() const { return adcMask_; }

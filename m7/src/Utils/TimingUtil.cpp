@@ -61,12 +61,18 @@ struct TimerPeriod {
 };
 
 TimerPeriod timerPeriodForMicros(uint64_t periodUs, uint64_t timerClock) {
-  const uint64_t totalTicks = (periodUs * timerClock) / 1000000;
+  uint64_t totalTicks = (periodUs * timerClock) / 1000000;
+  // PSC and ARR are 16-bit, so the longest representable period is
+  // 65536 * 65536 ticks (~17.9 s at 240 MHz). Clamp instead of silently
+  // truncating the prescaler for out-of-range requests.
+  constexpr uint64_t kMaxTotalTicks = 65536ULL * 65536ULL;
+  if (totalTicks == 0) totalTicks = 1;
+  if (totalTicks > kMaxTotalTicks) totalTicks = kMaxTotalTicks;
   if (totalTicks <= 65536) {
     return {0, static_cast<uint16_t>(totalTicks - 1)};
   }
 
-  const uint32_t prescaler = (totalTicks + 65536 - 1) / 65536;
+  const uint64_t prescaler = (totalTicks + 65536 - 1) / 65536;
   return {static_cast<uint16_t>(prescaler - 1),
           static_cast<uint16_t>((totalTicks / prescaler) - 1)};
 }

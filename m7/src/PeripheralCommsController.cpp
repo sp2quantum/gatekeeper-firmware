@@ -302,24 +302,6 @@ uint8_t PeripheralCommsController::transferADC(uint8_t data) {
   return transferByte(SpiBus::Adc, data);
 }
 
-bool PeripheralCommsController::transferDACNoTransaction(void* buf,
-                                                        size_t count) {
-  return transferBytes(SpiBus::Dac, static_cast<uint8_t*>(buf), count);
-}
-
-bool PeripheralCommsController::transferADCNoTransaction(void* buf,
-                                                        size_t count) {
-  return transferBytes(SpiBus::Adc, static_cast<uint8_t*>(buf), count);
-}
-
-uint8_t PeripheralCommsController::transferDACNoTransaction(uint8_t data) {
-  return transferByte(SpiBus::Dac, data);
-}
-
-uint8_t PeripheralCommsController::transferADCNoTransaction(uint8_t data) {
-  return transferByte(SpiBus::Adc, data);
-}
-
 void PeripheralCommsController::dataLedOn() {}
 
 void PeripheralCommsController::dataLedOff() {}

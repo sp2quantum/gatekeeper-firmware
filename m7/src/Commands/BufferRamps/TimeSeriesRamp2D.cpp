@@ -15,38 +15,12 @@ using FunctionRegistryParsing::List;
 
 namespace {
 
+using BufferRampCommon::dacSetWriteFailure;
 using BufferRampCommon::dacWriteFailure;
 using BufferRampCommon::encodeDacVoltagePackets;
 using BufferRampCommon::sendVoltageFrame;
 using BufferRampCommon::writeDacPackets;
-
-void calculateVoltages(int pointIndex, int numStepsFast, bool retrace,
-                       bool snake, int numDacChannels,
-                       const float* startPoint, const float* fastAxisVector,
-                       const float* slowAxisStep,
-                       double voltages[NUM_DAC_CHANNELS]) {
-  const int scansPerSlowStep = (retrace && !snake) ? 2 : 1;
-  const int scanIndex = pointIndex / numStepsFast;
-  const int fastStep = pointIndex % numStepsFast;
-  const int slowStep = scanIndex / scansPerSlowStep;
-  const bool retraceScan =
-      (retrace && !snake) && ((scanIndex % scansPerSlowStep) == 1);
-  const bool snakeReverse = snake && ((slowStep % 2) != 0);
-  const bool reverseFastAxis = retraceScan || snakeReverse;
-  const double fastDenominator =
-      numStepsFast > 1 ? static_cast<double>(numStepsFast - 1) : 1.0;
-  double fastFraction = numStepsFast > 1
-                            ? static_cast<double>(fastStep) / fastDenominator
-                            : 0.0;
-  if (reverseFastAxis) fastFraction = 1.0 - fastFraction;
-
-  for (int i = 0; i < numDacChannels; i++) {
-    voltages[i] = static_cast<double>(startPoint[i]) +
-                  static_cast<double>(slowStep) *
-                      static_cast<double>(slowAxisStep[i]) +
-                  fastFraction * static_cast<double>(fastAxisVector[i]);
-  }
-}
+using Ramp2DCommon::calculateVoltages;
 
 OperationResult runPrepared(
     int numDacChannels, int numAdcChannels, int numStepsFast,
@@ -78,7 +52,7 @@ OperationResult runPrepared(
                     startPoint, fastAxisVector, slowAxisStep,
                     currentVoltages);
   for (int i = 0; i < numDacChannels; i++) {
-    if (!DACController::setVoltageNoTransactionNoLdac(
+    if (!DACController::setVoltageNoLdac(
             dacChannels[i], currentVoltages[i])) {
       return dacWriteFailure(dacChannels[i], currentVoltages[i]);
     }
@@ -102,7 +76,7 @@ OperationResult runPrepared(
     return nextDacPacketsReady;
   };
   if (!prepareNextDacPackets()) {
-    return dacWriteFailure(dacChannels[0], nextVoltages[0]);
+    return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltages);
   }
 
   FastGpio::digitalWrite(adc_sync, true);
@@ -125,7 +99,7 @@ OperationResult runPrepared(
     if (adcPending) {
       for (int i = 0; i < numAdcChannels; i++) {
         packets[i] =
-            ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+            ADCController::getVoltageData(adcChannels[i]);
       }
       haveAdcPackets = true;
       didWork = true;
@@ -136,12 +110,12 @@ OperationResult runPrepared(
       if (!nextDacPacketsReady ||
           !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
         TimingUtil::stopTimeSeriesTimers();
-        return dacWriteFailure(dacChannels[0], nextVoltages[0]);
+        return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltages);
       }
       nextDacPointIndex++;
       if (!prepareNextDacPackets()) {
         TimingUtil::stopTimeSeriesTimers();
-        return dacWriteFailure(dacChannels[0], nextVoltages[0]);
+        return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltages);
       }
       didWork = true;
     }

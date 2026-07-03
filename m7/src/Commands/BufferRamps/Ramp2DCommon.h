@@ -21,6 +21,38 @@ OperationResult validateAdcConversionTimes(int numAdcChannels,
 
 namespace Ramp2DCommon {
 
+// Computes the DAC voltages for one point of a 2D raster scan. The fast axis
+// sweeps within a scan line; the slow axis advances once per line (or once
+// per trace+retrace pair). Snake scans reverse the fast axis on odd lines.
+inline void calculateVoltages(int pointIndex, int numStepsFast, bool retrace,
+                              bool snake, int numDacChannels,
+                              const float* startPoint,
+                              const float* fastAxisVector,
+                              const float* slowAxisStep,
+                              double voltages[NUM_DAC_CHANNELS]) {
+  const int scansPerSlowStep = (retrace && !snake) ? 2 : 1;
+  const int scanIndex = pointIndex / numStepsFast;
+  const int fastStep = pointIndex % numStepsFast;
+  const int slowStep = scanIndex / scansPerSlowStep;
+  const bool retraceScan =
+      (retrace && !snake) && ((scanIndex % scansPerSlowStep) == 1);
+  const bool snakeReverse = snake && ((slowStep % 2) != 0);
+  const bool reverseFastAxis = retraceScan || snakeReverse;
+  const double fastDenominator =
+      numStepsFast > 1 ? static_cast<double>(numStepsFast - 1) : 1.0;
+  double fastFraction = numStepsFast > 1
+                            ? static_cast<double>(fastStep) / fastDenominator
+                            : 0.0;
+  if (reverseFastAxis) fastFraction = 1.0 - fastFraction;
+
+  for (int i = 0; i < numDacChannels; i++) {
+    voltages[i] = static_cast<double>(startPoint[i]) +
+                  static_cast<double>(slowStep) *
+                      static_cast<double>(slowAxisStep[i]) +
+                  fastFraction * static_cast<double>(fastAxisVector[i]);
+  }
+}
+
 inline OperationResult validateRequest(
     int numDacChannels, int numAdcChannels, int numStepsFast,
     int numStepsSlow, float dacIntervalArg, float adcTimingArg,

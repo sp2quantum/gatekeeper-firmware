@@ -260,8 +260,10 @@ OperationResult runAutoRampN(int numDacs, int numSteps,
     if (!DACController::isChannelIndexValid(ch))
       return OperationResult::Failure("Invalid channel index " + String(ch));
 
-    if (v0 < voltage_lower_bound[ch] || v0 > voltage_upper_bound[ch] ||
-        vf < voltage_lower_bound[ch] || vf > voltage_upper_bound[ch]) {
+    const float lowerBound = DACController::getLowerBound(ch);
+    const float upperBound = DACController::getUpperBound(ch);
+    if (v0 < lowerBound || v0 > upperBound || vf < lowerBound ||
+        vf > upperBound) {
       return OperationResult::Failure("Voltage out of bounds for DAC " +
                                       String(ch));
     }
@@ -283,7 +285,12 @@ OperationResult runAutoRampN(int numDacs, int numSteps,
     if (TimingUtil::consumeDacFlag()) {
       for (int i = 0; i < rampParamsCount; i++) {
         const auto& param = rampParams[i];
-        DACController::setVoltage(param.channel, currentVoltages[i]);
+        OperationResult stepResult =
+            DACController::setVoltage(param.channel, currentVoltages[i]);
+        if (!stepResult.isSuccess()) {
+          TimingUtil::disableDacInterrupt();
+          return stepResult;
+        }
         currentVoltages[i] += param.stepSize;
       }
       currentStep++;
@@ -395,10 +402,7 @@ OperationResult setVoltage(int ch, float voltage) {
 }
 COMMAND("SET", setVoltage)
 
-bool setVoltageNoTransactionNoLdac(int ch, float voltage) {
-  if (!isChannelIndexValid(ch)) return false;
-  if (voltage < voltage_lower_bound[ch] || voltage > voltage_upper_bound[ch])
-    return false;
+bool setVoltageNoLdac(int ch, float voltage) {
   byte buf[3];
   if (!encodeVoltagePacket(ch, voltage, buf)) return false;
   return writeVoltagePacketNoLdac(ch, buf);
@@ -419,7 +423,7 @@ bool encodeVoltagePacket(int ch, float voltage, byte packet[3]) {
 bool writeVoltagePacketNoLdac(int ch, const byte packet[3]) {
   if (!isChannelIndexValid(ch)) return false;
   byte buf[3] = {packet[0], packet[1], packet[2]};
-  return comms[ch].transferDACNoTransaction(buf, 3);
+  return comms[ch].transferDAC(buf, 3);
 }
 
 int getCsPin(int ch) {

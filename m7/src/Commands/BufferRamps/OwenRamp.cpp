@@ -81,11 +81,13 @@ OperationResult runOwenRamp(
   for (int i = 0; i < numDacChannels; i++) {
     currentSpecialDacVoltages[i] = specialDacV0s[i];
     specialDacVoltageStep[i] =
-        (specialDacVfs[i] - specialDacV0s[i]) / numLoops;
+        numLoops > 1
+            ? (specialDacVfs[i] - specialDacV0s[i]) / (numLoops - 1)
+            : 0.0f;
   }
 
   for (int i = 0; i < numDacChannels; i++) {
-    DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
+    DACController::setVoltageNoLdac(dacChannels[i],
                                                   dacVoltageLists[i][0]);
   }
 
@@ -106,7 +108,7 @@ OperationResult runOwenRamp(
         TimingUtil::consumeDacFlag()) {
       if (currentDacStep == specialIndex) {
         for (int i = 0; i < numDacChannels; i++) {
-          DACController::setVoltageNoTransactionNoLdac(
+          DACController::setVoltageNoLdac(
               dacChannels[i], currentSpecialDacVoltages[i]);
         }
         subIndex++;
@@ -120,7 +122,7 @@ OperationResult runOwenRamp(
       } else {
         for (int i = 0; i < numDacChannels; i++) {
           float voltage = dacVoltageLists[i][currentDacStep];
-          DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
+          DACController::setVoltageNoLdac(dacChannels[i],
                                                         voltage);
         }
         currentDacStep++;

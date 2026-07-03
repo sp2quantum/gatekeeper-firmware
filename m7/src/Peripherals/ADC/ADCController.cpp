@@ -73,13 +73,9 @@ uint8_t readRegister8(int board, uint8_t address) {
   return data[1];
 }
 
-uint32_t readRegister24(int board, uint8_t address,
-                        bool noTransaction = false) {
+uint32_t readRegister24(int board, uint8_t address) {
   byte data[4] = {static_cast<byte>(AdcRegister::kRead | address), 0, 0, 0};
-  if (noTransaction)
-    comms[board].transferADCNoTransaction(data, 4);
-  else
-    comms[board].transferADC(data, 4);
+  comms[board].transferADC(data, 4);
   return (static_cast<uint32_t>(data[1]) << 16) |
          (static_cast<uint32_t>(data[2]) << 8) |
          static_cast<uint32_t>(data[3]);
@@ -135,8 +131,7 @@ void boardReset(int board) {
   }
 }
 
-float calculateConversionTime(int board, byte b,
-                              bool moreThanOneChannelActive) {
+float calculateConversionTime(byte b, bool moreThanOneChannelActive) {
   byte fw = b & 0b01111111;
   bool chop = b & 0b10000000;
   if (chop) {
@@ -179,7 +174,6 @@ bool boardIsMoreThanOneChannelActive(int board) {
 float boardGetConversionTime(int board, int local_ch,
                              bool moreThanOneChannelActive) {
   return calculateConversionTime(
-      board,
       readRegister8(board, AdcRegister::channelConversionTime(local_ch)),
       moreThanOneChannelActive);
 }
@@ -198,7 +192,8 @@ float boardSetConversionTimeFloat(int board, int local_ch, float time_us,
                                   bool moreThanOneChannelActive) {
   return boardSetConversionTime(
       board, local_ch, chopEnabled[board],
-      calculateFilterWord(time_us, true, moreThanOneChannelActive),
+      calculateFilterWord(time_us, chopEnabled[board],
+                          moreThanOneChannelActive),
       moreThanOneChannelActive);
 }
 
@@ -568,12 +563,6 @@ double getVoltageData(int ch) {
   return AdcRegister::toDouble(
       readRegister24(boardForChannel(ch),
                      AdcRegister::channelData(localChannel(ch))));
-}
-
-double getVoltageDataNoTransaction(int ch) {
-  return AdcRegister::toDouble(
-      readRegister24(boardForChannel(ch),
-                     AdcRegister::channelData(localChannel(ch)), true));
 }
 
 void startContinuousConversion(int ch) {

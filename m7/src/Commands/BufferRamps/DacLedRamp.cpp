@@ -19,6 +19,7 @@ OperationResult validateAdcConversionTimes(int numAdcChannels,
 
 namespace {
 
+using BufferRampCommon::dacSetWriteFailure;
 using BufferRampCommon::dacWriteFailure;
 using BufferRampCommon::encodeDacVoltagePackets;
 using BufferRampCommon::isValidAdcChannelCount;
@@ -29,6 +30,8 @@ using BufferRampCommon::writeDacPackets;
 
 OperationResult runPrepared(int numDacChannels, int numAdcChannels,
                             int numSteps, int numAdcAverages,
+                            uint32_t dac_interval_us,
+                            uint32_t dac_settling_time_us,
                             int* dacChannels, float* dacV0s, float* dacVfs,
                             int* adcChannels, AdcBoardMask adcMask) {
   double packets[NUM_ADC_CHANNELS] = {};
@@ -57,17 +60,25 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
   };
 
   for (int i = 0; i < numDacChannels; i++) {
-    if (!DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                      dacV0s[i])) {
+    if (!DACController::setVoltageNoLdac(dacChannels[i], dacV0s[i])) {
       return dacWriteFailure(dacChannels[i], dacV0s[i]);
     }
     nextVoltageSet[i] += voltageStepSize[i];
   }
   dacStepsLoaded++;
   if (!prepareNextDacPackets()) {
-    return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+    return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltageSet);
   }
+
+  // Start the timers only after the initial voltages are in the DAC input
+  // registers, so the first LDAC pulse cannot latch stale/partial data.
   FastGpio::digitalWrite(adc_sync, false);
+  TimingUtil::setupTimersDacLed(dac_interval_us, dac_settling_time_us,
+                                adcMask);
+  TimingUtil::dacFlag = false;
+  TimingUtil::dacFlagCount = 0;
+  TimingUtil::adcFlag = 0;
+
   int adcFramesRead = 0;
   bool dacTimerPending = false;
   bool voltageOverflow = false;
@@ -88,7 +99,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
       for (int i = 0; i < numAdcChannels; i++) {
         double total = 0.0;
         for (int j = 0; j < numAdcAverages; j++) {
-          total += ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+          total += ADCController::getVoltageData(adcChannels[i]);
         }
         packets[i] = total * numAdcAveragesInv;
       }
@@ -99,7 +110,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
     if (dacTimerPending && adcConversionStarted) {
       if (!nextDacPacketsReady ||
           !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
-        return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+        return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltageSet);
       }
       dacTimerPending = false;
       for (int i = 0; i < numDacChannels; i++) {
@@ -107,7 +118,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
       }
       dacStepsLoaded++;
       if (!prepareNextDacPackets()) {
-        return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
+        return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltageSet);
       }
     }
 
@@ -188,15 +199,10 @@ OperationResult dacLedBufferRampImpl(
   const uint32_t dacSettlingTimeUs =
       static_cast<uint32_t>(dacSettlingTimeArg);
 
-  TimingUtil::setupTimersDacLed(dacIntervalUs, dacSettlingTimeUs,
-                                ctx.adcMask());
-  TimingUtil::dacFlag = false;
-  TimingUtil::dacFlagCount = 0;
-  TimingUtil::adcFlag = 0;
-
   OperationResult rampResult =
       runPrepared(numDacChannels, numAdcChannels, numSteps, numAdcAverages,
-                  dacChannels, dacV0s, dacVfs, adcChannels, ctx.adcMask());
+                  dacIntervalUs, dacSettlingTimeUs, dacChannels, dacV0s,
+                  dacVfs, adcChannels, ctx.adcMask());
 
   return ctx.finish(rampResult);
 }

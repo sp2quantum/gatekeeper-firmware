@@ -64,7 +64,6 @@ bool isChannelIndexValid(int channelIndex);
 OperationResult readChannelVoltage(int channel_index);
 float getVoltage(int channel_index);
 double getVoltageData(int adc_channel);
-double getVoltageDataNoTransaction(int adc_channel);
 
 void startContinuousConversion(int adc_channel);
 void selectContinuousConversionChannel(int adc_channel);

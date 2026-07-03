@@ -101,15 +101,6 @@ OperationResult RampContext::beginDacAndAdc(int* adcChannels,
   return OperationResult::Success();
 }
 
-OperationResult RampContext::beginAdcOnly(int* adcChannels,
-                                          int numAdcChannels) {
-  clearWorkerStopRequest();
-  PeripheralCommsController::dataLedOn();
-  setupAdcHardware(adcChannels, numAdcChannels);
-  begun_ = true;
-  return OperationResult::Success();
-}
-
 void RampContext::beginDacOnly() {
   clearWorkerStopRequest();
   PeripheralCommsController::dataLedOn();

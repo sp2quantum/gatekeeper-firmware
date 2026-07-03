@@ -82,6 +82,15 @@ OperationResult boxcarAverageRampImpl(
   }
   uint32_t dacPeriod_us = static_cast<uint32_t>(dacPeriod64);
 
+  const uint64_t totalSteps64 = 2ULL *
+                                static_cast<uint64_t>(numDacSteps) *
+                                static_cast<uint64_t>(numAdcAverages);
+  const uint64_t totalDataSize64 =
+      totalSteps64 * static_cast<uint64_t>(numAdcMeasuresPerDacStep);
+  if (totalDataSize64 > 2147483647ULL) {
+    return OperationResult::Failure("Boxcar sample count is out of range");
+  }
+
   RampContext ctx;
   ctx.beginDacAndAdc(adcChannels, numAdcChannels);
 
@@ -106,20 +115,15 @@ OperationResult boxcarAverageRampImpl(
   }
 
   int steps = 0;
-  int totalSteps = 2 * numDacSteps * numAdcAverages;
+  const int totalSteps = static_cast<int>(totalSteps64);
   int x = 0;
-  int total_data_size = totalSteps * numAdcMeasuresPerDacStep;
+  const int total_data_size = static_cast<int>(totalDataSize64);
   bool voltageOverflow = false;
 
+  // Step 0 always outputs the low set.
   for (int i = 0; i < numDacChannels; i++) {
-    double currentVoltage;
-    if (steps % 2 == 0) {
-      currentVoltage = previousVoltageSetLow[i];
-    } else {
-      currentVoltage = previousVoltageSetHigh[i];
-    }
-    DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                  currentVoltage);
+    DACController::setVoltageNoLdac(dacChannels[i],
+                                    previousVoltageSetLow[i]);
   }
   DACController::toggleLdac();
   steps++;
@@ -132,7 +136,7 @@ OperationResult boxcarAverageRampImpl(
       double packets[NUM_ADC_CHANNELS] = {};
       for (int i = 0; i < numAdcChannels; i++) {
         packets[i] =
-            ADCController::getVoltageDataNoTransaction(adcChannels[i]);
+            ADCController::getVoltageData(adcChannels[i]);
       }
       if (!sendVoltageFrame(packets, numAdcChannels)) {
         voltageOverflow = true;
@@ -158,10 +162,11 @@ OperationResult boxcarAverageRampImpl(
           previousVoltageSetHigh[i] += voltageStepSizeHigh[i];
           currentVoltage = previousVoltageSetHigh[i];
         }
-        DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
-                                                      currentVoltage);
+        DACController::setVoltageNoLdac(dacChannels[i], currentVoltage);
       }
       steps++;
+      // Re-phase the ADC conversion timer to the DAC step that was just
+      // queued so the boxcar windows stay aligned to the step edges.
       TIM8->CNT = 0;
     }
   }

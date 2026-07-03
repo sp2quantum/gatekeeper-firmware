@@ -212,7 +212,7 @@ OperationResult timeSeriesAdcReadImpl(int numAdcChannels,
       const int channel = channelAtSlot[board][slot];
       const int outputIndex = outputIndexAtSlot[board][slot];
       packets[outputIndex] =
-          ADCController::getVoltageDataNoTransaction(channel);
+          ADCController::getVoltageData(channel);
     }
   };
 
