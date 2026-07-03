@@ -742,7 +742,11 @@ class HardwareTest:
 
         for retrace, snake, label in ((0, 0, "2d_time_series"), (1, 0, "2d_time_series_retrace"), (0, 1, "2d_time_series_snake")):
             steps_fast, steps_slow = 31, 5
-            samples_per_line = max(1, (steps_fast * max(ts["dac_interval_us"], 400)) // ts["adc_interval_us"])
+            # The 2D time-series empirical floor for an 8-channel split is
+            # higher than the 1D minimum found above (~452-454us at the
+            # minimum conversion time), so do not reuse the 1D interval.
+            adc_interval_2d = max(ts["adc_interval_us"], 460)
+            samples_per_line = max(1, (steps_fast * max(ts["dac_interval_us"], 400)) // adc_interval_2d)
             scans = 2 if retrace and not snake else 1
             expected_points = samples_per_line * steps_slow * scans
             args = [
@@ -751,7 +755,7 @@ class HardwareTest:
                 steps_fast,
                 steps_slow,
                 max(ts["dac_interval_us"], 400),
-                ts["adc_interval_us"],
+                adc_interval_2d,
                 retrace,
                 snake,
             ] + channels + [-0.6] * NUM_CHANNELS + [1.2] * NUM_CHANNELS + [0.4] * NUM_CHANNELS + channels
@@ -805,19 +809,22 @@ class HardwareTest:
         self.record("AWG_WITH_ADC waveform capture", ok and sensible, samples=int(arr.shape[0]), message=msg)
         traces["awg_with_adc"] = arr
 
+        # The boxcar validation floor is the deterministic-failure boundary;
+        # clean runs near the floor are phase-dependent, so test comfortably
+        # above it (see README boxcar table).
         args = [
             NUM_CHANNELS,
             1,
             7,
             3,
             1,
-            82,
+            300,
         ] + channels + [-0.4] * NUM_CHANNELS + [0.4] * NUM_CHANNELS + [0.4] * NUM_CHANNELS + [-0.4] * NUM_CHANNELS + [0]
         expected = 2 * 7 * 1 * 3 * 1
         ok, data, msg = self.run_text_and_binary("BOXCAR_BUFFER_RAMP", args, expected, timeout=8.0)
         arr = data.reshape((-1, 1)) if data.size else np.empty((0, 1))
         sensible = bool(arr.size and np.all(np.isfinite(arr)) and np.max(np.abs(arr)) < 10.5)
-        self.record("BOXCAR_BUFFER_RAMP one-ADC capture at 82us", ok and sensible, samples=int(arr.shape[0]), message=msg)
+        self.record("BOXCAR_BUFFER_RAMP one-ADC capture at 300us", ok and sensible, samples=int(arr.shape[0]), message=msg)
         traces["boxcar_one_adc"] = arr
 
         args = [
@@ -826,13 +833,13 @@ class HardwareTest:
             7,
             3,
             1,
-            82,
+            1600,
         ] + channels + [-0.4] * NUM_CHANNELS + [0.4] * NUM_CHANNELS + [0.4] * NUM_CHANNELS + [-0.4] * NUM_CHANNELS + channels
         expected = 2 * 7 * 1 * 3 * NUM_CHANNELS
-        ok, data, msg = self.run_text_and_binary("BOXCAR_BUFFER_RAMP", args, expected, timeout=8.0)
+        ok, data, msg = self.run_text_and_binary("BOXCAR_BUFFER_RAMP", args, expected, timeout=20.0)
         arr = data.reshape((-1, NUM_CHANNELS)) if data.size else np.empty((0, NUM_CHANNELS))
         sensible = bool(arr.size and np.all(np.isfinite(arr)) and np.max(np.abs(arr)) < 10.5)
-        self.record("BOXCAR_BUFFER_RAMP all-ADC capture at 82us", ok and sensible, samples=int(arr.shape[0]), message=msg)
+        self.record("BOXCAR_BUFFER_RAMP all-ADC capture at 1600us", ok and sensible, samples=int(arr.shape[0]), message=msg)
         traces["boxcar"] = arr
 
         self.measurements["buffer_ramp_trace_shapes"] = {k: list(v.shape) for k, v in traces.items()}

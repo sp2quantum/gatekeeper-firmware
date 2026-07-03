@@ -11,9 +11,30 @@ namespace BufferRampCommon {
 
 namespace {
 
-constexpr uint16_t kInvalidTiming = 0;
-constexpr uint16_t kMinDacLedSettlingUs = 20;
-constexpr uint16_t kMinAdcConversionUs = 82;
+constexpr uint32_t kInvalidTiming = 0;
+constexpr uint32_t kMinDacLedSettlingUs = 20;
+constexpr uint32_t kMinAdcConversionUs = 82;
+
+// Empirical buffers calibrated on hardware via _SUDO timing sweeps
+// (2026-07-03); see test_outputs/timing_calibration_20260703/DERIVATION.md.
+// "Busiest-board conversion sum" is the largest per-ADC-board sum of the
+// selected channels' actual conversion times.
+//
+// Time series: conversions free-run on the ADC's own clock, so the sample
+// interval needs a relative margin over the busiest-board sum before every
+// sample is a fresh conversion.
+constexpr float kTimeSeriesConversionMarginRatio = 1.05f;
+constexpr uint32_t kTimeSeriesConversionMarginUs = 5;
+// DAC-led: conversion start is timer-gated each cycle, so the buffers are
+// fixed. The LDAC/settle path needs settling + sum + latch buffer; the
+// readout path needs sum + per-register-read cost (reads overlap the next
+// settling window).
+constexpr uint32_t kDacLedLatchBufferUs = 12;
+constexpr uint32_t kAdcReadoutPerSampleUs = 15;
+constexpr uint32_t kAdcReadoutBaseUs = 15;
+// AWG with ADC: one conversion per DAC step plus readout and DAC writes.
+constexpr uint32_t kAwgWithAdcPerDacUs = 5;
+constexpr uint32_t kAwgWithAdcBaseUs = 25;
 
 void sortedAdcBoardDepths(const int* adcChannels, int numAdcChannels,
                           uint8_t boardDepth[NUM_ADC_BOARDS]) {
@@ -29,7 +50,7 @@ void sortedAdcBoardDepths(const int* adcChannels, int numAdcChannels,
             [](uint8_t a, uint8_t b) { return a > b; });
 }
 
-uint16_t lookupTiming(const uint16_t table[5][5], const int* adcChannels,
+uint32_t lookupTiming(const uint16_t table[5][5], const int* adcChannels,
                       int numAdcChannels) {
   uint8_t boardDepth[NUM_ADC_BOARDS] = {};
   sortedAdcBoardDepths(adcChannels, numAdcChannels, boardDepth);
@@ -44,12 +65,18 @@ uint16_t lookupTiming(const uint16_t table[5][5], const int* adcChannels,
   for (int i = 2; i < NUM_ADC_BOARDS && boardDepth[i] > 0; i++) {
     timing += table[boardDepth[i]][0];
   }
-  if (timing > 65535) return 65535;
-  return static_cast<uint16_t>(timing);
+  return timing;
+}
+
+uint32_t ceilBusiestBoardConversionSumUs(const int* adcChannels,
+                                         int numAdcChannels) {
+  const float sum = maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
+  if (sum <= 0.0f) return 0;
+  return static_cast<uint32_t>(sum + 0.999f);
 }
 
 OperationResult validateMinimumTiming(const char* label, float actual,
-                                      uint16_t minimum) {
+                                      uint32_t minimum) {
   if (minimum == kInvalidTiming) {
     return OperationResult::Failure("Invalid ADC channel timing split");
   }
@@ -86,6 +113,21 @@ String formatAdcTimingDetails(const int* adcChannels, int numAdcChannels) {
                 String(boardConversionTimeUs[board], 3) + " us";
   }
   return channels;
+}
+
+OperationResult validateMinimumTimingWithDetails(
+    const char* label, float actual, uint32_t minimum, const char* rule,
+    const int* adcChannels, int numAdcChannels) {
+  if (minimum == kInvalidTiming) {
+    return OperationResult::Failure("Invalid ADC channel timing split");
+  }
+  if (actual >= static_cast<float>(minimum)) {
+    return OperationResult::Success();
+  }
+  return OperationResult::Failure(
+      String(label) + " too short (" + String(actual, 3) + " us < minimum " +
+      String(minimum) + " us). " + rule + " " +
+      formatAdcTimingDetails(adcChannels, numAdcChannels));
 }
 
 }  // namespace
@@ -238,57 +280,43 @@ float maxAdcConversionTimePerBoard(const int* adcChannels,
                            boardConversionTimeUs + NUM_ADC_BOARDS);
 }
 
-uint16_t minimumDacLedIntervalUs(const int* adcChannels, int numAdcChannels) {
-  static constexpr uint16_t kTable[5][5] = {
-      {0, 120, 200, 300, 400},
-      {120, 120, 220, 320, 420},
-      {200, 220, 240, 320, 420},
-      {300, 320, 320, 340, 440},
-      {400, 420, 420, 440, 460},
-  };
-  const uint16_t tableMinimum = lookupTiming(kTable, adcChannels, numAdcChannels);
-  if (tableMinimum == kInvalidTiming) return tableMinimum;
+uint32_t minimumDacLedIntervalUs(uint32_t dacSettlingTimeUs,
+                                 const int* adcChannels, int numAdcChannels,
+                                 int numAdcAverages) {
+  const uint32_t boardSum =
+      ceilBusiestBoardConversionSumUs(adcChannels, numAdcChannels);
+  if (boardSum == 0) return kInvalidTiming;
 
-  float maxSingleConversionUs = 0.0f;
-  for (int i = 0; i < numAdcChannels; i++) {
-    const float conversionUs =
-        ADCController::getConversionTimeFloat(adcChannels[i]);
-    if (conversionUs > maxSingleConversionUs) {
-      maxSingleConversionUs = conversionUs;
-    }
-  }
-  if (maxSingleConversionUs <= 90.0f) return tableMinimum;
-
-  const float maxBoardConversionUs =
-      maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
-  const uint32_t conversionMinimum =
-      static_cast<uint32_t>(maxBoardConversionUs * 1.2f + 0.999f);
-  const uint32_t minimum =
-      std::max<uint32_t>(tableMinimum, conversionMinimum);
-  return minimum > 65535 ? 65535 : static_cast<uint16_t>(minimum);
+  const uint64_t readsPerCycle =
+      static_cast<uint64_t>(numAdcChannels) *
+      static_cast<uint64_t>(numAdcAverages < 1 ? 1 : numAdcAverages);
+  const uint64_t latchPath =
+      static_cast<uint64_t>(dacSettlingTimeUs) + boardSum +
+      kDacLedLatchBufferUs;
+  const uint64_t readoutPath =
+      boardSum + kAdcReadoutPerSampleUs * readsPerCycle + kAdcReadoutBaseUs;
+  const uint64_t minimum = std::max(latchPath, readoutPath);
+  return minimum > 0xFFFFFFFFULL ? 0xFFFFFFFFUL
+                                 : static_cast<uint32_t>(minimum);
 }
 
-uint16_t minimumAwgWithAdcIntervalUs(int numDacChannels,
-                                    const int* adcChannels,
-                                    int numAdcChannels) {
-  const uint16_t base = minimumDacLedIntervalUs(adcChannels, numAdcChannels);
-  if (base == kInvalidTiming) return base;
-  uint16_t extra = 0;
-  if (numDacChannels >= 8) {
-    extra = 40 * static_cast<uint16_t>((numDacChannels + 7) / 8);
-  } else if (numDacChannels >= 4 && base >= 200 && base < 300) {
-    extra = 20;
-  }
-  return base + extra;
+uint32_t minimumAwgWithAdcIntervalUs(int numDacChannels,
+                                     const int* adcChannels,
+                                     int numAdcChannels) {
+  const uint32_t boardSum =
+      ceilBusiestBoardConversionSumUs(adcChannels, numAdcChannels);
+  if (boardSum == 0) return kInvalidTiming;
+  return boardSum + kAdcReadoutPerSampleUs * numAdcChannels +
+         kAwgWithAdcPerDacUs * numDacChannels + kAwgWithAdcBaseUs;
 }
 
-uint16_t minimumDacOnlyIntervalUs(int numDacChannels) {
+uint32_t minimumDacOnlyIntervalUs(int numDacChannels) {
   if (numDacChannels <= 0) return kInvalidTiming;
   if (numDacChannels <= 4) return 20;
   return 40;
 }
 
-uint16_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
+uint32_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
                                         int numAdcChannels,
                                         TimeSeriesTimingMode mode) {
   static constexpr uint16_t kOneD[5][5] = {
@@ -320,70 +348,99 @@ uint16_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
       {131, 204, 209, 442, 454},
   };
 
+  uint32_t tableFloor = kInvalidTiming;
   switch (mode) {
     case TimeSeriesTimingMode::OneD:
-      return lookupTiming(kOneD, adcChannels, numAdcChannels);
+      tableFloor = lookupTiming(kOneD, adcChannels, numAdcChannels);
+      break;
     case TimeSeriesTimingMode::TwoDNormal:
-      return lookupTiming(kTwoDNormal, adcChannels, numAdcChannels);
+      tableFloor = lookupTiming(kTwoDNormal, adcChannels, numAdcChannels);
+      break;
     case TimeSeriesTimingMode::TwoDRetrace:
-      return lookupTiming(kTwoDRetrace, adcChannels, numAdcChannels);
+      tableFloor = lookupTiming(kTwoDRetrace, adcChannels, numAdcChannels);
+      break;
     case TimeSeriesTimingMode::TwoDSnake:
-      return lookupTiming(kTwoDSnake, adcChannels, numAdcChannels);
+      tableFloor = lookupTiming(kTwoDSnake, adcChannels, numAdcChannels);
+      break;
   }
-  return kInvalidTiming;
+  if (tableFloor == kInvalidTiming) return kInvalidTiming;
+
+  // The ADCs free-run at their configured conversion times; sampling faster
+  // than the busiest board updates just re-reads stale conversions.
+  const float boardSum =
+      maxAdcConversionTimePerBoard(adcChannels, numAdcChannels);
+  if (boardSum <= 0.0f) return kInvalidTiming;
+  const uint32_t conversionMinimum =
+      static_cast<uint32_t>(boardSum * kTimeSeriesConversionMarginRatio +
+                            0.999f) +
+      kTimeSeriesConversionMarginUs;
+  return std::max(tableFloor, conversionMinimum);
 }
 
-uint16_t minimumBoxcarConversionTimeUs(const int* adcChannels,
+uint32_t minimumBoxcarConversionTimeUs(const int* adcChannels,
                                        int numAdcChannels) {
   uint8_t boardDepth[NUM_ADC_BOARDS] = {};
   sortedAdcBoardDepths(adcChannels, numAdcChannels, boardDepth);
-  const uint8_t maxDepth = boardDepth[0];
-  if (maxDepth == 0 || maxDepth > 4) return kInvalidTiming;
-  static constexpr uint16_t kByMaxCardDepth[5] = {0, 300, 300, 500, 800};
-  return kByMaxCardDepth[maxDepth];
+  const uint8_t busiest = boardDepth[0];
+  const uint8_t second = NUM_ADC_BOARDS > 1 ? boardDepth[1] : 0;
+  if (busiest == 0 || busiest > 4 || second > 4) return kInvalidTiming;
+  // Measured minimum clean conversion time by (busiest, second-busiest)
+  // card depth. The pass/fail boundary is set by readout SPI phase alignment
+  // against the conversion timer and is NOT monotonic in the conversion time
+  // (padded values were measured to fail where these exact values pass), so
+  // the table holds the exact hardware-verified minima.
+  static constexpr uint16_t kByCardDepths[5][5] = {
+      {0, 0, 0, 0, 0},
+      {160, 82, 0, 0, 0},
+      {120, 120, 200, 0, 0},
+      {200, 200, 200, 200, 0},
+      {300, 800, 300, 300, 1600},
+  };
+  return kByCardDepths[busiest][second];
 }
 
 OperationResult validateDacLedTiming(float dacIntervalArg,
                                      float dacSettlingTimeArg,
                                      const int* adcChannels,
-                                     int numAdcChannels) {
+                                     int numAdcChannels,
+                                     int numAdcAverages) {
   OperationResult settlingResult = validateMinimumTiming(
       "DAC settling time", dacSettlingTimeArg, kMinDacLedSettlingUs);
   if (!settlingResult.isSuccess()) return settlingResult;
-  return validateMinimumTiming(
+  const uint32_t settlingUs = static_cast<uint32_t>(dacSettlingTimeArg);
+  return validateMinimumTimingWithDetails(
       "DAC interval", dacIntervalArg,
-      minimumDacLedIntervalUs(adcChannels, numAdcChannels));
+      minimumDacLedIntervalUs(settlingUs, adcChannels, numAdcChannels,
+                              numAdcAverages),
+      "Minimum is max(settling + busiest-board conversion sum + 12us, "
+      "conversion sum + 15us*(numAdcChannels*numAdcAverages) + 15us).",
+      adcChannels, numAdcChannels);
 }
 
 OperationResult validateTimeSeriesTiming(float adcIntervalArg,
                                          const int* adcChannels,
                                          int numAdcChannels,
                                          TimeSeriesTimingMode mode) {
-  const uint16_t minimum =
-      minimumTimeSeriesAdcIntervalUs(adcChannels, numAdcChannels, mode);
-  if (minimum == kInvalidTiming) {
-    return OperationResult::Failure("Invalid ADC channel timing split");
-  }
-  if (adcIntervalArg >= static_cast<float>(minimum)) {
-    return OperationResult::Success();
-  }
-
-  return OperationResult::Failure(
-      "ADC interval too short for time-series ramp (" +
-      String(adcIntervalArg, 3) + " us < minimum " + String(minimum) +
-      " us). Minimum is the empirical table floor for the selected "
-      "ADC-board split. " +
-      formatAdcTimingDetails(adcChannels, numAdcChannels));
+  return validateMinimumTimingWithDetails(
+      "ADC interval", adcIntervalArg,
+      minimumTimeSeriesAdcIntervalUs(adcChannels, numAdcChannels, mode),
+      "Minimum is the larger of the empirical floor for the selected "
+      "ADC-board split and 1.05x the busiest-board conversion sum + 5us "
+      "(sampling faster than the ADCs convert repeats stale samples).",
+      adcChannels, numAdcChannels);
 }
 
 OperationResult validateAwgWithAdcTiming(float dacIntervalArg,
                                          int numDacChannels,
                                          const int* adcChannels,
                                          int numAdcChannels) {
-  return validateMinimumTiming(
+  return validateMinimumTimingWithDetails(
       "DAC interval", dacIntervalArg,
       minimumAwgWithAdcIntervalUs(numDacChannels, adcChannels,
-                                  numAdcChannels));
+                                  numAdcChannels),
+      "Minimum is busiest-board conversion sum + 15us*numAdcChannels + "
+      "5us*numDacChannels + 25us.",
+      adcChannels, numAdcChannels);
 }
 
 OperationResult validateDacOnlyTiming(float dacIntervalArg,

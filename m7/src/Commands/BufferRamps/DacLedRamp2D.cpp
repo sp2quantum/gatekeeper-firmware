@@ -164,7 +164,8 @@ OperationResult dacLedBufferRamp2DImpl(
   if (enforceTiming) {
     OperationResult minimumTimingValidation =
         BufferRampCommon::validateDacLedTiming(
-            dacIntervalArg, dacSettlingTimeArg, adcChannels, numAdcChannels);
+            dacIntervalArg, dacSettlingTimeArg, adcChannels, numAdcChannels,
+            numAdcAverages);
     if (!minimumTimingValidation.isSuccess()) {
       return minimumTimingValidation;
     }

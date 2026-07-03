@@ -43,20 +43,23 @@ int maxSelectedAdcChannelsPerBoard(const int* adcChannels,
 float maxAdcConversionTimePerBoard(const int* adcChannels,
                                    int numAdcChannels);
 
-uint16_t minimumDacLedIntervalUs(const int* adcChannels, int numAdcChannels);
-uint16_t minimumAwgWithAdcIntervalUs(int numDacChannels,
-                                    const int* adcChannels,
-                                    int numAdcChannels);
-uint16_t minimumDacOnlyIntervalUs(int numDacChannels);
-uint16_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
+uint32_t minimumDacLedIntervalUs(uint32_t dacSettlingTimeUs,
+                                 const int* adcChannels, int numAdcChannels,
+                                 int numAdcAverages);
+uint32_t minimumAwgWithAdcIntervalUs(int numDacChannels,
+                                     const int* adcChannels,
+                                     int numAdcChannels);
+uint32_t minimumDacOnlyIntervalUs(int numDacChannels);
+uint32_t minimumTimeSeriesAdcIntervalUs(const int* adcChannels,
                                         int numAdcChannels,
                                         TimeSeriesTimingMode mode);
-uint16_t minimumBoxcarConversionTimeUs(const int* adcChannels,
+uint32_t minimumBoxcarConversionTimeUs(const int* adcChannels,
                                        int numAdcChannels);
 OperationResult validateDacLedTiming(float dacIntervalArg,
                                      float dacSettlingTimeArg,
                                      const int* adcChannels,
-                                     int numAdcChannels);
+                                     int numAdcChannels,
+                                     int numAdcAverages);
 OperationResult validateTimeSeriesTiming(float adcIntervalArg,
                                          const int* adcChannels,
                                          int numAdcChannels,
