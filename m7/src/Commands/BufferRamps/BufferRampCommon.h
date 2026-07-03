@@ -38,8 +38,6 @@ OperationResult dacWriteFailure(int channel, double voltage);
 OperationResult dacSetWriteFailure(int numDacChannels, const int* dacChannels,
                                    const double* voltages);
 
-int maxSelectedAdcChannelsPerBoard(const int* adcChannels,
-                                   int numAdcChannels);
 float maxAdcConversionTimePerBoard(const int* adcChannels,
                                    int numAdcChannels);
 

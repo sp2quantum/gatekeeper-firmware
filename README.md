@@ -223,8 +223,8 @@ contained stale (bit-identical) samples; raw data and fits are in
 | --- | --- | --- |
 | `DAC_LED_BUFFER_RAMP` (1D and 2D) | `dac_interval_us` | `max(settling + S + 12, S + 15*(n*numAdcAverages) + 15)` |
 | `DAC_LED_BUFFER_RAMP` (1D and 2D) | `dac_settling_time_us` | `20`; must also be less than `dac_interval_us` |
-| `TIME_SERIES_BUFFER_RAMP` | `adc_interval_us` | `max(1D table floor, ceil(1.05 * S) + 5)` |
-| `2D_TIME_SERIES_BUFFER_RAMP` | `adc_interval_us` | `max(mode table floor, ceil(1.05 * S) + 5)` |
+| `TIME_SERIES_BUFFER_RAMP` | `adc_interval_us` | `max(1D table floor, ceil(S) + 15)` |
+| `2D_TIME_SERIES_BUFFER_RAMP` | `adc_interval_us` | `max(mode table floor, ceil(S) + 15)` |
 | `TIME_SERIES_ADC_READ` | `conversion_time_us` | `82` (it sets the conversion times itself) |
 | `AWG_BUFFER_RAMP` | `dac_interval_us` | `20` for 1-4 DAC channels; `40` for 5-8 DAC channels |
 | `AWG_WITH_ADC` | `dac_interval_us` | `S + 15*n + 5*D + 25` |
@@ -235,9 +235,12 @@ Why each rule looks the way it does:
 - **Time series**: `adc_interval_us` is only a sampling clock; the ADCs
   free-run at their configured conversion times. Sampling faster than the
   busiest board updates does not fail loudly - it silently duplicates stale
-  samples (measured duplicate fraction is exactly `1 - interval/S`). The 5%
-  relative margin covers drift between the ADC crystal and the MCU timer.
-  The per-mode table floors below still apply at fast conversion settings.
+  samples (measured duplicate fraction is exactly `1 - interval/S`). The
+  fixed `+15us` margin covers jitter in individual conversion-update spacing
+  (a fine offset scan measured duplicate-free sampling by `S + 8us` at every
+  conversion time from 82us to 5.2ms, so the required margin does not grow
+  with `S`). The per-mode table floors below still apply at fast conversion
+  settings.
 - **DAC-led**: each cycle is LDAC latch, settle, convert, then read out all
   channels before the next cycle; register reads cost about 15 us each and
   `numAdcAverages` multiplies the read count. Both terms of the `max()` were
@@ -255,7 +258,7 @@ bound, and argument validation still apply): `DAC_LED_BUFFER_RAMP_SUDO`,
 The time-series table floors below are empirical minimums for the selected
 ADC-board split, measured at the fastest conversion setting
 (`CONVERT_TIME,ch,82`, about `82.03125us` actual); at slower conversions the
-`ceil(1.05 * S) + 5` term dominates. Rows are selected ADC channels on the
+`ceil(S) + 15` term dominates. Rows are selected ADC channels on the
 busiest ADC card; columns are selected channels on the second-busiest card.
 With the current 2-ADC-board hardware, an 8-channel read is row `4`, column
 `4`.
