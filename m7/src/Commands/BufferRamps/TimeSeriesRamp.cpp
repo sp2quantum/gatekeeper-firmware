@@ -122,6 +122,17 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
         numDacChannels, dacChannels, nextVoltageSet, nextDacPackets);
     return nextDacPacketsReady;
   };
+  auto queuePreparedDacStep = [&]() {
+    if (!nextDacPacketsReady ||
+        !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
+      return false;
+    }
+    for (int i = 0; i < numDacChannels; i++) {
+      nextVoltageSet[i] += voltageStepSize[i];
+    }
+    dacStepsLoaded++;
+    return prepareNextDacPackets();
+  };
 
   for (int i = 0; i < numDacChannels; i++) {
     if (!DACController::setVoltageNoTransactionNoLdac(dacChannels[i],
@@ -132,7 +143,8 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
   }
   DACController::toggleLdac();
   dacStepsLoaded++;
-  if (!prepareNextDacPackets()) {
+  if (dacStepsLoaded < numSteps &&
+      (!prepareNextDacPackets() || !queuePreparedDacStep())) {
     return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
   }
 
@@ -166,16 +178,7 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
     }
 
     while (dacStepsLoaded < numSteps && TimingUtil::consumeDacFlag()) {
-      if (!nextDacPacketsReady ||
-          !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
-        TimingUtil::stopTimeSeriesTimers();
-        return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
-      }
-      for (int i = 0; i < numDacChannels; i++) {
-        nextVoltageSet[i] += voltageStepSize[i];
-      }
-      dacStepsLoaded++;
-      if (!prepareNextDacPackets()) {
+      if (!queuePreparedDacStep()) {
         TimingUtil::stopTimeSeriesTimers();
         return dacWriteFailure(dacChannels[0], nextVoltageSet[0]);
       }
