@@ -6,7 +6,6 @@
 #include "Commands/BufferRamps/BufferRampCommon.h"
 #include "Peripherals/ADC/ADCController.h"
 #include "Utils/FastGpio.h"
-#include "PeripheralCommsController.h"
 #include "Utils/TimingUtil.h"
 #include "shared_memory.h"
 
@@ -70,12 +69,14 @@ RampContext::RampContext() = default;
 
 RampContext::~RampContext() { cleanup(); }
 
-void RampContext::setupAdcHardware(int* adcChannels, int numAdcChannels) {
+OperationResult RampContext::setupAdcHardware(int* adcChannels,
+                                              int numAdcChannels) {
   adcChannels_ = adcChannels;
   numAdcChannels_ = numAdcChannels;
   hasAdc_ = true;
 
-  ADCController::resetToPreviousConversionTimes();
+  if (!ADCController::resetToPreviousConversionTimes())
+    return OperationResult::Failure("ADC reset failed");
   FastGpio::digitalWrite(adc_sync, false);
 
   boardUsage_ = getUsedAdcBoards(adcChannels, numAdcChannels);
@@ -83,27 +84,30 @@ void RampContext::setupAdcHardware(int* adcChannels, int numAdcChannels) {
   adcMask_ = adcMaskForBoardUsage(boardUsage_);
 
   for (int i = 0; i < numAdcChannels; i++) {
-    ADCController::startContinuousConversion(adcChannels[i]);
-    ADCController::setRDYFN(adcChannels[i]);
+    if (!ADCController::startContinuousConversion(adcChannels[i])) {
+      return OperationResult::Failure("ADC continuous-conversion setup failed");
+    }
+    OperationResult readyResult = ADCController::setRDYFN(adcChannels[i]);
+    if (!readyResult.isSuccess()) return readyResult;
   }
 
   TimingUtil::dacFlag = false;
   TimingUtil::dacFlagCount = 0;
   TimingUtil::adcFlag = 0;
+  return OperationResult::Success();
 }
 
 OperationResult RampContext::beginDacAndAdc(int* adcChannels,
                                             int numAdcChannels) {
   clearWorkerStopRequest();
-  PeripheralCommsController::dataLedOn();
-  setupAdcHardware(adcChannels, numAdcChannels);
   begun_ = true;
-  return OperationResult::Success();
+  OperationResult setupResult = setupAdcHardware(adcChannels, numAdcChannels);
+  if (!setupResult.isSuccess()) cleanup();
+  return setupResult;
 }
 
 void RampContext::beginDacOnly() {
   clearWorkerStopRequest();
-  PeripheralCommsController::dataLedOn();
   begun_ = true;
 }
 
@@ -121,14 +125,15 @@ void RampContext::cleanup() {
 
   if (hasAdc_) {
     for (int i = 0; i < numAdcChannels_; i++) {
-      ADCController::idleMode(adcChannels_[i]);
-      ADCController::unsetRDYFN(adcChannels_[i]);
+      if (!ADCController::idleMode(adcChannels_[i]).isSuccess())
+        cleanupFailed_ = true;
+      if (!ADCController::unsetRDYFN(adcChannels_[i]).isSuccess())
+        cleanupFailed_ = true;
     }
-    ADCController::resetToPreviousConversionTimes();
+    if (!ADCController::resetToPreviousConversionTimes()) cleanupFailed_ = true;
     detachAdcSyncInterrupts(boardUsage_);
   }
 
-  PeripheralCommsController::dataLedOff();
 }
 
 OperationResult RampContext::finish(OperationResult rampResult,
@@ -144,6 +149,9 @@ OperationResult RampContext::finish(OperationResult rampResult,
   if (isWorkerStopRequested()) {
     clearWorkerStopRequest();
     return OperationResult::Failure("RAMPING_STOPPED");
+  }
+  if (cleanupFailed_) {
+    return OperationResult::Failure("ADC cleanup failed");
   }
 
   if (checkTiming) {

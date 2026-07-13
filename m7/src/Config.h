@@ -34,7 +34,6 @@ constexpr int GPIO_3 = 4;
 constexpr int adc_sync = 51;
 
 constexpr int led = 7;
-constexpr int data_pin = 6;
 constexpr int err = 11;
 constexpr uint32_t DAC_SPI_FREQUENCY_HZ = 18000000;
 constexpr uint8_t DAC_SPI_MODE = 1;

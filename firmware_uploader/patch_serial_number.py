@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import tempfile
 from pathlib import Path
 
 from gatekeeper_upload import (
@@ -8,7 +9,6 @@ from gatekeeper_upload import (
     M7_ADDRESS,
     M7_READ_ADDRESS,
     choose_giga_port,
-    current_serial_prefix,
     dfu_download,
     dfu_upload,
     find_dfu_util,
@@ -16,20 +16,11 @@ from gatekeeper_upload import (
     patch_binary_serial,
     read_binary_serial,
     send_command,
+    serial_from_suffix,
     trigger_dfu_mode,
     wait_for_giga_port,
     wait_for_ready,
 )
-
-
-TEMP_FIRMWARE_M7 = Path("temp_firmware_m7.bin")
-TEMP_FIRMWARE_M4 = Path("temp_firmware_m4.bin")
-
-
-def serial_from_suffix(suffix):
-    if len(suffix) > 3:
-        raise RuntimeError("Serial suffix must be at most 3 characters.")
-    return f"{current_serial_prefix()}_{suffix.zfill(3)}"
 
 
 def nop_test(port, expected_serial_number):
@@ -48,12 +39,6 @@ def nop_test(port, expected_serial_number):
                 f"Serial number mismatch: expected {expected_serial_number}, got {serial_number}"
             )
         print(f"Firmware successfully patched. ID={device_id}, serial={serial_number}.")
-
-
-def remove_temp_files():
-    for path in (TEMP_FIRMWARE_M7, TEMP_FIRMWARE_M4):
-        if path.exists():
-            path.unlink()
 
 
 def main():
@@ -79,23 +64,22 @@ def main():
     if port is None:
         raise SystemExit("Arduino GIGA not found. Make sure it is connected.")
 
-    remove_temp_files()
     trigger_dfu_mode(dfu_util, port)
 
-    try:
-        dfu_upload(dfu_util, M7_READ_ADDRESS, TEMP_FIRMWARE_M7, log_func=print)
-        dfu_upload(dfu_util, M4_READ_ADDRESS, TEMP_FIRMWARE_M4, log_func=print)
-        for path in (TEMP_FIRMWARE_M7, TEMP_FIRMWARE_M4):
+    with tempfile.TemporaryDirectory(prefix="gatekeeper_serial_patch_") as temp_dir:
+        temp_firmware_m7 = Path(temp_dir) / "firmware_m7.bin"
+        temp_firmware_m4 = Path(temp_dir) / "firmware_m4.bin"
+        dfu_upload(dfu_util, M7_READ_ADDRESS, temp_firmware_m7, log_func=print)
+        dfu_upload(dfu_util, M4_READ_ADDRESS, temp_firmware_m4, log_func=print)
+        for path in (temp_firmware_m7, temp_firmware_m4):
             current_serial = read_binary_serial(path)
             if current_serial is None:
                 raise RuntimeError(f"No serial marker found in {path}.")
             print(f"{path} currently contains serial number: {current_serial}")
             patch_binary_serial(path, serial_number)
 
-        dfu_download(dfu_util, M7_ADDRESS, TEMP_FIRMWARE_M7, log_func=print)
-        dfu_download(dfu_util, M4_LEAVE_ADDRESS, TEMP_FIRMWARE_M4, log_func=print)
-    finally:
-        remove_temp_files()
+        dfu_download(dfu_util, M7_ADDRESS, temp_firmware_m7, log_func=print)
+        dfu_download(dfu_util, M4_LEAVE_ADDRESS, temp_firmware_m4, log_func=print)
 
     print("Validating...")
     port = wait_for_giga_port(serial_number)

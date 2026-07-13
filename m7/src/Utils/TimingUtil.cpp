@@ -78,6 +78,15 @@ TimerPeriod timerPeriodForMicros(uint64_t periodUs, uint64_t timerClock) {
 }
 }
 
+bool TimingUtil::isTimerPeriodRepresentable(uint32_t period_us) {
+  if (period_us == 0) return false;
+  const uint64_t timerClock = 2ULL * HAL_RCC_GetPCLK2Freq();
+  if (timerClock == 0) return false;
+  constexpr uint64_t kMaxTotalTicks = 65536ULL * 65536ULL;
+  return static_cast<uint64_t>(period_us) <=
+         (kMaxTotalTicks * 1000000ULL) / timerClock;
+}
+
 void TimingUtil::resetTimers() {
   __disable_irq();
 
@@ -158,6 +167,8 @@ void TimingUtil::setupTimerOnlyDac(uint32_t period_us) {
   TIM1->ARR = dacPeriod.autoReload;
   TIM1->CR1 = TIM_CR1_ARPE;
   TIM1->DIER |= TIM_DIER_UIE;
+  TIM1->EGR |= TIM_EGR_UG;
+  TIM1->SR &= ~TIM_SR_UIF;
 
   NVIC_SetPriority(TIM1_UP_IRQn, 0);
   NVIC_EnableIRQ(TIM1_UP_IRQn);
@@ -165,9 +176,10 @@ void TimingUtil::setupTimerOnlyDac(uint32_t period_us) {
   TIM1->CR1 |= TIM_CR1_CEN;
 }
 
-void TimingUtil::setupTimersOnlyADC(uint32_t adc_period_us) {
+void TimingUtil::setupTimersOnlyADC(uint32_t adc_period_us,
+                                    AdcBoardMask adc_watch_mask) {
   resetTimers();
-  resetTimingWatchdog();
+  resetTimingWatchdog(adc_watch_mask);
 
   enableTimerClock(RCC_APB2ENR_TIM8EN);
 
@@ -312,7 +324,9 @@ void TimingUtil::setupTimersDacLed(uint64_t period_us,
   TIM8->SMCR &= ~TIM_SMCR_SMS;
   TIM8->SMCR |= TIM_SMCR_SMS_3;
 
-  if (phase_shift_us > 0 && phase_shift_us < period_us) {
+  const bool useCompareEvent =
+      phase_shift_us > 0 && phase_shift_us < period_us;
+  if (useCompareEvent) {
     uint32_t timerPhaseShift = (phase_shift_us * (TIM8->ARR + 1)) / period_us;
     TIM8->CCR1 = timerPhaseShift;
     TIM8->CCMR1 &= ~TIM_CCMR1_OC1M;
@@ -338,8 +352,13 @@ void TimingUtil::setupTimersDacLed(uint64_t period_us,
   NVIC_SetPriority(TIM1_UP_IRQn, 0);
   NVIC_EnableIRQ(TIM1_UP_IRQn);
 
-  NVIC_SetPriority(TIM8_CC_IRQn, 3);
-  NVIC_EnableIRQ(TIM8_CC_IRQn);
+  if (useCompareEvent) {
+    NVIC_SetPriority(TIM8_CC_IRQn, 3);
+    NVIC_EnableIRQ(TIM8_CC_IRQn);
+  } else {
+    NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 3);
+    NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
+  }
 
   TIM1->CR1 |= TIM_CR1_CEN;
 }

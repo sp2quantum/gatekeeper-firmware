@@ -307,6 +307,11 @@ bool isUint32AtLeast(float value, uint32_t minimum) {
          static_cast<double>(value) <= 4294967295.0;
 }
 
+bool isTimerPeriodUs(float value, uint32_t minimum) {
+  if (!isUint32AtLeast(value, minimum)) return false;
+  return TimingUtil::isTimerPeriodRepresentable(static_cast<uint32_t>(value));
+}
+
 uint8_t adcBoardForChannel(int channel) {
   return static_cast<uint8_t>(channel / NUM_CHANNELS_PER_ADC_BOARD);
 }

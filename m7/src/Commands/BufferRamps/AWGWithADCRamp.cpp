@@ -14,6 +14,7 @@ using FunctionRegistryParsing::List;
 
 namespace {
 
+using BufferRampCommon::dacWriteFailure;
 using BufferRampCommon::isValidAdcChannelCount;
 using BufferRampCommon::isValidDacChannelCount;
 using BufferRampCommon::sendVoltageFrame;
@@ -32,7 +33,7 @@ OperationResult awgWithAdcImpl(
   if (numSteps < 1 || numCycles < 1) {
     return OperationResult::Failure("Invalid step/cycle count");
   }
-  if (!BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1)) {
+  if (!BufferRampCommon::isTimerPeriodUs(dacIntervalArg)) {
     return OperationResult::Failure("Invalid dac interval");
   }
   const uint64_t totalSteps64 =
@@ -71,7 +72,9 @@ OperationResult awgWithAdcImpl(
   for (int i = 0; i < numDacChannels; i++) {
     const float v0 = channelMajorVoltages[static_cast<size_t>(i) *
                                           static_cast<size_t>(numSteps)];
-    DACController::setVoltageNoLdac(dacChannels[i], v0);
+    if (!DACController::setVoltageNoLdac(dacChannels[i], v0)) {
+      return ctx.finish(dacWriteFailure(dacChannels[i], v0));
+    }
   }
 
   TimingUtil::setupTimerOnlyDac(dac_interval_us);
@@ -97,7 +100,9 @@ OperationResult awgWithAdcImpl(
               channelMajorVoltages[static_cast<size_t>(i) *
                                        static_cast<size_t>(numSteps) +
                                    static_cast<size_t>(step)];
-          DACController::setVoltageNoLdac(dacChannels[i], v);
+          if (!DACController::setVoltageNoLdac(dacChannels[i], v)) {
+            return ctx.finish(dacWriteFailure(dacChannels[i], v));
+          }
         }
         stepsWritten++;
       }

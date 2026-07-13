@@ -6,12 +6,8 @@
 
 #include "mbed/drivers/usb/include/usb/USBCDC.h"
 
+#include "Utils/SerialActivityLed.h"
 #include "Utils/shared_memory.h"
-
-typedef union {
-  float floatingPoint;
-  byte binary[4];
-} binaryFloat;
 
 namespace {
 
@@ -97,6 +93,19 @@ class GateKeeperUSBCDC : public USBCDC {
     if (baud == 1200) {
       bootloader_touch_requested = true;
     }
+  }
+
+  void data_rx() override {
+    // A callback can also follow a zero-length USB packet. Only illuminate the
+    // data LED when the endpoint actually supplied payload bytes.
+    if (_rx_size > 0) {
+      SerialActivityLed::signalTransferFromIsr();
+    }
+  }
+
+  void data_tx() override {
+    // USBCDC invokes this only after a queued, nonempty transmission finishes.
+    SerialActivityLed::signalTransferFromIsr();
   }
 };
 
@@ -226,7 +235,7 @@ static void processHostByte(char c) {
 }
 
 void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);
+  SerialActivityLed::setup();
   initSharedMemory();
 
   usb_cdc.init();
@@ -234,6 +243,8 @@ void setup() {
 }
 
 void loop() {
+  SerialActivityLed::service();
+
   if (bootloader_touch_requested) {
     usb_cdc.disconnect();
     delay(250);
@@ -247,41 +258,45 @@ void loop() {
     processHostByte(static_cast<char>(input[i]));
   }
 
-  if (hasTextFromWorker()) {
-    static char response[4096];
-    size_t size = sizeof(response);
-    if (receiveTextFromWorker(response, size)) {
-      if (size > 0) {
-        size--;
+  // Do not consume shared-memory responses while USB is disconnected; doing
+  // so would silently drop them before usbWrite() can transmit anything.
+  if (usb_cdc.ready()) {
+    if (hasTextFromWorker()) {
+      static char response[4096];
+      size_t size = sizeof(response);
+      if (receiveTextFromWorker(response, size)) {
+        if (size > 0) {
+          size--;
+        }
+        usbWrite(reinterpret_cast<const uint8_t*>(response), size);
+        usbPrint("\n");
       }
-      usbWrite(reinterpret_cast<const uint8_t*>(response), size);
-      usbPrint("\n");
     }
-  }
 
-  if (hasFloatResponseFromWorker()) {
-    static float response[FLOAT_BUFFER_SIZE];
-    size_t size = FLOAT_BUFFER_SIZE;
-    if (receiveFloatResponseFromWorker(response, size)) {
-      for (size_t i = 0; i < size; ++i) {
-        char value[24];
-        snprintf(value, sizeof(value), "%.8f ", response[i]);
-        usbPrint(value);
+    if (hasFloatResponseFromWorker()) {
+      static float response[FLOAT_BUFFER_SIZE];
+      size_t size = FLOAT_BUFFER_SIZE;
+      if (receiveFloatResponseFromWorker(response, size)) {
+        for (size_t i = 0; i < size; ++i) {
+          char value[24];
+          snprintf(value, sizeof(value), "%.8f ", response[i]);
+          usbPrint(value);
+        }
+        usbPrint("\n");
       }
-      usbPrint("\n");
     }
-  }
 
-  if (hasVoltageFrameFromWorker()) {
-    static double response[VOLTAGE_BUFFER_SIZE];
-    static uint8_t bytes[VOLTAGE_BUFFER_SIZE * sizeof(float)];
-    size_t size = VOLTAGE_BUFFER_SIZE;
-    if (receiveVoltageFrameFromWorker(response, size)) {
-      for (size_t i = 0; i < size; ++i) {
-        const float value = static_cast<float>(response[i]);
-        memcpy(&bytes[i * sizeof(float)], &value, sizeof(value));
+    if (hasVoltageFrameFromWorker()) {
+      static double response[VOLTAGE_BUFFER_SIZE];
+      static uint8_t bytes[VOLTAGE_BUFFER_SIZE * sizeof(float)];
+      size_t size = VOLTAGE_BUFFER_SIZE;
+      if (receiveVoltageFrameFromWorker(response, size)) {
+        for (size_t i = 0; i < size; ++i) {
+          const float value = static_cast<float>(response[i]);
+          memcpy(&bytes[i * sizeof(float)], &value, sizeof(value));
+        }
+        usbWrite(bytes, static_cast<uint32_t>(size * sizeof(float)));
       }
-      usbWrite(bytes, static_cast<uint32_t>(size * sizeof(float)));
     }
   }
 }

@@ -86,7 +86,11 @@ static std::vector<InitCallback>& getCallbacks() {
   return callbacks;
 }
 void registerCallback(InitCallback cb) { getCallbacks().push_back(cb); }
-void runAll() {
-  for (auto cb : getCallbacks()) cb();
+OperationResult runAll() {
+  for (auto cb : getCallbacks()) {
+    OperationResult result = cb();
+    if (!result.isSuccess()) return result;
+  }
+  return OperationResult::Success();
 }
 }

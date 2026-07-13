@@ -34,6 +34,10 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install --upgrade platformio
+          python3 -m pip install -r tests/requirements.txt
+
+      - name: Run hardware-independent tests
+        run: python3 -m pytest -m "not hardware"
 
       # Install package dependencies before generating variants
       - name: Install PlatformIO project packages

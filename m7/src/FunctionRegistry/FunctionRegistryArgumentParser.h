@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include <cmath>
+#include <limits>
 #include <tuple>
 #include <type_traits>
 #include <vector>
@@ -20,13 +22,38 @@ class ArgReader {
   }
 
   template <typename T>
-  typename std::enable_if<std::is_arithmetic<T>::value,
+  typename std::enable_if<std::is_floating_point<T>::value,
                           OperationResult>::type
   read(T& value) {
     if (remaining() == 0) {
       return OperationResult::Failure("Argument count mismatch");
     }
-    value = static_cast<T>(args_[index_++]);
+    const double raw = static_cast<double>(args_[index_]);
+    if (!std::isfinite(raw) ||
+        raw < static_cast<double>(std::numeric_limits<T>::lowest()) ||
+        raw > static_cast<double>(std::numeric_limits<T>::max())) {
+      return OperationResult::Failure("Invalid numeric argument");
+    }
+    value = static_cast<T>(raw);
+    index_++;
+    return OperationResult::Success();
+  }
+
+  template <typename T>
+  typename std::enable_if<std::is_integral<T>::value,
+                          OperationResult>::type
+  read(T& value) {
+    if (remaining() == 0) {
+      return OperationResult::Failure("Argument count mismatch");
+    }
+    const double raw = static_cast<double>(args_[index_]);
+    if (!std::isfinite(raw) || std::trunc(raw) != raw ||
+        raw < static_cast<double>(std::numeric_limits<T>::lowest()) ||
+        raw > static_cast<double>(std::numeric_limits<T>::max())) {
+      return OperationResult::Failure("Invalid integer argument");
+    }
+    value = static_cast<T>(raw);
+    index_++;
     return OperationResult::Success();
   }
 

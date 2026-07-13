@@ -16,6 +16,7 @@ using FunctionRegistryParsing::List;
 
 namespace {
 
+using BufferRampCommon::dacWriteFailure;
 using BufferRampCommon::isValidAdcChannelCount;
 using BufferRampCommon::isValidDacChannelCount;
 using BufferRampCommon::sendVoltageFrame;
@@ -72,15 +73,31 @@ OperationResult boxcarAverageRampImpl(
                                         numAdcChannels > 1);
   }
 
-  const uint64_t dacPeriod64 =
-      static_cast<uint64_t>(numAdcMeasuresPerDacStep) *
-      static_cast<uint64_t>(actualConversionTime_us + 5) *
-      static_cast<uint64_t>(numAdcChannels) *
-      static_cast<uint64_t>(numAdcAverages);
-  if (dacPeriod64 == 0 || dacPeriod64 > 0xFFFFFFFFULL) {
-    return OperationResult::Failure("Boxcar DAC period is out of range");
+  uint8_t channelsPerBoard[NUM_ADC_BOARDS] = {};
+  for (int i = 0; i < numAdcChannels; ++i) {
+    channelsPerBoard[BufferRampCommon::adcBoardForChannel(adcChannels[i])]++;
   }
-  uint32_t dacPeriod_us = static_cast<uint32_t>(dacPeriod64);
+  uint8_t maxChannelsPerBoard = 0;
+  for (uint8_t count : channelsPerBoard) {
+    if (count > maxChannelsPerBoard) maxChannelsPerBoard = count;
+  }
+
+  constexpr uint64_t kAdcReadBudgetPerChannelUs = 15;
+  constexpr uint64_t kAdcLoopBudgetUs = 15;
+  const uint64_t adcFramePeriod64 =
+      static_cast<uint64_t>(actualConversionTime_us) *
+          static_cast<uint64_t>(maxChannelsPerBoard) +
+      kAdcReadBudgetPerChannelUs * static_cast<uint64_t>(numAdcChannels) +
+      kAdcLoopBudgetUs;
+  if (adcFramePeriod64 > 0xFFFFFFFFULL) {
+    return OperationResult::Failure("Boxcar ADC period is out of range");
+  }
+  const uint32_t adcFramePeriodUs =
+      static_cast<uint32_t>(adcFramePeriod64);
+
+  if (!TimingUtil::isTimerPeriodRepresentable(adcFramePeriodUs)) {
+    return OperationResult::Failure("Boxcar timer period is out of range");
+  }
 
   const uint64_t totalSteps64 = 2ULL *
                                 static_cast<uint64_t>(numDacSteps) *
@@ -92,7 +109,8 @@ OperationResult boxcarAverageRampImpl(
   }
 
   RampContext ctx;
-  ctx.beginDacAndAdc(adcChannels, numAdcChannels);
+  OperationResult beginResult = ctx.beginDacAndAdc(adcChannels, numAdcChannels);
+  if (!beginResult.isSuccess()) return beginResult;
 
   double voltageStepSizeLow[NUM_DAC_CHANNELS] = {};
   double voltageStepSizeHigh[NUM_DAC_CHANNELS] = {};
@@ -114,7 +132,7 @@ OperationResult boxcarAverageRampImpl(
     previousVoltageSetHigh[i] = dacV0_2[i];
   }
 
-  int steps = 0;
+  int latchedSteps = 0;
   const int totalSteps = static_cast<int>(totalSteps64);
   int x = 0;
   const int total_data_size = static_cast<int>(totalDataSize64);
@@ -122,17 +140,53 @@ OperationResult boxcarAverageRampImpl(
 
   // Step 0 always outputs the low set.
   for (int i = 0; i < numDacChannels; i++) {
-    DACController::setVoltageNoLdac(dacChannels[i],
-                                    previousVoltageSetLow[i]);
+    if (!DACController::setVoltageNoLdac(dacChannels[i],
+                                         previousVoltageSetLow[i])) {
+      return ctx.finish(
+          dacWriteFailure(dacChannels[i], previousVoltageSetLow[i]));
+    }
   }
   DACController::toggleLdac();
-  steps++;
+  latchedSteps++;
 
-  TimingUtil::setupTimersTimeSeries(dacPeriod_us, actualConversionTime_us,
-                                    ctx.adcMask());
+  int failedDacChannel = -1;
+  double failedDacVoltage = 0.0;
+  auto queueStep = [&](int step) {
+    for (int i = 0; i < numDacChannels; i++) {
+      double currentVoltage;
+      if (step % (2 * numAdcAverages) != 0) {
+        currentVoltage = step % 2 == 0 ? previousVoltageSetLow[i]
+                                       : previousVoltageSetHigh[i];
+      } else {
+        previousVoltageSetLow[i] += voltageStepSizeLow[i];
+        previousVoltageSetHigh[i] += voltageStepSizeHigh[i];
+        currentVoltage = step % 2 == 0 ? previousVoltageSetLow[i]
+                                       : previousVoltageSetHigh[i];
+      }
+      if (!DACController::setVoltageNoLdac(dacChannels[i], currentVoltage)) {
+        failedDacChannel = dacChannels[i];
+        failedDacVoltage = currentVoltage;
+        return false;
+      }
+    }
+    return true;
+  };
+
+  int nextStepToQueue = 1;
+  if (nextStepToQueue < totalSteps) {
+    if (!queueStep(nextStepToQueue)) {
+      return ctx.finish(
+          dacWriteFailure(failedDacChannel, failedDacVoltage));
+    }
+    nextStepToQueue++;
+  }
+
+  TimingUtil::setupTimersOnlyADC(adcFramePeriodUs, ctx.adcMask());
+  int samplesAtCurrentStep = 0;
 
   while (x < total_data_size && !ctx.stopped()) {
     if (TimingUtil::consumeAdcFlag(ctx.adcMask())) {
+      FastGpio::digitalWrite(adc_sync, false);
       double packets[NUM_ADC_CHANNELS] = {};
       for (int i = 0; i < numAdcChannels; i++) {
         packets[i] =
@@ -143,31 +197,23 @@ OperationResult boxcarAverageRampImpl(
         break;
       }
       x++;
-    }
-    if (steps < totalSteps && TimingUtil::consumeDacFlag()) {
-      for (int i = 0; i < numDacChannels; i++) {
-        double currentVoltage;
-        if (steps % (2 * numAdcAverages) != 0) {
-          if (steps % 2 == 0) {
-            currentVoltage = previousVoltageSetLow[i];
-          } else {
-            currentVoltage = previousVoltageSetHigh[i];
+      samplesAtCurrentStep++;
+
+      if (samplesAtCurrentStep == numAdcMeasuresPerDacStep &&
+          latchedSteps < totalSteps) {
+        DACController::toggleLdac();
+        latchedSteps++;
+        samplesAtCurrentStep = 0;
+        TIM8->CNT = 0;
+
+        if (nextStepToQueue < totalSteps) {
+          if (!queueStep(nextStepToQueue)) {
+            return ctx.finish(
+                dacWriteFailure(failedDacChannel, failedDacVoltage));
           }
-        } else if (steps % 2 == 0) {
-          previousVoltageSetLow[i] += voltageStepSizeLow[i];
-          previousVoltageSetHigh[i] += voltageStepSizeHigh[i];
-          currentVoltage = previousVoltageSetLow[i];
-        } else {
-          previousVoltageSetLow[i] += voltageStepSizeLow[i];
-          previousVoltageSetHigh[i] += voltageStepSizeHigh[i];
-          currentVoltage = previousVoltageSetHigh[i];
+          nextStepToQueue++;
         }
-        DACController::setVoltageNoLdac(dacChannels[i], currentVoltage);
       }
-      steps++;
-      // Re-phase the ADC conversion timer to the DAC step that was just
-      // queued so the boxcar windows stay aligned to the step edges.
-      TIM8->CNT = 0;
     }
   }
 

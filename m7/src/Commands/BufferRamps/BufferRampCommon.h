@@ -17,6 +17,7 @@ enum class TimeSeriesTimingMode {
 bool isValidDacChannelCount(int count);
 bool isValidAdcChannelCount(int count);
 bool isUint32AtLeast(float value, uint32_t minimum);
+bool isTimerPeriodUs(float value, uint32_t minimum = 1);
 
 uint8_t adcBoardForChannel(int channel);
 

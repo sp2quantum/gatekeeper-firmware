@@ -568,8 +568,24 @@ def main() -> int:
         parser.error("--dac-channel-base must be nonnegative")
     if args.repeats < 1:
         parser.error("--repeats must be at least 1")
+    if args.num_fast < 1 or args.num_slow < 1:
+        parser.error("--num-fast and --num-slow must be at least 1")
+    if args.adc_averages < 1:
+        parser.error("--adc-averages must be at least 1")
+    if args.conversion_us <= 0 or args.settling_us <= 0:
+        parser.error("conversion and settling times must be positive")
+    if (
+        args.interval_min_us < 1
+        or args.interval_max_us < args.interval_min_us
+        or args.interval_step_us < 1
+    ):
+        parser.error("invalid interval range")
+    if args.command_timeout_s <= 0 or args.ramp_timeout_s <= 0:
+        parser.error("timeouts must be positive")
+    if args.quiet_s < 0 or args.between_trials_s < 0:
+        parser.error("quiet and between-trial delays must be nonnegative")
 
-    port = args.port or auto_port()
+    port = args.port or (None if args.dry_run else auto_port())
     rows: list[dict[str, object]] = []
 
     serial_port: serial.Serial | None = None
@@ -683,7 +699,8 @@ def main() -> int:
     print()
     print_table(rows)
     write_outputs(rows, args.output_dir)
-    return 0
+    failed = sum(1 for row in rows if row["min_interval_us"] == "FAIL")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

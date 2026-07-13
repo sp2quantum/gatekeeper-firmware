@@ -12,7 +12,7 @@ using FunctionRegistryParsing::List;
 namespace DACController {
 
 void setup();
-void initialize();
+OperationResult initialize();
 bool isChannelIndexValid(int channelIndex);
 
 OperationResult setVoltage(int channel_index, float voltage);

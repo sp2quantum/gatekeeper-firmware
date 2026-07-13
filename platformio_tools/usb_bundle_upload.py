@@ -67,6 +67,16 @@ def load_upload_persistence():
     return module
 
 
+def load_smoke_checks():
+    module_path = ROOT_DIR / "firmware_uploader" / "gatekeeper_smoke.py"
+    spec = importlib.util.spec_from_file_location("gatekeeper_smoke", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load upload smoke checks from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def find_executable(*names):
     for name in names:
         path = shutil.which(name)
@@ -214,25 +224,18 @@ def verify_basic_firmware(persistence, upload_env, expected_serial_number):
     ready_port = persistence.wait_for_device_ready(
         upload_env, expected_serial_number=expected_serial_number
     )
+    smoke = load_smoke_checks()
     with persistence.open_command_port(ready_port) as ser:
-        nop = persistence.send_command(ser, "NOP")
-        ready = persistence.send_command(ser, "*RDY?")
-        environment = persistence.send_command(ser, "GET_ENVIRONMENT")
-        serial_number = persistence.send_command(ser, "SERIAL_NUMBER")
-
-    if nop != "NOP":
-        raise RuntimeError(f"NOP check failed after upload: {nop}")
-    if ready != "READY":
-        raise RuntimeError(f"READY check failed after upload: {ready}")
-    if expected_serial_number and serial_number != expected_serial_number:
-        raise RuntimeError(
-            "Serial number changed across upload: "
-            f"expected {expected_serial_number}, got {serial_number}"
+        results = smoke.run_smoke_checks(
+            lambda command: persistence.send_command(ser, command),
+            expected_serial_number=expected_serial_number,
         )
 
     log(
-        "Basic firmware verification passed "
-        f"on {ready_port} (env={environment}, serial={serial_number})."
+        "Read-only firmware smoke tests passed "
+        f"on {ready_port} (env={results['environment']}, "
+        f"serial={results['serial_number']}, ADC revisions="
+        f"{results['adc_revisions']})."
     )
     return ready_port
 
@@ -401,7 +404,8 @@ def main():
     )
 
     if args.no_restore:
-        log("USB bundle upload complete.")
+        verify_basic_firmware(persistence, upload_env, serial_number)
+        log("USB bundle upload and basic verification complete; calibration was not restored.")
         return
 
     if state.get("skip"):
@@ -415,7 +419,8 @@ def main():
     log(f"Restoring calibration on {ready_port}...")
     persistence.restore_calibration(ready_port, state)
     persistence.verify_calibration(ready_port, state)
-    log("USB bundle upload, calibration restore, and verification complete.")
+    verify_basic_firmware(persistence, upload_env, state["serial_number"])
+    log("USB bundle upload, calibration restore, and smoke verification complete.")
 
 
 if __name__ == "__main__":

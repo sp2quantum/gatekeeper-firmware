@@ -1,6 +1,7 @@
 #include "Peripherals/ADC/ADCController.h"
 
 #include <array>
+#include <cmath>
 #include <utility>
 
 #include "Calibration/Calibration.h"
@@ -13,6 +14,7 @@ namespace {
 
 constexpr uint8_t kSyncEnabledIoRegister = 0b00010001;
 constexpr uint8_t kReadyFunctionIoRegister = 0b00011001;
+constexpr uint32_t kMaxCalibrationValue = 0xFFFFFFu;
 
 int boardForChannel(int ch) { return ch / NUM_CHANNELS_PER_ADC_BOARD; }
 int localChannel(int ch) { return ch % NUM_CHANNELS_PER_ADC_BOARD; }
@@ -58,7 +60,8 @@ void setAdcCalibrationDefaults(void* section) {
 bool validateAdcCalibration(const void* section) {
   const auto& data = *static_cast<const AdcCalibrationData*>(section);
   for (int i = 0; i < NUM_ADC_CALIBRATION_CHANNELS; i++) {
-    if (data.offset[i] > 0xFFFFFFu || data.gain[i] > 0xFFFFFFu) {
+    if (data.offset[i] > kMaxCalibrationValue || data.gain[i] == 0 ||
+        data.gain[i] > kMaxCalibrationValue) {
       return false;
     }
   }
@@ -67,31 +70,33 @@ bool validateAdcCalibration(const void* section) {
 CALIBRATION_SECTION("ADC", AdcCalibrationData, setAdcCalibrationDefaults,
                     validateAdcCalibration)
 
-uint8_t readRegister8(int board, uint8_t address) {
+uint8_t readRegister8(int board, uint8_t address, bool* success = nullptr) {
   byte data[2] = {static_cast<byte>(AdcRegister::kRead | address), 0};
-  comms[board].transferADC(data, 2);
+  const bool transferred = comms[board].transferADC(data, 2);
+  if (success) *success = transferred;
   return data[1];
 }
 
-uint32_t readRegister24(int board, uint8_t address) {
+uint32_t readRegister24(int board, uint8_t address, bool* success = nullptr) {
   byte data[4] = {static_cast<byte>(AdcRegister::kRead | address), 0, 0, 0};
-  comms[board].transferADC(data, 4);
+  const bool transferred = comms[board].transferADC(data, 4);
+  if (success) *success = transferred;
   return (static_cast<uint32_t>(data[1]) << 16) |
          (static_cast<uint32_t>(data[2]) << 8) |
          static_cast<uint32_t>(data[3]);
 }
 
-void writeRegister8(int board, uint8_t address, uint8_t value) {
+bool writeRegister8(int board, uint8_t address, uint8_t value) {
   byte data[2] = {static_cast<byte>(AdcRegister::kWrite | address), value};
-  comms[board].transferADC(data, 2);
+  return comms[board].transferADC(data, 2);
 }
 
-void writeRegister24(int board, uint8_t address, uint32_t value) {
+bool writeRegister24(int board, uint8_t address, uint32_t value) {
   byte data[4] = {static_cast<byte>(AdcRegister::kWrite | address),
                   static_cast<byte>((value >> 16) & 0xFF),
                   static_cast<byte>((value >> 8) & 0xFF),
                   static_cast<byte>(value & 0xFF)};
-  comms[board].transferADC(data, 4);
+  return comms[board].transferADC(data, 4);
 }
 
 bool waitDataReady(int board) {
@@ -104,31 +109,38 @@ bool waitDataReady(int board) {
   return count < 20000;
 }
 
-void boardIdleMode(int board, int local_ch) {
-  writeRegister8(board, AdcRegister::mode(local_ch),
-                 AdcRegister::kIdleMode);
+bool boardIdleMode(int board, int local_ch) {
+  return writeRegister8(board, AdcRegister::mode(local_ch),
+                        AdcRegister::kIdleMode);
 }
 
-void boardReset(int board) {
+bool boardReset(int board) {
   FastGpio::digitalWrite(reset[board], true);
   FastGpio::digitalWrite(reset[board], false);
   delay(5);
   FastGpio::digitalWrite(reset[board], true);
-  for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) boardIdleMode(board, i);
-  writeRegister8(board, AdcRegister::kIo, kSyncEnabledIoRegister);
-  if (!isCalibrationDataReady()) return;
+  bool success = true;
+  for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
+    if (!boardIdleMode(board, i)) success = false;
+  }
+  if (!writeRegister8(board, AdcRegister::kIo, kSyncEnabledIoRegister))
+    success = false;
+  if (!isCalibrationDataReady()) return success;
   CalibrationData data;
   readCalibrationData(data);
   const AdcCalibrationData* adcData = adcCalibration(data);
-  if (!adcData || !adcData->calibrated) return;
+  if (!adcData || !adcData->calibrated) return success;
   for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
     int global = board * NUM_CHANNELS_PER_ADC_BOARD + i;
-    writeRegister24(board, AdcRegister::channelZeroScaleCal(i),
-                    adcData->offset[global]);
+    if (!writeRegister24(board, AdcRegister::channelZeroScaleCal(i),
+                         adcData->offset[global]))
+      success = false;
     if (adcData->gain[global] != 0)
-      writeRegister24(board, AdcRegister::channelFullScaleCal(i),
-                      adcData->gain[global]);
+      if (!writeRegister24(board, AdcRegister::channelFullScaleCal(i),
+                           adcData->gain[global]))
+        success = false;
   }
+  return success;
 }
 
 float calculateConversionTime(byte b, bool moreThanOneChannelActive) {
@@ -164,26 +176,38 @@ byte calculateFilterWord(float time_us, bool chop,
   return static_cast<byte>(out);
 }
 
-bool boardIsMoreThanOneChannelActive(int board) {
+bool boardIsMoreThanOneChannelActive(int board, bool* success = nullptr) {
+  bool transferred = false;
   const uint8_t status =
-      readRegister8(board, AdcRegister::kAdcStatus) &
+      readRegister8(board, AdcRegister::kAdcStatus, &transferred) &
       ((1 << NUM_CHANNELS_PER_ADC_BOARD) - 1);
+  if (success) *success = transferred;
   return (status & (status - 1)) != 0;
 }
 
 float boardGetConversionTime(int board, int local_ch,
-                             bool moreThanOneChannelActive) {
-  return calculateConversionTime(
-      readRegister8(board, AdcRegister::channelConversionTime(local_ch)),
-      moreThanOneChannelActive);
+                             bool moreThanOneChannelActive,
+                             bool* success = nullptr) {
+  bool transferred = false;
+  const uint8_t value = readRegister8(
+      board, AdcRegister::channelConversionTime(local_ch), &transferred);
+  if (success) *success = transferred;
+  return transferred ? calculateConversionTime(value, moreThanOneChannelActive)
+                     : -1.0f;
 }
 
 float boardSetConversionTime(int board, int local_ch, bool chop, byte fw,
                              bool moreThanOneChannelActive) {
   if ((fw > 127) || (chop && fw < 2) || (!chop && fw < 3)) return -1;
   byte send = (chop ? 0x80 : 0x00) | fw;
-  writeRegister8(board, AdcRegister::channelConversionTime(local_ch), send);
-  float t = boardGetConversionTime(board, local_ch, moreThanOneChannelActive);
+  if (!writeRegister8(board, AdcRegister::channelConversionTime(local_ch),
+                      send)) {
+    return -1;
+  }
+  bool readSucceeded = false;
+  float t = boardGetConversionTime(board, local_ch, moreThanOneChannelActive,
+                                   &readSucceeded);
+  if (!readSucceeded) return -1;
   delayMicroseconds(100);
   return t;
 }
@@ -203,8 +227,8 @@ OperationResult setConversionTimeFW(int adc_channel, int filter_word) {
   if (!ADCController::isChannelIndexValid(adc_channel))
     return OperationResult::Failure("Invalid channel index");
   int b = boardForChannel(adc_channel);
-  float sp = boardSetConversionTime(b, localChannel(adc_channel), true,
-                                    filter_word,
+  float sp = boardSetConversionTime(b, localChannel(adc_channel),
+                                    chopEnabled[b], filter_word,
                                     boardIsMoreThanOneChannelActive(b));
   if (sp == -1.0)
     return OperationResult::Failure(
@@ -217,8 +241,11 @@ OperationResult getConversionTime(int adc_channel) {
   if (!ADCController::isChannelIndexValid(adc_channel))
     return OperationResult::Failure("Invalid channel index");
   int b = boardForChannel(adc_channel);
+  bool success = false;
   float t = boardGetConversionTime(b, localChannel(adc_channel),
-                                   boardIsMoreThanOneChannelActive(b));
+                                   boardIsMoreThanOneChannelActive(b),
+                                   &success);
+  if (!success) return OperationResult::Failure("ADC read failed");
   return OperationResult::Success(String(t, 9));
 }
 COMMAND("GET_CONVERT_TIME", getConversionTime)
@@ -226,8 +253,11 @@ COMMAND("GET_CONVERT_TIME", getConversionTime)
 OperationResult getRevisionRegister(int board_index) {
   if (board_index < 0 || board_index >= NUM_ADC_BOARDS)
     return OperationResult::Failure("Invalid board index");
-  return OperationResult::Success(
-      String(readRegister8(board_index, AdcRegister::kRevision)));
+  bool success = false;
+  const uint8_t revision =
+      readRegister8(board_index, AdcRegister::kRevision, &success);
+  if (!success) return OperationResult::Failure("ADC read failed");
+  return OperationResult::Success(String(revision));
 }
 COMMAND("GET_REVISION_REG", getRevisionRegister)
 
@@ -244,19 +274,30 @@ OperationResult continuousConvertRead(int channel_index, uint32_t frequency_us,
   int lc = localChannel(channel_index);
   uint32_t num_samples = duration_us / frequency_us;
 
+  FastGpio::digitalWrite(adc_sync, false);
   byte setup_data[4];
   setup_data[0] = AdcRegister::kWrite | AdcRegister::channelSetup(lc);
   setup_data[1] = AdcRegister::kEnableContinuousConversion;
   setup_data[2] = AdcRegister::kWrite | AdcRegister::mode(lc);
   setup_data[3] = AdcRegister::kContinuousConversionMode;
-  comms[b].transferADC(setup_data, 4);
+  if (!comms[b].transferADC(setup_data, 4))
+    return OperationResult::Failure("ADC write failed");
 
+  FastGpio::digitalWrite(adc_sync, true);
   String result = "";
   for (uint32_t i = 0; i < num_samples; i++) {
-    uint32_t raw = readRegister24(b, AdcRegister::channelData(lc));
-    result += String(AdcRegister::toDouble(raw), 9) + ",";
     delayMicroseconds(frequency_us);
+    bool success = false;
+    uint32_t raw =
+        readRegister24(b, AdcRegister::channelData(lc), &success);
+    if (!success) {
+      FastGpio::digitalWrite(adc_sync, false);
+      boardIdleMode(b, lc);
+      return OperationResult::Failure("ADC read failed");
+    }
+    result += String(AdcRegister::toDouble(raw), 9) + ",";
   }
+  FastGpio::digitalWrite(adc_sync, false);
   boardIdleMode(b, lc);
   result = result.substring(0, result.length() - 1);
   return OperationResult::Success(result);
@@ -266,7 +307,9 @@ COMMAND("CONTINUOUS_CONVERT_READ", continuousConvertRead)
 OperationResult getChannelsActive() {
   String output = "";
   for (int b = 0; b < NUM_ADC_BOARDS; b++) {
-    uint8_t status = readRegister8(b, AdcRegister::kAdcStatus);
+    bool success = false;
+    uint8_t status = readRegister8(b, AdcRegister::kAdcStatus, &success);
+    if (!success) return OperationResult::Failure("ADC read failed");
     for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
       if (status & (1 << i)) {
         if (output.length() > 0) output += ",";
@@ -279,7 +322,8 @@ OperationResult getChannelsActive() {
 COMMAND("GET_CHANNELS_ACTIVE", getChannelsActive)
 
 OperationResult resetAllADCBoards() {
-  for (int b = 0; b < NUM_ADC_BOARDS; b++) boardReset(b);
+  if (!ADCController::resetToPreviousConversionTimes())
+    return OperationResult::Failure("ADC reset failed");
   return OperationResult::Success();
 }
 COMMAND("RESET", resetAllADCBoards)
@@ -294,19 +338,6 @@ OperationResult talkADC(byte command) {
 }
 COMMAND("TALK", talkADC)
 
-// OperationResult adcZeroScaleCal() {
-//   for (int b = 0; b < NUM_ADC_BOARDS; b++) {
-//     byte data[2] = {static_cast<byte>(AdcRegister::kWrite | AdcRegister::mode(0)),
-//                     AdcRegister::kZeroScaleSelfCalMode};
-//     FastGpio::digitalWrite(adc_sync, true);
-//     comms[b].transferADC(data, 2);
-//     waitDataReady(b);
-//   }
-//   return OperationResult::Success("CALIBRATION_FINISHED");
-// }
-// COMMAND("ADC_ZERO_SC_CAL", adcZeroScaleCal)
-
-
 OperationResult adcChannelSystemZeroScaleCal(int channel) {
   if (channel < 0 || channel >= NUM_ADC_CHANNELS) {
     return OperationResult::Failure("Invalid channel index");
@@ -317,13 +348,18 @@ OperationResult adcChannelSystemZeroScaleCal(int channel) {
       static_cast<byte>(AdcRegister::kWrite | AdcRegister::mode(i)),
       AdcRegister::kChannelZeroScaleSystemCalMode};
   FastGpio::digitalWrite(adc_sync, true);
-  comms[b].transferADC(data, 2);
+  if (!comms[b].transferADC(data, 2))
+    return OperationResult::Failure("ADC write failed");
   if (!waitDataReady(b)) {
     boardIdleMode(b, i);
     return OperationResult::Failure("ADC calibration timed out for channel " +
                                     String(channel));
   }
-  uint32_t cal = readRegister24(b, AdcRegister::channelZeroScaleCal(i));
+  bool readSucceeded = false;
+  uint32_t cal = readRegister24(
+      b, AdcRegister::channelZeroScaleCal(i), &readSucceeded);
+  if (!readSucceeded)
+    return OperationResult::Failure("ADC calibration read failed");
   CalibrationData cd;
   readCalibrationData(cd);
   AdcCalibrationData* adcData = adcCalibration(cd);
@@ -357,13 +393,18 @@ OperationResult adcChannelSystemFullScaleCal(int channel) {
       static_cast<byte>(AdcRegister::kWrite | AdcRegister::mode(i)),
       AdcRegister::kChannelFullScaleSystemCalMode};
   FastGpio::digitalWrite(adc_sync, true);
-  comms[b].transferADC(data, 2);
+  if (!comms[b].transferADC(data, 2))
+    return OperationResult::Failure("ADC write failed");
   if (!waitDataReady(b)) {
     boardIdleMode(b, i);
     return OperationResult::Failure("ADC calibration timed out for channel " +
                                     String(channel));
   }
-  uint32_t cal = readRegister24(b, AdcRegister::channelFullScaleCal(i));
+  bool readSucceeded = false;
+  uint32_t cal = readRegister24(
+      b, AdcRegister::channelFullScaleCal(i), &readSucceeded);
+  if (!readSucceeded)
+    return OperationResult::Failure("ADC calibration read failed");
   CalibrationData cd;
   readCalibrationData(cd);
   AdcCalibrationData* adcData = adcCalibration(cd);
@@ -416,6 +457,8 @@ COMMAND("GET_SAVED_FULL_SCALE_CAL", getSavedChFullScaleCalibration)
 OperationResult setSavedChZeroScaleCalibration(int ch, uint32_t value) {
   if (ch < 0 || ch >= NUM_ADC_CHANNELS)
     return OperationResult::Failure("Invalid channel index");
+  if (value > kMaxCalibrationValue)
+    return OperationResult::Failure("Invalid zero scale calibration value");
   CalibrationData data;
   readCalibrationData(data);
   AdcCalibrationData* adcData = adcCalibration(data);
@@ -423,6 +466,7 @@ OperationResult setSavedChZeroScaleCalibration(int ch, uint32_t value) {
     return OperationResult::Failure("ADC calibration section is missing");
   }
   adcData->offset[ch] = value;
+  adcData->calibrated = true;
   updateCalibrationData(data);
   return OperationResult::Success("Saved zero scale calibration");
 }
@@ -431,6 +475,8 @@ COMMAND("SET_SAVED_ZERO_SCALE_CAL", setSavedChZeroScaleCalibration)
 OperationResult setSavedChFullScaleCalibration(int ch, uint32_t value) {
   if (ch < 0 || ch >= NUM_ADC_CHANNELS)
     return OperationResult::Failure("Invalid channel index");
+  if (value == 0 || value > kMaxCalibrationValue)
+    return OperationResult::Failure("Invalid full scale calibration value");
   CalibrationData data;
   readCalibrationData(data);
   AdcCalibrationData* adcData = adcCalibration(data);
@@ -438,6 +484,7 @@ OperationResult setSavedChFullScaleCalibration(int ch, uint32_t value) {
     return OperationResult::Failure("ADC calibration section is missing");
   }
   adcData->gain[ch] = value;
+  adcData->calibrated = true;
   updateCalibrationData(data);
   return OperationResult::Success("Saved full scale calibration");
 }
@@ -458,7 +505,8 @@ OperationResult setChFullScaleCalibration(int ch, uint32_t value) {
 COMMAND("SET_FULL_SCALE_CAL", setChFullScaleCalibration)
 
 OperationResult resetToPreviousConversionTimesSerial() {
-  ADCController::resetToPreviousConversionTimes();
+  if (!ADCController::resetToPreviousConversionTimes())
+    return OperationResult::Failure("ADC reset failed");
   return OperationResult::Success("Reset to previous conversion times");
 }
 COMMAND("RESET_MAINTAIN", resetToPreviousConversionTimesSerial)
@@ -498,40 +546,55 @@ void setup() {
 }
 ON_SETUP(setup)
 
-void initialize() {
+OperationResult initialize() {
+  if (!resetToPreviousConversionTimes())
+    return OperationResult::Failure("ADC reset failed");
   for (int b = 0; b < NUM_ADC_BOARDS; b++) {
-    boardReset(b);
     for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
-      boardSetConversionTime(b, i, chopEnabled[b],
-                             calculateFilterWord(500, true, false), false);
+      if (boardSetConversionTime(b, i, chopEnabled[b],
+                                 calculateFilterWord(500, chopEnabled[b],
+                                                     false),
+                                 false) < 0)
+        return OperationResult::Failure("ADC conversion-time setup failed");
     }
   }
+  return OperationResult::Success();
 }
 ON_INITIALIZE(initialize)
 
-void resetToPreviousConversionTimes() {
+bool resetToPreviousConversionTimes() {
   for (int b = 0; b < NUM_ADC_BOARDS; b++) {
     uint32_t zsCals[NUM_CHANNELS_PER_ADC_BOARD];
     uint32_t fsCals[NUM_CHANNELS_PER_ADC_BOARD];
-    float convTimes[NUM_CHANNELS_PER_ADC_BOARD];
-    bool multi = boardIsMoreThanOneChannelActive(b);
+    uint8_t conversionRegisters[NUM_CHANNELS_PER_ADC_BOARD];
     for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
-      convTimes[i] = boardGetConversionTime(b, i, multi);
+      bool success = false;
+      conversionRegisters[i] = readRegister8(
+          b, AdcRegister::channelConversionTime(i), &success);
+      if (!success) return false;
     }
     for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
-      zsCals[i] = readRegister24(b, AdcRegister::channelZeroScaleCal(i));
-      fsCals[i] = readRegister24(b, AdcRegister::channelFullScaleCal(i));
+      bool zeroRead = false;
+      bool fullRead = false;
+      zsCals[i] = readRegister24(
+          b, AdcRegister::channelZeroScaleCal(i), &zeroRead);
+      fsCals[i] = readRegister24(
+          b, AdcRegister::channelFullScaleCal(i), &fullRead);
+      if (!zeroRead || !fullRead) return false;
     }
-    boardReset(b);
+    if (!boardReset(b)) return false;
     for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
-      writeRegister24(b, AdcRegister::channelZeroScaleCal(i), zsCals[i]);
-      writeRegister24(b, AdcRegister::channelFullScaleCal(i), fsCals[i]);
+      if (!writeRegister24(b, AdcRegister::channelZeroScaleCal(i), zsCals[i]) ||
+          !writeRegister24(b, AdcRegister::channelFullScaleCal(i), fsCals[i]))
+        return false;
     }
     for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
-      boardSetConversionTimeFloat(b, i, convTimes[i],
-                                  boardIsMoreThanOneChannelActive(b));
+      if (!writeRegister8(b, AdcRegister::channelConversionTime(i),
+                          conversionRegisters[i]))
+        return false;
     }
   }
+  return true;
 }
 
 bool isChannelIndexValid(int ch) {
@@ -541,53 +604,66 @@ bool isChannelIndexValid(int ch) {
 OperationResult readChannelVoltage(int ch) {
   if (!isChannelIndexValid(ch))
     return OperationResult::Failure("Invalid channel index");
-  return OperationResult::Success(String(getVoltage(ch), 9));
+  const float voltage = getVoltage(ch);
+  if (!std::isfinite(static_cast<double>(voltage)))
+    return OperationResult::Failure("ADC read failed");
+  return OperationResult::Success(String(voltage, 9));
 }
 COMMAND("GET_ADC", readChannelVoltage)
 
 float getVoltage(int ch) {
+  if (!isChannelIndexValid(ch)) return NAN;
   int b = boardForChannel(ch);
   int lc = localChannel(ch);
   byte data[2] = {
       static_cast<byte>(AdcRegister::kWrite | AdcRegister::mode(lc)),
       AdcRegister::kSingleConversionMode};
   FastGpio::digitalWrite(adc_sync, false);
-  comms[b].transferADC(data, 2);
+  if (!comms[b].transferADC(data, 2)) return NAN;
   FastGpio::digitalWrite(adc_sync, true);
-  waitDataReady(b);
-  uint32_t raw = readRegister24(b, AdcRegister::channelData(lc));
-  return AdcRegister::toDouble(raw);
+  if (!waitDataReady(b)) return NAN;
+  byte readData[4] = {
+      static_cast<byte>(AdcRegister::kRead | AdcRegister::channelData(lc)),
+      0, 0, 0};
+  if (!comms[b].transferADC(readData, 4)) return NAN;
+  return conversionDataPacketToVoltage(readData);
 }
 
 double getVoltageData(int ch) {
-  return AdcRegister::toDouble(
-      readRegister24(boardForChannel(ch),
-                     AdcRegister::channelData(localChannel(ch))));
+  if (!isChannelIndexValid(ch)) return NAN;
+  bool success = false;
+  const uint32_t raw = readRegister24(
+      boardForChannel(ch), AdcRegister::channelData(localChannel(ch)),
+      &success);
+  return success ? AdcRegister::toDouble(raw) : NAN;
 }
 
-void startContinuousConversion(int ch) {
+bool startContinuousConversion(int ch) {
+  if (!isChannelIndexValid(ch)) return false;
   int b = boardForChannel(ch);
   int lc = localChannel(ch);
   uint8_t setup[2];
   setup[0] = AdcRegister::kWrite | AdcRegister::channelSetup(lc);
   setup[1] = AdcRegister::kEnableContinuousConversion;
-  comms[b].transferADC(setup, 2);
-  selectContinuousConversionChannel(ch);
+  if (!comms[b].transferADC(setup, 2)) return false;
+  return selectContinuousConversionChannel(ch);
 }
 
-void selectContinuousConversionChannel(int ch) {
+bool selectContinuousConversionChannel(int ch) {
+  if (!isChannelIndexValid(ch)) return false;
   int b = boardForChannel(ch);
   int lc = localChannel(ch);
   uint8_t mode[2];
   mode[0] = AdcRegister::kWrite | AdcRegister::mode(lc);
   mode[1] = AdcRegister::kContinuousConversionMode;
-  comms[b].transferADC(mode, 2);
+  return comms[b].transferADC(mode, 2);
 }
 
 OperationResult idleMode(int ch) {
   if (!isChannelIndexValid(ch))
     return OperationResult::Failure("Invalid channel index");
-  boardIdleMode(boardForChannel(ch), localChannel(ch));
+  if (!boardIdleMode(boardForChannel(ch), localChannel(ch)))
+    return OperationResult::Failure("ADC write failed");
   return OperationResult::Success("Returned ADC " + String(ch) +
                                   " to idle mode");
 }
@@ -596,8 +672,9 @@ COMMAND("IDLE_MODE", idleMode)
 OperationResult setRDYFN(int ch) {
   if (!isChannelIndexValid(ch))
     return OperationResult::Failure("Invalid channel index");
-  writeRegister8(boardForChannel(ch), AdcRegister::kIo,
-                 kReadyFunctionIoRegister);
+  if (!writeRegister8(boardForChannel(ch), AdcRegister::kIo,
+                      kReadyFunctionIoRegister))
+    return OperationResult::Failure("ADC write failed");
   return OperationResult::Success("Set RDYFN");
 }
 COMMAND("SET_RDYFN", setRDYFN)
@@ -605,8 +682,9 @@ COMMAND("SET_RDYFN", setRDYFN)
 OperationResult unsetRDYFN(int ch) {
   if (!isChannelIndexValid(ch))
     return OperationResult::Failure("Invalid channel index");
-  writeRegister8(boardForChannel(ch), AdcRegister::kIo,
-                 kSyncEnabledIoRegister);
+  if (!writeRegister8(boardForChannel(ch), AdcRegister::kIo,
+                      kSyncEnabledIoRegister))
+    return OperationResult::Failure("ADC write failed");
   return OperationResult::Success("Unset RDYFN");
 }
 COMMAND("UNSET_RDYFN", unsetRDYFN)
@@ -672,8 +750,11 @@ float getConversionTimeFloat(int ch, bool isMoreThanOneChannelActive) {
 OperationResult getChZeroScaleCalibration(int ch) {
   if (!isChannelIndexValid(ch))
     return OperationResult::Failure("Invalid channel index");
-  uint32_t val = readRegister24(boardForChannel(ch),
-                                AdcRegister::channelZeroScaleCal(localChannel(ch)));
+  bool success = false;
+  uint32_t val = readRegister24(
+      boardForChannel(ch), AdcRegister::channelZeroScaleCal(localChannel(ch)),
+      &success);
+  if (!success) return OperationResult::Failure("ADC read failed");
   return OperationResult::Success(String(val));
 }
 COMMAND("GET_ZERO_SCALE_CAL", getChZeroScaleCalibration)
@@ -681,8 +762,11 @@ COMMAND("GET_ZERO_SCALE_CAL", getChZeroScaleCalibration)
 OperationResult getChFullScaleCalibration(int ch) {
   if (!isChannelIndexValid(ch))
     return OperationResult::Failure("Invalid channel index");
-  uint32_t val = readRegister24(boardForChannel(ch),
-                                AdcRegister::channelFullScaleCal(localChannel(ch)));
+  bool success = false;
+  uint32_t val = readRegister24(
+      boardForChannel(ch), AdcRegister::channelFullScaleCal(localChannel(ch)),
+      &success);
+  if (!success) return OperationResult::Failure("ADC read failed");
   return OperationResult::Success(String(val));
 }
 COMMAND("GET_FULL_SCALE_CAL", getChFullScaleCalibration)
@@ -690,16 +774,24 @@ COMMAND("GET_FULL_SCALE_CAL", getChFullScaleCalibration)
 OperationResult applyChZeroScaleCalibration(int ch, uint32_t value) {
   if (!isChannelIndexValid(ch))
     return OperationResult::Failure("Invalid channel index");
-  writeRegister24(boardForChannel(ch),
-                  AdcRegister::channelZeroScaleCal(localChannel(ch)), value);
+  if (value > kMaxCalibrationValue)
+    return OperationResult::Failure("Invalid zero scale calibration value");
+  if (!writeRegister24(boardForChannel(ch),
+                       AdcRegister::channelZeroScaleCal(localChannel(ch)),
+                       value))
+    return OperationResult::Failure("ADC write failed");
   return OperationResult::Success("Applied zero scale calibration");
 }
 
 OperationResult applyChFullScaleCalibration(int ch, uint32_t value) {
   if (!isChannelIndexValid(ch))
     return OperationResult::Failure("Invalid channel index");
-  writeRegister24(boardForChannel(ch),
-                  AdcRegister::channelFullScaleCal(localChannel(ch)), value);
+  if (value == 0 || value > kMaxCalibrationValue)
+    return OperationResult::Failure("Invalid full scale calibration value");
+  if (!writeRegister24(boardForChannel(ch),
+                       AdcRegister::channelFullScaleCal(localChannel(ch)),
+                       value))
+    return OperationResult::Failure("ADC write failed");
   return OperationResult::Success("Applied full scale calibration");
 }
 

@@ -57,16 +57,16 @@ inline double toDouble(uint32_t value) {
 namespace ADCController {
 
 void setup();
-void initialize();
-void resetToPreviousConversionTimes();
+OperationResult initialize();
+bool resetToPreviousConversionTimes();
 bool isChannelIndexValid(int channelIndex);
 
 OperationResult readChannelVoltage(int channel_index);
 float getVoltage(int channel_index);
 double getVoltageData(int adc_channel);
 
-void startContinuousConversion(int adc_channel);
-void selectContinuousConversionChannel(int adc_channel);
+bool startContinuousConversion(int adc_channel);
+bool selectContinuousConversionChannel(int adc_channel);
 OperationResult idleMode(int adc_channel);
 OperationResult setRDYFN(int adc_channel);
 OperationResult unsetRDYFN(int adc_channel);

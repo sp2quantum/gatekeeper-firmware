@@ -75,8 +75,15 @@ OperationResult runPrepared(
         numDacChannels, dacChannels, nextVoltages, nextDacPackets);
     return nextDacPacketsReady;
   };
-  if (!prepareNextDacPackets()) {
-    return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltages);
+  if (nextDacPointIndex < totalDacPoints) {
+    if (!prepareNextDacPackets() ||
+        !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
+      return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltages);
+    }
+    nextDacPointIndex++;
+    if (!prepareNextDacPackets()) {
+      return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltages);
+    }
   }
 
   FastGpio::digitalWrite(adc_sync, true);

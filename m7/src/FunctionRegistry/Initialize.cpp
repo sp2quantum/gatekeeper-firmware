@@ -5,7 +5,8 @@
 namespace {
 
 OperationResult initialize() {
-  InitRegistry::runAll();
+  OperationResult result = InitRegistry::runAll();
+  if (!result.isSuccess()) return result;
   return OperationResult::Success("INITIALIZATION COMPLETE");
 }
 COMMAND("INITIALIZE", initialize)

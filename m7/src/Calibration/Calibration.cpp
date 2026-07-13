@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include <string.h>
+#include <limits>
 #include <vector>
 
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
@@ -29,7 +30,7 @@ std::vector<SectionEntry>& sections() {
   return entries;
 }
 
-uint16_t align4(uint16_t value) { return (value + 3u) & ~3u; }
+size_t align4(size_t value) { return (value + 3u) & ~size_t{3u}; }
 
 bool isValidHeader(const CalibrationData& data) {
   return data.magic == kCalibrationDataMagic &&
@@ -41,12 +42,11 @@ const SectionHeader* findSectionHeader(const CalibrationData& data,
                                        uint32_t id) {
   if (!isValidHeader(data)) return nullptr;
 
-  uint16_t offset = 0;
+  size_t offset = 0;
   while (offset + sizeof(SectionHeader) <= data.payloadSize) {
     const auto* header =
         reinterpret_cast<const SectionHeader*>(&data.payload[offset]);
-    const uint16_t recordSize =
-        align4(static_cast<uint16_t>(sizeof(SectionHeader) + header->size));
+    const size_t recordSize = align4(sizeof(SectionHeader) + header->size);
     if (header->size == 0 || offset + recordSize > data.payloadSize) {
       return nullptr;
     }
@@ -57,8 +57,7 @@ const SectionHeader* findSectionHeader(const CalibrationData& data,
 }
 
 void* appendSection(CalibrationData& data, const SectionEntry& entry) {
-  const uint16_t recordSize =
-      align4(static_cast<uint16_t>(sizeof(SectionHeader) + entry.size));
+  const size_t recordSize = align4(sizeof(SectionHeader) + entry.size);
   if (data.payloadSize + recordSize > kCalibrationPayloadCapacity) {
     return nullptr;
   }
@@ -98,6 +97,10 @@ uint32_t sectionId(const char* name) {
 void registerSection(const char* name, size_t size,
                      DefaultsCallback setDefaults,
                      ValidateCallback validate) {
+  if (size == 0 || size > kCalibrationPayloadCapacity ||
+      size > std::numeric_limits<uint16_t>::max()) {
+    return;
+  }
   sections().push_back({sectionId(name), name, static_cast<uint16_t>(size),
                         setDefaults, validate});
 }

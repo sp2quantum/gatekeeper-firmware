@@ -43,8 +43,8 @@ OperationResult timeSeriesBufferRampImpl(
       !isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of channels");
   }
-  if (!BufferRampCommon::isUint32AtLeast(adcIntervalArg, 1) ||
-      !BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1)) {
+  if (!BufferRampCommon::isTimerPeriodUs(adcIntervalArg) ||
+      !BufferRampCommon::isTimerPeriodUs(dacIntervalArg)) {
     return OperationResult::Failure("Invalid interval");
   }
   if (numSteps < 1) {

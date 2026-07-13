@@ -22,7 +22,10 @@ namespace {
 constexpr size_t COMMAND_NAME_CAPACITY = 64;
 constexpr size_t NUMBER_TOKEN_CAPACITY = 64;
 constexpr size_t COMMAND_READ_CHUNK_SIZE = 128;
-constexpr size_t MAX_COMMAND_ARGS = 100000;
+// Dynamic-list commands temporarily hold both the parsed float stream and
+// typed list storage; AWG commands also pre-encode three bytes per value.
+// Keep the limit below the M7 heap's worst-case capacity-growth threshold.
+constexpr size_t MAX_COMMAND_ARGS = 16000;
 
 struct StreamingCommandParser {
   char command[COMMAND_NAME_CAPACITY];
@@ -86,7 +89,12 @@ bool finishToken() {
     parser.error = "FAILURE: Command has too many arguments";
     return false;
   }
-  parser.args.push_back(static_cast<float>(value));
+  const float parsedValue = static_cast<float>(value);
+  if (!std::isfinite(parsedValue)) {
+    parser.error = "FAILURE: Numeric argument out of range";
+    return false;
+  }
+  parser.args.push_back(parsedValue);
   parser.tokenLength = 0;
   return true;
 }

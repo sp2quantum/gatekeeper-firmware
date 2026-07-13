@@ -1,5 +1,4 @@
 #include "shared_memory.h"
-#include <vector>
 
 SharedMemory* shared_memory = nullptr;
 
@@ -60,9 +59,18 @@ bool isCalibrationDataReady() {
   return shared_memory->calibration_ready;
 }
 
-void requestWorkerStop() { shared_memory->stop_requested = true; }
-void clearWorkerStopRequest() { shared_memory->stop_requested = false; }
-bool isWorkerStopRequested() { return shared_memory->stop_requested; }
+void requestWorkerStop() {
+  shared_memory->stop_requested = true;
+  __DMB();
+}
+void clearWorkerStopRequest() {
+  shared_memory->stop_requested = false;
+  __DMB();
+}
+bool isWorkerStopRequested() {
+  __DMB();
+  return shared_memory->stop_requested;
+}
 
 // ---------------------------------------------------------------------------
 //  Utilities to safely write/read a 32-bit length into the char buffer
@@ -169,102 +177,22 @@ static bool voltageBufferSend(VoltageCircularBuffer* buffer,
 //  Worker command/response functions
 // ---------------------------------------------------------------------------
 bool sendTextToGateway(const char* data, size_t length) {
-  // The underlying ring buffer is only CHAR_BUFFER_SIZE bytes and stores
-  // an additional 4-byte length prefix per frame (see charBufferSend()).
-  // That means the *true* maximum encoded frame size is (CHAR_BUFFER_SIZE - 5).
-  //
-  // Large commands (e.g. AWG with many points) can exceed this, so we fragment
-  // them into multiple frames and let the M4 side reassemble.
-
-  constexpr size_t kCharFrameMaxPayload =
-      (CHAR_BUFFER_SIZE > 5) ? (CHAR_BUFFER_SIZE - 5) : 0;
-  constexpr size_t kNormalFrameOverhead = 1;
-
-  auto write_le16 = [](uint8_t* p, uint16_t v) {
-    p[0] = static_cast<uint8_t>(v & 0xFF);
-    p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
-  };
-  auto write_le32 = [](uint8_t* p, uint32_t v) {
-    p[0] = static_cast<uint8_t>(v & 0xFF);
-    p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
-    p[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
-    p[3] = static_cast<uint8_t>((v >> 24) & 0xFF);
-  };
-
-  auto send_blocking = [&](const char* frame, size_t frame_len) -> bool {
-    // Block until there's space; this prevents dropping long commands.
-    // If the M4 stops draining the ring buffer, this would block here.
-    uint32_t start_ms = millis();
-    while (!charBufferSend(&shared_memory->worker_to_gateway_char_buffer, frame,
-                           frame_len)) {
-      // Avoid hard-deadlocking the M7 if the M4 is busy/crashed and not draining.
-      if (millis() - start_ms > 5000) {
-        return false;
-      }
-      delay(1);
-    }
-    return true;
-  };
-
-  // Fast path: fits in a single ring-buffer frame.
-  if (kCharFrameMaxPayload <= kNormalFrameOverhead) {
-    return false;
+  const uint32_t start_ms = millis();
+  while (!charBufferSend(&shared_memory->worker_to_gateway_char_buffer, data,
+                         length)) {
+    if (millis() - start_ms > 5000) return false;
+    delay(1);
   }
-  if (length <= (kCharFrameMaxPayload - kNormalFrameOverhead)) {
-    static uint8_t frame[kCharFrameMaxPayload];
-    frame[0] = CHAR_FRAME_TYPE_NORMAL;
-    memcpy(&frame[1], data, length);
-    return send_blocking(reinterpret_cast<const char*>(frame), length + 1);
-  }
-
-  // Fragmented path: fixed header + chunked payload.
-  if (kCharFrameMaxPayload <= CHAR_FRAGMENT_HEADER_SIZE) {
-    // Should never happen with current sizes.
-    return false;
-  }
-
-  const size_t max_chunk = kCharFrameMaxPayload - CHAR_FRAGMENT_HEADER_SIZE;
-  uint16_t seq = 0;
-  size_t offset = 0;
-
-  while (offset < length) {
-    const size_t remaining = length - offset;
-    const size_t chunk = (remaining < max_chunk) ? remaining : max_chunk;
-
-    const bool is_first = (offset == 0);
-    const bool is_last = (offset + chunk == length);
-
-    static uint8_t frame[kCharFrameMaxPayload];
-    frame[0] = CHAR_FRAME_TYPE_FRAGMENT;
-    // Flags
-    frame[1] = static_cast<uint8_t>((is_first ? 0x01 : 0x00) |
-                                    (is_last ? 0x02 : 0x00));
-    // Version
-    frame[2] = CHAR_FRAGMENT_VERSION;
-    // Sequence
-    write_le16(&frame[3], seq);
-    // Total length of the full (reassembled) message
-    write_le32(&frame[5], static_cast<uint32_t>(length));
-    // Payload bytes
-    memcpy(&frame[CHAR_FRAGMENT_HEADER_SIZE], data + offset, chunk);
-
-    if (!send_blocking(reinterpret_cast<const char*>(frame),
-                       CHAR_FRAGMENT_HEADER_SIZE + chunk)) {
-      return false;
-    }
-
-    offset += chunk;
-    seq++;
-  }
-
   return true;
 }
 size_t receiveCommandBytesFromGateway(char* data, size_t capacity) {
   CharCircularBuffer* buffer = &shared_memory->gateway_to_worker_char_buffer;
   size_t count = 0;
   uint32_t read_index = buffer->read_index;
+  const uint32_t write_index = buffer->write_index;
+  __DMB();
 
-  while (count < capacity && read_index != buffer->write_index) {
+  while (count < capacity && read_index != write_index) {
     data[count++] = buffer->buffer[read_index];
     read_index = (read_index + 1) % CHAR_BUFFER_SIZE;
   }

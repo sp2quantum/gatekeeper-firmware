@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include <limits>
 #include "Commands/BufferRamps/BufferRampCommon.h"
 #include "Commands/BufferRamps/RampCommand.h"
 #include "Utils/OperationResult.h"
@@ -64,8 +65,8 @@ inline OperationResult validateRequest(
       !BufferRampCommon::isValidAdcChannelCount(numAdcChannels)) {
     return OperationResult::Failure("Invalid number of channels");
   }
-  if (!BufferRampCommon::isUint32AtLeast(adcTimingArg, 1) ||
-      !BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1)) {
+  if (!BufferRampCommon::isTimerPeriodUs(adcTimingArg) ||
+      !BufferRampCommon::isTimerPeriodUs(dacIntervalArg)) {
     return OperationResult::Failure("Invalid interval");
   }
   if (!RampCommand::isBooleanArg(retraceArg) ||
@@ -74,6 +75,15 @@ inline OperationResult validateRequest(
   }
   if (numStepsFast < 1 || numStepsSlow < 1) {
     return OperationResult::Failure("Invalid number of steps");
+  }
+  const uint64_t scansPerSlowStep =
+      (retraceArg != 0.0f && snakeArg == 0.0f) ? 2u : 1u;
+  const uint64_t totalPoints = static_cast<uint64_t>(numStepsFast) *
+                               static_cast<uint64_t>(numStepsSlow) *
+                               scansPerSlowStep;
+  if (totalPoints >
+      static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+    return OperationResult::Failure("2D ramp point count is too large");
   }
 
   OperationResult channelValidation = BufferRampCommon::validateRampChannels(

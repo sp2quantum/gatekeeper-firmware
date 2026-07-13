@@ -154,7 +154,7 @@ OperationResult dacLedBufferRampImpl(
     return OperationResult::Failure("Invalid number of channels");
   }
   if (!BufferRampCommon::isUint32AtLeast(dacSettlingTimeArg, 1) ||
-      !BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1) ||
+      !BufferRampCommon::isTimerPeriodUs(dacIntervalArg) ||
       dacSettlingTimeArg >= dacIntervalArg) {
     return OperationResult::Failure("Invalid interval or settling time");
   }
@@ -186,7 +186,8 @@ OperationResult dacLedBufferRampImpl(
     }
   }
 
-  ADCController::resetToPreviousConversionTimes();
+  if (!ADCController::resetToPreviousConversionTimes())
+    return OperationResult::Failure("ADC reset failed");
   OperationResult timingValidation =
       DacLedRamp::validateAdcConversionTimes(numAdcChannels, adcChannels);
   if (!timingValidation.isSuccess()) return timingValidation;

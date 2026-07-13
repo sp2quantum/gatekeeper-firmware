@@ -36,7 +36,8 @@ class RampContext {
   bool begun_ = false;
   bool finished_ = false;
   bool hasAdc_ = false;
+  bool cleanupFailed_ = false;
 
-  void setupAdcHardware(int* adcChannels, int numAdcChannels);
+  OperationResult setupAdcHardware(int* adcChannels, int numAdcChannels);
   void cleanup();
 };

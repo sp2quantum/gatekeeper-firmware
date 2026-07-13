@@ -1,5 +1,6 @@
 #include "shared_memory.h"
-#include <vector>
+
+#include <cmath>
 
 SharedMemory* shared_memory = nullptr;
 
@@ -8,7 +9,10 @@ bool initSharedMemory() {
   return true;
 }
 
-void requestWorkerStop() { shared_memory->stop_requested = true; }
+void requestWorkerStop() {
+  shared_memory->stop_requested = true;
+  __DMB();
+}
 
 static uint32_t readUint32FromCharBuffer(CharCircularBuffer* buffer,
                                          uint32_t& index) {
@@ -27,10 +31,17 @@ static bool charBufferReceive(CharCircularBuffer* buffer, char* data,
     length = 0;
     return false;
   }
+  __DMB();
 
   // Read the 4-byte length
   uint32_t read_index = buffer->read_index;
   uint32_t msg_length = readUint32FromCharBuffer(buffer, read_index);
+  constexpr uint32_t kMaxPayload = CHAR_BUFFER_SIZE - 5;
+  if (msg_length > kMaxPayload) {
+    buffer->read_index = buffer->write_index;
+    length = 0;
+    return false;
+  }
 
   // Check if caller's buffer is large enough
   if (msg_length > length) {
@@ -45,7 +56,8 @@ static bool charBufferReceive(CharCircularBuffer* buffer, char* data,
     read_index = (read_index + 1) % CHAR_BUFFER_SIZE;
   }
 
-  // Update read_index
+  // Publish the consumed bytes only after all payload reads complete.
+  __DMB();
   buffer->read_index = read_index;
 
   // Tell caller how many bytes we read
@@ -83,119 +95,8 @@ bool sendCommandBytesToWorker(const char* data, size_t length) {
   return true;
 }
 bool receiveTextFromWorker(char* data, size_t& length) {
-  struct CharReassemblyState {
-    bool assembling = false;
-    uint16_t next_seq = 0;
-    uint32_t expected_total = 0;
-    std::vector<char> assembled;
-  };
-  static CharReassemblyState state;
-
-  const size_t output_capacity = length;
-  static char frame[CHAR_BUFFER_SIZE];
-  size_t frame_length = sizeof(frame);
-  if (!charBufferReceive(&shared_memory->worker_to_gateway_char_buffer, frame,
-                         frame_length)) {
-    return false;
-  }
-
-  auto read_le16 = [](const uint8_t* p) -> uint16_t {
-    return static_cast<uint16_t>(p[0]) |
-           (static_cast<uint16_t>(p[1]) << 8);
-  };
-  auto read_le32 = [](const uint8_t* p) -> uint32_t {
-    return static_cast<uint32_t>(p[0]) |
-           (static_cast<uint32_t>(p[1]) << 8) |
-           (static_cast<uint32_t>(p[2]) << 16) |
-           (static_cast<uint32_t>(p[3]) << 24);
-  };
-
-  const uint8_t* u8 = reinterpret_cast<const uint8_t*>(frame);
-  if (frame_length == 0) {
-    length = 0;
-    return false;
-  }
-
-  const uint8_t frame_type = u8[0];
-  if (frame_type == CHAR_FRAME_TYPE_NORMAL) {
-    const size_t payload_length = frame_length - 1;
-    if (payload_length > output_capacity) {
-      length = 0;
-      return false;
-    }
-
-    state = CharReassemblyState{};
-    memcpy(data, frame + 1, payload_length);
-    length = payload_length;
-    return true;
-  }
-
-  if (frame_type != CHAR_FRAME_TYPE_FRAGMENT ||
-      frame_length < CHAR_FRAGMENT_HEADER_SIZE) {
-    state = CharReassemblyState{};
-    length = 0;
-    return false;
-  }
-
-  const uint8_t flags = u8[1];
-  const uint8_t version = u8[2];
-  const uint16_t seq = read_le16(&u8[3]);
-  const uint32_t total_len = read_le32(&u8[5]);
-  const bool is_first = (flags & 0x01) != 0;
-  const bool is_last = (flags & 0x02) != 0;
-
-  if (version != CHAR_FRAGMENT_VERSION || total_len == 0) {
-    state = CharReassemblyState{};
-    length = 0;
-    return false;
-  }
-
-  if (is_first) {
-    state.assembling = true;
-    state.next_seq = 0;
-    state.expected_total = total_len;
-    state.assembled.clear();
-    state.assembled.reserve(total_len);
-  }
-
-  if (!state.assembling || seq != state.next_seq ||
-      total_len != state.expected_total) {
-    state = CharReassemblyState{};
-    length = 0;
-    return false;
-  }
-
-  const size_t payload_len =
-      (frame_length > CHAR_FRAGMENT_HEADER_SIZE)
-          ? (frame_length - CHAR_FRAGMENT_HEADER_SIZE)
-          : 0;
-  const size_t already = state.assembled.size();
-  if (payload_len > 0 && already < state.expected_total) {
-    const size_t remaining = state.expected_total - already;
-    const size_t to_append =
-        (payload_len < remaining) ? payload_len : remaining;
-    state.assembled.insert(state.assembled.end(),
-                           frame + CHAR_FRAGMENT_HEADER_SIZE,
-                           frame + CHAR_FRAGMENT_HEADER_SIZE + to_append);
-  }
-
-  state.next_seq++;
-
-  if (!(is_last && state.assembled.size() >= state.expected_total)) {
-    length = 0;
-    return false;
-  }
-
-  if (state.expected_total > output_capacity) {
-    state = CharReassemblyState{};
-    length = 0;
-    return false;
-  }
-
-  memcpy(data, state.assembled.data(), state.expected_total);
-  length = state.expected_total;
-  state = CharReassemblyState{};
-  return true;
+  return charBufferReceive(&shared_memory->worker_to_gateway_char_buffer, data,
+                           length);
 }
 bool hasTextFromWorker() {
   return charBufferHasMessage(&shared_memory->worker_to_gateway_char_buffer);
@@ -207,9 +108,18 @@ static bool floatBufferReceive(FloatCircularBuffer* buffer, float* data,
     length = 0;
     return false;
   }
+  __DMB();
 
   uint32_t read_index = buffer->read_index;
   float msg_length_f = buffer->buffer[read_index];
+  constexpr uint32_t kMaxPayload = FLOAT_BUFFER_SIZE - 2;
+  if (!std::isfinite(static_cast<double>(msg_length_f)) || msg_length_f < 0 ||
+      msg_length_f != std::trunc(msg_length_f) ||
+      msg_length_f > static_cast<float>(kMaxPayload)) {
+    buffer->read_index = buffer->write_index;
+    length = 0;
+    return false;
+  }
   uint32_t msg_length = static_cast<uint32_t>(msg_length_f);
   read_index = (read_index + 1) % FLOAT_BUFFER_SIZE;
 
@@ -223,6 +133,7 @@ static bool floatBufferReceive(FloatCircularBuffer* buffer, float* data,
     read_index = (read_index + 1) % FLOAT_BUFFER_SIZE;
   }
 
+  __DMB();
   buffer->read_index = read_index;
   length = msg_length;
   return true;
@@ -243,17 +154,23 @@ static bool voltageBufferReceive(VoltageCircularBuffer* buffer,
     length = 0;
     return false;
   }
+  const uint32_t read_index_start = buffer->read_index;
+  const uint32_t write_index = buffer->write_index;
+  __DMB();
 
   size_t available =
-      (buffer->write_index - buffer->read_index + VOLTAGE_BUFFER_SIZE) %
+      (write_index - read_index_start + VOLTAGE_BUFFER_SIZE) %
       VOLTAGE_BUFFER_SIZE;
   size_t to_read = (length < available) ? length : available;
 
+  uint32_t read_index = read_index_start;
   for (size_t i = 0; i < to_read; ++i) {
-    data[i] = buffer->buffer[buffer->read_index];
-    buffer->read_index = (buffer->read_index + 1) % VOLTAGE_BUFFER_SIZE;
+    data[i] = buffer->buffer[read_index];
+    read_index = (read_index + 1) % VOLTAGE_BUFFER_SIZE;
   }
 
+  __DMB();
+  buffer->read_index = read_index;
   length = to_read;
   return true;
 }

@@ -38,6 +38,4 @@ class PeripheralCommsController {
   bool transferADC(void* buf, size_t count);
   uint8_t transferDAC(uint8_t data);
   uint8_t transferADC(uint8_t data);
-  static void dataLedOn();
-  static void dataLedOff();
 };

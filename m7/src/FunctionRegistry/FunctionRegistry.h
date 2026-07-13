@@ -38,7 +38,7 @@ void runAll();
 }
 
 namespace InitRegistry {
-using InitCallback = void (*)();
+using InitCallback = OperationResult (*)();
 void registerCallback(InitCallback cb);
-void runAll();
+OperationResult runAll();
 }

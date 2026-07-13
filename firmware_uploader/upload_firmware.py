@@ -22,6 +22,7 @@ from gatekeeper_upload import (
     patch_binary_serial,
     restore_calibration,
     send_command,
+    serial_from_suffix,
     serial_with_current_year,
     trigger_dfu_mode,
     verify_calibration,
@@ -42,9 +43,7 @@ def log(message):
 
 def resolve_serial_number(port, serial_suffix):
     if serial_suffix is not None:
-        if len(serial_suffix) > 3:
-            raise RuntimeError("Serial suffix must be at most 3 characters.")
-        return f"{default_serial_with_current_year()[:-3]}{serial_suffix.zfill(3)}"
+        return serial_from_suffix(serial_suffix)
 
     if port is None:
         return default_serial_with_current_year()

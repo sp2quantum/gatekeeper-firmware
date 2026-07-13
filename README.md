@@ -51,6 +51,23 @@ pio run
 
 The `m4/` and `m7/` folders remain normal PlatformIO projects for core-specific development and debugging.
 
+Install the test dependencies and run the hardware-independent suite with:
+
+```sh
+python -m pip install -r tests/requirements.txt
+python -m pytest -m "not hardware"
+```
+
+With DAC channel `i` connected to ADC channel `i`, the complete suite is:
+
+```sh
+python -m pytest
+```
+
+Use `--port=COM8` to override automatic device detection. Firmware uploads run
+the read-only `upload_smoke` checks automatically; they do not assume loopback
+wiring or change DAC outputs. See `tests/README.md` for test safety and markers.
+
 ## Usage
 
 ***Firmware docs are still in progress***
@@ -179,14 +196,26 @@ This firmware utilizes both the M4 and M7 cores of the Arduino Giga R1. By defau
 
 The purpose of using a dual-core approach is to separate USB host communication from peripheral timing work. The M4 owns USB CDC and forwards host commands through shared memory. The M7 boots the M4, owns the DAC/ADC hardware, and executes the peripheral workload. This keeps USB/serial handling away from timing-critical SPI execution.
 
+The Gatekeeper shield's data LED is driven by the M4 because that core owns the
+USB CDC endpoints. A completed, nonempty USB transmit or receive keeps the LED
+on for at least 30 ms so individual packets are visible. Continuous traffic
+keeps it illuminated. The indication is generated from USB endpoint callbacks,
+not from command execution or shared-memory traffic, so queued or dropped host
+responses do not create false activity.
+
 If you Google the docs for how to implement dual-core communications between the M4 and M7 cores, it tells you to use RPC. **We do not do this!** RPC is slow for our purposes and completely screws up our precise timings for the same reason why Serial messes them up. Instead, we manually initialize the M4 core ourselves (instead of with RPC) and use a circular shared memory buffer that both the M4 and M7 have access to. We initialize the M4 core ourselves (instead of with `RPC.begin()`).
 
-We have comms pipelines for char arrays (cstrings), float arrays, and `VoltagePacket` arrays (defined below). By "comm pipeline", I mean a one-direction transfer of data of a particular type. For instance, we have *separate* circular buffers for floats going from M4 to M7 and floats going from M7 to M4. Each circular buffer works like this:
+Shared memory contains a byte-stream command buffer from M4 to M7 and separate
+text, float, and voltage response buffers from M7 to M4. Each circular buffer
+works like this:
 
 ![Multiprocessing diagram](docs/images/data_transfer.png)
-This is an example for how ADC voltages are collected and transmitted to LabRAD mid ramp. There's another identical buffer for data going the other direction --from the M7 to the M4.
+This diagram shows how ADC voltages are collected and transmitted to the host
+during a ramp.
 
-A `VoltagePacket` is simply a float that is transmitted to LabRAD over serial as four bytes, most significant bit first. This is significantly faster than printing to serial the voltage float converted to a char array, which is why we use this in buffer ramps. Technically, this is one extra byte than in the old firmware, which sent raw DAC data and had LabRAD calculate the voltage. Since we have async data transfer now, we don't need to worry about this extra byte --the added simplicity is worth it.
+Voltage samples are converted to 32-bit IEEE-754 floats and transmitted over
+USB in little-endian byte order. This is significantly faster than formatting
+each voltage as text, so buffer ramps use this binary stream.
 
 ### Buffer Ramps
 

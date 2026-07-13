@@ -19,11 +19,13 @@ extern volatile uint32_t adcSampleFlagCount;
 extern volatile bool adcSampleTimerMode;
 
 void resetTimers();
+bool isTimerPeriodRepresentable(uint32_t period_us);
 void resetTimingWatchdog(AdcBoardMask adc_watch_mask = 0);
 void stopAndResetAdcTimer();
 void startAdcTimer();
 void setupTimerOnlyDac(uint32_t period_us);
-void setupTimersOnlyADC(uint32_t adc_period_us);
+void setupTimersOnlyADC(uint32_t adc_period_us,
+                        AdcBoardMask adc_watch_mask = 0);
 void setupTimersTimeSeries(uint32_t dac_period_us,
                            uint32_t adc_period_us,
                            AdcBoardMask adc_watch_mask);

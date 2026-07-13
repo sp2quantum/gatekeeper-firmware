@@ -171,7 +171,8 @@ OperationResult dacLedBufferRamp2DImpl(
     }
   }
 
-  ADCController::resetToPreviousConversionTimes();
+  if (!ADCController::resetToPreviousConversionTimes())
+    return OperationResult::Failure("ADC reset failed");
   OperationResult timingValidation =
       DacLedRamp::validateAdcConversionTimes(numAdcChannels, adcChannels);
   if (!timingValidation.isSuccess()) return timingValidation;

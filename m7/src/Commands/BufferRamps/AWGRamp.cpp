@@ -28,7 +28,7 @@ OperationResult awgBufferRampImpl(
     int numDacChannels, int numSteps, float dacIntervalArg,
     List<int, 0>& dacChannels,
     List<float, 0, 1>& channelMajorVoltages, bool enforceTiming) {
-  if (!BufferRampCommon::isUint32AtLeast(dacIntervalArg, 1)) {
+  if (!BufferRampCommon::isTimerPeriodUs(dacIntervalArg)) {
     return OperationResult::Failure("Invalid dac interval");
   }
   if (enforceTiming) {
@@ -65,7 +65,7 @@ COMMAND("AWG_BUFFER_RAMP_SUDO", awgBufferRampSudo)
 OperationResult runDacOnly(int numDacChannels, int numSteps,
                            uint32_t dac_interval_us, int* dacChannels,
                            const float* channelMajorVoltages) {
-  if (dac_interval_us < 1) {
+  if (!TimingUtil::isTimerPeriodRepresentable(dac_interval_us)) {
     return OperationResult::Failure("Invalid dac interval");
   }
   if (!isValidDacChannelCount(numDacChannels) || numSteps < 1) {
@@ -105,7 +105,11 @@ OperationResult runDacOnly(int numDacChannels, int numSteps,
     const uint8_t* packet =
         &dacPackets[static_cast<size_t>(i) * static_cast<size_t>(numSteps) *
                     3u];
-    DACController::writeVoltagePacketNoLdac(dacChannels[i], packet);
+    if (!DACController::writeVoltagePacketNoLdac(dacChannels[i], packet)) {
+      return dacWriteFailure(
+          dacChannels[i],
+          channelMajorVoltages[static_cast<size_t>(i) * numSteps]);
+    }
   }
 
   TimingUtil::setupTimerOnlyDac(dac_interval_us);
@@ -124,7 +128,14 @@ OperationResult runDacOnly(int numDacChannels, int numSteps,
                              static_cast<size_t>(numSteps) +
                          static_cast<size_t>(step)) *
                         3u];
-        DACController::writeVoltagePacketNoLdac(dacChannels[i], packet);
+        if (!DACController::writeVoltagePacketNoLdac(dacChannels[i], packet)) {
+          return ctx.finish(
+              dacWriteFailure(
+                  dacChannels[i],
+                  channelMajorVoltages[static_cast<size_t>(i) * numSteps +
+                                       static_cast<size_t>(step)]),
+              false);
+        }
       }
       step++;
       if (step >= numSteps) step = 0;

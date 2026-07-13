@@ -1,4 +1,5 @@
 import json
+import math
 import re
 import signal
 import shutil
@@ -18,8 +19,10 @@ SERIAL_TIMEOUT_S = 2
 ARDUINO_GIGA_DFU_DEVICE_ID = "2341:0366"
 M7_ADDRESS = "0x08040000"
 M4_ADDRESS = "0x08100000"
-M7_READ_ADDRESS = f"{M7_ADDRESS}:"
-M4_READ_ADDRESS = f"{M4_ADDRESS}:"
+M7_FLASH_SIZE = 0x000C0000
+M4_FLASH_SIZE = 0x00100000
+M7_READ_ADDRESS = f"{M7_ADDRESS}:0x{M7_FLASH_SIZE:08X}"
+M4_READ_ADDRESS = f"{M4_ADDRESS}:0x{M4_FLASH_SIZE:08X}"
 M7_LEAVE_ADDRESS = f"{M7_ADDRESS}:leave"
 M4_LEAVE_ADDRESS = f"{M4_ADDRESS}:leave"
 DFU_AUTO_WAIT_S = 8
@@ -38,7 +41,8 @@ ADC_BOARD_COUNT = 2
 DAC_CHANNEL_COUNT = DAC_BOARD_COUNT * CHANNELS_PER_DAC_BOARD
 ADC_CHANNEL_COUNT = ADC_BOARD_COUNT * CHANNELS_PER_ADC_BOARD
 SUPPORTED_ENVIRONMENT = "GATEKEEPER"
-SERIAL_PATTERN = re.compile(r"DA_\d{4}_.{3}$")
+SERIAL_PATTERN = re.compile(r"DA_\d{4}_[A-Za-z0-9_]{3}$")
+SERIAL_SUFFIX_PATTERN = re.compile(r"[A-Za-z0-9_]{1,3}$")
 NO_CALIBRATION_UPLOAD_SERIAL_PATTERN = re.compile(r"DA_\d{4}____$")
 SERIAL_MARKER = b"__SERIAL_NUMBER__"
 SERIAL_FIELD_LENGTH = 12
@@ -81,8 +85,12 @@ def find_dfu_util():
         / "dfu-util",
     ]
     for candidate in candidates:
-        if candidate.exists():
-            return str(candidate)
+        platform_candidates = [candidate]
+        if candidate.suffix.lower() != ".exe":
+            platform_candidates.append(candidate.with_suffix(".exe"))
+        for platform_candidate in platform_candidates:
+            if platform_candidate.is_file():
+                return str(platform_candidate)
     return None
 
 
@@ -168,7 +176,11 @@ class CalibrationOperationTimeout(RuntimeError):
 
 @contextmanager
 def operation_timeout(seconds, operation_name):
-    if threading.current_thread() is not threading.main_thread():
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or not hasattr(signal, "SIGALRM")
+        or not hasattr(signal, "setitimer")
+    ):
         yield
         return
 
@@ -239,6 +251,14 @@ def serial_with_current_year(serial_number):
 
 def default_serial_with_current_year():
     return f"{current_serial_prefix()}_{DEFAULT_SERIAL_SUFFIX}"
+
+
+def serial_from_suffix(suffix):
+    if not SERIAL_SUFFIX_PATTERN.fullmatch(suffix or ""):
+        raise RuntimeError(
+            "Serial suffix must contain 1-3 ASCII letters, digits, or underscores."
+        )
+    return f"{current_serial_prefix()}_{suffix.zfill(3)}"
 
 
 KNOWN_GIGA_VIDS_PIDS = {
@@ -565,6 +585,8 @@ def make_calibration_state(
 
 
 def validate_calibration_state(state):
+    if not isinstance(state, dict):
+        raise RuntimeError("Calibration state must be a JSON object.")
     required_keys = {
         "schema_version",
         "saved_at",
@@ -586,18 +608,74 @@ def validate_calibration_state(state):
         raise RuntimeError(
             f"Unsupported calibration schema_version: {state['schema_version']}"
         )
-    if state["adc_channel_count"] != ADC_CHANNEL_COUNT:
+    if (
+        isinstance(state["adc_channel_count"], bool)
+        or not isinstance(state["adc_channel_count"], int)
+        or state["adc_channel_count"] != ADC_CHANNEL_COUNT
+    ):
         raise RuntimeError(
             f"Unsupported ADC channel count: {state['adc_channel_count']}"
         )
-    if len(state["dac_offsets"]) != state["dac_channel_count"]:
+    dac_channel_count = state["dac_channel_count"]
+    if (
+        isinstance(dac_channel_count, bool)
+        or not isinstance(dac_channel_count, int)
+        or not 1 <= dac_channel_count <= DAC_CHANNEL_COUNT
+    ):
+        raise RuntimeError(f"Unsupported DAC channel count: {dac_channel_count}")
+    if (
+        not isinstance(state["source_environment"], str)
+        or state["source_environment"] != SUPPORTED_ENVIRONMENT
+    ):
+        raise RuntimeError(
+            f"Unsupported source environment: {state['source_environment']}"
+        )
+    if not isinstance(state["serial_number"], str) or not SERIAL_PATTERN.fullmatch(
+        state["serial_number"]
+    ):
+        raise RuntimeError(f"Invalid calibration serial: {state['serial_number']}")
+    if not isinstance(state["dac_offsets"], list) or not isinstance(
+        state["dac_gains"], list
+    ):
+        raise RuntimeError("DAC calibration values must be lists.")
+    if len(state["dac_offsets"]) != dac_channel_count:
         raise RuntimeError("DAC offset count does not match dac_channel_count.")
-    if len(state["dac_gains"]) != state["dac_channel_count"]:
+    if len(state["dac_gains"]) != dac_channel_count:
         raise RuntimeError("DAC gain count does not match dac_channel_count.")
+    for label, values in (
+        ("DAC offset", state["dac_offsets"]),
+        ("DAC gain", state["dac_gains"]),
+    ):
+        for channel, value in enumerate(values):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise RuntimeError(f"{label} {channel} is not numeric.")
+            if not math.isfinite(value):
+                raise RuntimeError(f"{label} {channel} is not finite.")
+    for channel, gain in enumerate(state["dac_gains"]):
+        if abs(gain) < 1e-6:
+            raise RuntimeError(f"DAC gain {channel} is too close to zero.")
+    if not isinstance(state["adc_zero_scale"], list) or not isinstance(
+        state["adc_full_scale"], list
+    ):
+        raise RuntimeError("ADC calibration values must be lists.")
     if len(state["adc_zero_scale"]) != ADC_CHANNEL_COUNT:
         raise RuntimeError("ADC zero-scale count does not match adc_channel_count.")
     if len(state["adc_full_scale"]) != ADC_CHANNEL_COUNT:
         raise RuntimeError("ADC full-scale count does not match adc_channel_count.")
+    for label, values, minimum in (
+        ("ADC zero scale", state["adc_zero_scale"], 0),
+        ("ADC full scale", state["adc_full_scale"], 1),
+    ):
+        for channel, value in enumerate(values):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not minimum <= value <= 0xFFFFFF
+            ):
+                raise RuntimeError(
+                    f"{label} {channel} must be an integer from "
+                    f"{minimum} to 16777215."
+                )
 
 
 def comparable_calibration_state(state):
@@ -619,6 +697,10 @@ def remove_older_duplicate_calibration_files(backup_path, state):
         try:
             candidate_state = json.loads(candidate.read_text())
         except (OSError, json.JSONDecodeError):
+            continue
+        try:
+            validate_calibration_state(candidate_state)
+        except RuntimeError:
             continue
         if comparable_calibration_state(candidate_state) != comparable_state:
             continue
@@ -685,6 +767,7 @@ def write_adc_calibration_with_commands(ser, zero_cmd, full_cmd, state):
 
 
 def restore_calibration(port, state):
+    validate_calibration_state(state)
     with open_command_port(port) as ser:
         wait_for_ready(ser)
 
@@ -694,29 +777,28 @@ def restore_calibration(port, state):
             send_command(ser, f"SET_OSG,{channel},{offset:.8f},{gain:.8f}")
             time.sleep(CALIBRATION_WRITE_DELAY_S)
 
-        try:
-            write_adc_calibration_with_commands(
-                ser,
-                "SET_SAVED_ZERO_SCALE_CAL",
-                "SET_SAVED_FULL_SCALE_CAL",
-                state,
-            )
-        except RuntimeError:
-            write_adc_calibration_with_commands(
-                ser,
-                "SET_ZERO_SCALE_CAL",
-                "SET_FULL_SCALE_CAL",
-                state,
-            )
+        # These commands update both the live ADC registers and the persisted
+        # calibration section. Writing only SET_SAVED_* leaves stale live
+        # calibration in place until the next device reboot.
+        write_adc_calibration_with_commands(
+            ser,
+            "SET_ZERO_SCALE_CAL",
+            "SET_FULL_SCALE_CAL",
+            state,
+        )
 
 
 def verify_calibration(port, state):
+    validate_calibration_state(state)
     with open_command_port(port) as ser:
         wait_for_ready(ser)
         actual_offsets, actual_gains = read_dac_calibration(
             ser, len(state["dac_offsets"])
         )
         actual_zero_scale, actual_full_scale = read_adc_calibration(ser)
+        live_zero_scale, live_full_scale = read_adc_calibration_with_commands(
+            ser, "GET_ZERO_SCALE_CAL", "GET_FULL_SCALE_CAL"
+        )
         actual_environment = send_command(ser, "GET_ENVIRONMENT")
         actual_serial = send_command(ser, "SERIAL_NUMBER")
 
@@ -762,6 +844,18 @@ def verify_calibration(port, state):
             raise RuntimeError(
                 f"ADC {channel} full scale mismatch: expected {expected}, got {actual}"
             )
+    for label, expected_values, actual_values in (
+        ("live zero scale", state["adc_zero_scale"], live_zero_scale),
+        ("live full scale", state["adc_full_scale"], live_full_scale),
+    ):
+        for channel, (expected, actual) in enumerate(
+            zip(expected_values, actual_values)
+        ):
+            if expected != actual:
+                raise RuntimeError(
+                    f"ADC {channel} {label} mismatch: "
+                    f"expected {expected}, got {actual}"
+                )
 
 
 def backup_device_state(port):
@@ -817,12 +911,18 @@ def patch_binary_serial(binary_path, serial_number):
 
     binary_path = Path(binary_path)
     data = binary_path.read_bytes()
+    marker_count = data.count(SERIAL_MARKER)
+    if marker_count != 1:
+        raise RuntimeError(
+            f"Expected exactly one serial marker in {binary_path}, "
+            f"found {marker_count}."
+        )
     index = data.find(SERIAL_MARKER)
-    if index == -1:
-        raise RuntimeError(f"Serial marker not found in {binary_path}.")
 
     field_start = index
     field_end = field_start + len(SERIAL_MARKER) + SERIAL_FIELD_LENGTH
+    if field_end > len(data):
+        raise RuntimeError(f"Serial field is truncated in {binary_path}.")
     replacement = SERIAL_MARKER + serial_number.encode("ascii")
     replacement = replacement.ljust(field_end - field_start, b"\x00")
     data = data[:field_start] + replacement + data[field_end:]
@@ -831,12 +931,18 @@ def patch_binary_serial(binary_path, serial_number):
 
 def read_binary_serial(binary_path):
     data = Path(binary_path).read_bytes()
-    index = data.find(SERIAL_MARKER)
-    if index == -1:
+    if data.count(SERIAL_MARKER) != 1:
         return None
+    index = data.find(SERIAL_MARKER)
     serial_start = index + len(SERIAL_MARKER)
     serial_end = serial_start + SERIAL_FIELD_LENGTH
-    return data[serial_start:serial_end].rstrip(b"\x00").decode("ascii")
+    if serial_end > len(data):
+        return None
+    try:
+        serial_number = data[serial_start:serial_end].rstrip(b"\x00").decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    return serial_number if SERIAL_PATTERN.fullmatch(serial_number) else None
 
 
 def binary_contains_serial_marker(binary_path):

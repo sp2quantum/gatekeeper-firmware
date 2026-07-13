@@ -301,7 +301,3 @@ uint8_t PeripheralCommsController::transferDAC(uint8_t data) {
 uint8_t PeripheralCommsController::transferADC(uint8_t data) {
   return transferByte(SpiBus::Adc, data);
 }
-
-void PeripheralCommsController::dataLedOn() {}
-
-void PeripheralCommsController::dataLedOff() {}

@@ -7,7 +7,6 @@
 #include "FunctionRegistry/FunctionRegistryHelpers.h"
 #include "Peripherals/ADC/ADCController.h"
 #include "Commands/BufferRamps/BufferRampCommon.h"
-#include "PeripheralCommsController.h"
 #include "Utils/FastGpio.h"
 #include "Utils/TimingUtil.h"
 #include "shared_memory.h"
@@ -171,7 +170,8 @@ OperationResult timeSeriesAdcReadImpl(int numAdcChannels,
     return OperationResult::Failure("Voltage output buffer overflow");
   }
   if (savedDataSize <= 0) {
-    ADCController::resetToPreviousConversionTimes();
+    if (!ADCController::resetToPreviousConversionTimes())
+      return OperationResult::Failure("ADC reset failed");
     return OperationResult::Success();
   }
 
@@ -185,13 +185,18 @@ OperationResult timeSeriesAdcReadImpl(int numAdcChannels,
     return mask;
   };
 
+  bool adcSetupFailed = false;
+  bool adcCleanupFailed = false;
   auto startSlot = [&](int slot) {
     const AdcBoardMask expectedMask = activeMaskForSlot(slot);
     FastGpio::digitalWrite(adc_sync, false);
     for (int board = 0; board < NUM_ADC_BOARDS; board++) {
       if (boardDepth[board] <= slot) continue;
-      ADCController::selectContinuousConversionChannel(
-          channelAtSlot[board][slot]);
+      if (!ADCController::selectContinuousConversionChannel(
+              channelAtSlot[board][slot])) {
+        adcSetupFailed = true;
+        return static_cast<AdcBoardMask>(0);
+      }
     }
 
     __disable_irq();
@@ -224,25 +229,32 @@ OperationResult timeSeriesAdcReadImpl(int numAdcChannels,
       ADCController::idleMode(adcChannels[i]);
       ADCController::unsetRDYFN(adcChannels[i]);
     }
-    ADCController::resetToPreviousConversionTimes();
-    PeripheralCommsController::dataLedOff();
+    if (!ADCController::resetToPreviousConversionTimes())
+      adcCleanupFailed = true;
   };
 
   clearWorkerStopRequest();
-  PeripheralCommsController::dataLedOn();
   TimingUtil::resetTimers();
-  ADCController::resetToPreviousConversionTimes();
+  if (!ADCController::resetToPreviousConversionTimes())
+    return OperationResult::Failure("ADC reset failed");
   FastGpio::digitalWrite(adc_sync, false);
   clearAdcReadFlags();
   attachDataReadyInterrupts(boardMask);
   for (int i = 0; i < numAdcChannels; i++) {
-    ADCController::startContinuousConversion(adcChannels[i]);
-    ADCController::unsetRDYFN(adcChannels[i]);
+    if (!ADCController::startContinuousConversion(adcChannels[i]) ||
+        !ADCController::unsetRDYFN(adcChannels[i]).isSuccess()) {
+      cleanup();
+      return OperationResult::Failure("ADC continuous-conversion setup failed");
+    }
   }
 
   int samplesCaptured = 0;
   int currentSlot = 0;
   AdcBoardMask expectedMask = startSlot(currentSlot);
+  if (adcSetupFailed) {
+    cleanup();
+    return OperationResult::Failure("ADC continuous-conversion setup failed");
+  }
   double packets[NUM_ADC_CHANNELS] = {};
   bool voltageOverflow = false;
 
@@ -261,6 +273,7 @@ OperationResult timeSeriesAdcReadImpl(int numAdcChannels,
     AdcBoardMask nextExpectedMask = 0;
     if (needNextConversion) {
       nextExpectedMask = startSlot(nextSlot);
+      if (adcSetupFailed) break;
     } else {
       FastGpio::digitalWrite(adc_sync, false);
     }
@@ -281,6 +294,9 @@ OperationResult timeSeriesAdcReadImpl(int numAdcChannels,
 
   cleanup();
 
+  if (adcSetupFailed) {
+    return OperationResult::Failure("ADC continuous-conversion setup failed");
+  }
   if (voltageOverflow) {
     if (isWorkerStopRequested()) clearWorkerStopRequest();
     return OperationResult::Failure("Voltage output buffer overflow");
@@ -288,6 +304,9 @@ OperationResult timeSeriesAdcReadImpl(int numAdcChannels,
   if (isWorkerStopRequested()) {
     clearWorkerStopRequest();
     return OperationResult::Failure("RAMPING_STOPPED");
+  }
+  if (adcCleanupFailed) {
+    return OperationResult::Failure("ADC cleanup failed");
   }
   return OperationResult::Success();
 }

@@ -202,7 +202,8 @@ OperationResult sendCode(int channel, int code) {
       static_cast<byte>((code >> 16) | kWriteAndUpdateDacCommand);
   packet[1] = static_cast<byte>((code >> 8) & kDataByteMask);
   packet[2] = static_cast<byte>(code & kDataByteMask);
-  writeAndLatchPacket(channel, packet);
+  if (!writeAndLatchPacket(channel, packet))
+    return OperationResult::Failure("DAC write failed");
   return OperationResult::Success("DAC " + String(channel) +
                                   " CODE UPDATED TO " + String(code));
 }
@@ -245,7 +246,7 @@ OperationResult runAutoRampN(int numDacs, int numSteps,
                              const int* dacChannels, const float* dacV0s,
                              const float* dacVfs) {
   if (numDacs < 1 || numDacs > NUM_DAC_CHANNELS || numSteps < 1 ||
-      settlingTime_us < 1) {
+      !TimingUtil::isTimerPeriodRepresentable(settlingTime_us)) {
     return OperationResult::Failure("Invalid ramp parameters.");
   }
 
@@ -363,12 +364,15 @@ void setup() {
 }
 ON_SETUP(setup)
 
-void initialize() {
+OperationResult initialize() {
   for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
     byte buf[3] = {kWriteControlRegisterCommand, 0, kUnclampDacFromGround};
-    comms[i].transferDAC(buf, 3);
-    setVoltage(i, 0.0);
+    if (!comms[i].transferDAC(buf, 3))
+      return OperationResult::Failure("DAC initialization write failed");
+    OperationResult zeroResult = setVoltage(i, 0.0);
+    if (!zeroResult.isSuccess()) return zeroResult;
   }
+  return OperationResult::Success();
 }
 ON_INITIALIZE(initialize)
 
@@ -391,7 +395,7 @@ OperationResult setVoltage(int ch, float voltage) {
   voltageToBytes(ch, voltage * gain_error_inverse[ch] - offset_error[ch],
                  &packet[0], &packet[1], &packet[2]);
   if (!writeAndLatchPacket(ch, packet)) {
-    return OperationResult::Failure("Voltage out of bounds for DAC " +
+    return OperationResult::Failure("DAC write failed for channel " +
                                     String(ch));
   }
   float v = gain_error[ch] *
@@ -498,20 +502,29 @@ OperationResult dacChannelCalibration() {
     return OperationResult::Failure("DAC calibration section is missing");
   }
 
+  OperationResult initializeResult = initialize();
+  if (!initializeResult.isSuccess()) return initializeResult;
   for (int i = 0; i < NUM_DAC_CHANNELS; i++) {
-    initialize();
     applyCalibration(i, 0, 1);
-    setVoltage(i, 0);
+    OperationResult zeroSet = setVoltage(i, 0);
+    if (!zeroSet.isSuccess()) return zeroSet;
     delay(1);
     const float offsetError = ADCController::getVoltage(i);
+    if (!isFinite(offsetError))
+      return OperationResult::Failure("ADC read failed during DAC calibration");
     applyCalibration(i, offsetError, 1);
     const float voltSet = 9.0f;
-    setVoltage(i, voltSet);
+    OperationResult fullScaleSet = setVoltage(i, voltSet);
+    if (!fullScaleSet.isSuccess()) return fullScaleSet;
     delay(1);
     const float gainError =
         (ADCController::getVoltage(i) - offsetError) / voltSet;
+    if (!isFinite(gainError) || fabs(gainError) < 1e-6f)
+      return OperationResult::Failure(
+          "Invalid ADC reading during DAC calibration");
     applyCalibration(i, offsetError, gainError);
-    setVoltage(i, 0);
+    zeroSet = setVoltage(i, 0);
+    if (!zeroSet.isSuccess()) return zeroSet;
     dacData->offset[i] = offsetError;
     dacData->gain[i] = gainError;
   }
