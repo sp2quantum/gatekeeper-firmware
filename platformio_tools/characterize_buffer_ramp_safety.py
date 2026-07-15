@@ -230,12 +230,21 @@ def time_series_minimum(
     return table_lookup(table, adc_channels)
 
 
-def dac_led_minimum(adc_channels: list[int], actual_by_channel: dict[int, float]) -> int:
-    base = table_lookup(DAC_LED_TABLE, adc_channels)
-    max_single = max(actual_by_channel[ch] for ch in adc_channels)
-    if max_single <= 90.0:
-        return base
-    return max(base, math.ceil(1.2 * max_board_conversion_sum(adc_channels, actual_by_channel)))
+def dac_led_minimum(
+    adc_channels: list[int],
+    actual_by_channel: dict[int, float],
+    settling_us: int = 20,
+    averages: int = 1,
+) -> int:
+    board_sum = math.ceil(
+        max_board_conversion_sum(adc_channels, actual_by_channel)
+    )
+    readout_per_round = 15 * len(adc_channels) + 15
+    if averages > 1 and readout_per_round >= board_sum:
+        raise ValueError(
+            "ADC readout cannot keep up with distinct conversion rounds"
+        )
+    return settling_us + averages * board_sum + 15 * len(adc_channels) + 27
 
 
 def dac_only_minimum(dac_channels: list[int]) -> int:
@@ -245,12 +254,10 @@ def dac_only_minimum(dac_channels: list[int]) -> int:
 def awg_with_adc_minimum(
     dac_channels: list[int], adc_channels: list[int], actual_by_channel: dict[int, float]
 ) -> int:
-    base = dac_led_minimum(adc_channels, actual_by_channel)
-    if len(dac_channels) >= 8:
-        return base + 40
-    if len(dac_channels) >= 4 and 200 <= base < 300:
-        return base + 20
-    return base
+    board_sum = math.ceil(
+        max_board_conversion_sum(adc_channels, actual_by_channel)
+    )
+    return board_sum + 15 * len(adc_channels) + 5 * len(dac_channels) + 25
 
 
 def parse_floats(raw: bytes) -> list[float]:

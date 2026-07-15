@@ -73,6 +73,35 @@ def test_dac_led_ramp_tracks_all_channels(gatekeeper):
     assert_tracks_expected(measured, linear_ramp(STARTS, ENDS, steps))
 
 
+def test_dac_led_distinct_averages_with_many_dacs(gatekeeper):
+    set_conversion_times(gatekeeper, 82)
+    dac_channels = list(range(7))
+    adc_channels = [0, 4]
+    steps = 31
+    averages = 5
+    args = [
+        len(dac_channels),
+        len(adc_channels),
+        steps,
+        averages,
+        2500,
+        500,
+    ]
+    args += dac_channels
+    args += STARTS[dac_channels].tolist()
+    args += ENDS[dac_channels].tolist()
+    args += adc_channels
+
+    measured = gatekeeper.binary_command(
+        "DAC_LED_BUFFER_RAMP", args, steps, len(adc_channels), timeout=8.0
+    )
+    expected = linear_ramp(STARTS[adc_channels], ENDS[adc_channels], steps)
+    assert_tracks_expected(measured, expected)
+
+    final_measured = read_adcs(gatekeeper)[adc_channels]
+    assert np.max(np.abs(final_measured - ENDS[adc_channels])) < 0.08
+
+
 def test_time_series_ramp_tracks_stable_samples(gatekeeper):
     set_conversion_times(gatekeeper)
     steps, samples_per_step = 25, 5

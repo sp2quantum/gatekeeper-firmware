@@ -243,14 +243,15 @@ that scans them round-robin, so each channel only produces a fresh sample
 every `S` microseconds. `n` below is the total number of selected ADC
 channels and `D` is the number of DAC channels.
 
-All buffers were calibrated against hardware on 2026-07-03 by sweeping
-`_SUDO` ramps until the SPI/conversion watchdogs tripped or loopback data
-contained stale (bit-identical) samples; raw data and fits are in
-`test_outputs/timing_calibration_20260703/`.
+The timing constants were calibrated against hardware on 2026-07-03 by
+sweeping `_SUDO` ramps until the SPI/conversion watchdogs tripped or loopback
+data contained stale (bit-identical) samples. The DAC-led distinct-averaging
+rule combines those measured conversion, register-read, and latch margins.
+Raw data and fits are in `test_outputs/timing_calibration_20260703/`.
 
 | Command | Checked parameter | Minimum |
 | --- | --- | --- |
-| `DAC_LED_BUFFER_RAMP` (1D and 2D) | `dac_interval_us` | `max(settling + S + 12, S + 15*(n*numAdcAverages) + 15)` |
+| `DAC_LED_BUFFER_RAMP` (1D and 2D) | `dac_interval_us` | `settling + numAdcAverages*S + 15*n + 27` |
 | `DAC_LED_BUFFER_RAMP` (1D and 2D) | `dac_settling_time_us` | `20`; must also be less than `dac_interval_us` |
 | `TIME_SERIES_BUFFER_RAMP` | `adc_interval_us` | `max(1D table floor, ceil(S) + 15)` |
 | `2D_TIME_SERIES_BUFFER_RAMP` | `adc_interval_us` | `max(mode table floor, ceil(S) + 15)` |
@@ -270,10 +271,13 @@ Why each rule looks the way it does:
   conversion time from 82us to 5.2ms, so the required margin does not grow
   with `S`). The per-mode table floors below still apply at fast conversion
   settings.
-- **DAC-led**: each cycle is LDAC latch, settle, convert, then read out all
-  channels before the next cycle; register reads cost about 15 us each and
-  `numAdcAverages` multiplies the read count. Both terms of the `max()` were
-  measured independently (settling swept 20-300, averages swept 1-4).
+- **DAC-led**: each cycle is LDAC latch, settle, then collect
+  `numAdcAverages` distinct ADC conversions while the DAC point remains fixed.
+  Each selected channel is read once per conversion round and the resulting
+  samples are averaged into one output frame. Register reads cost about 15 us
+  each; the final `+27 us` combines readout and latch margin. For more than one
+  average, one round of ADC register reads must also fit inside the selected
+  ADC-board conversion sum so continuous-conversion results cannot be skipped.
 - **AWG_WITH_ADC**: one conversion per DAC step plus readout and per-channel
   DAC writes.
 

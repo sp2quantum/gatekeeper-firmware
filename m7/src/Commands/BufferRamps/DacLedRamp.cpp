@@ -80,45 +80,88 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
   TimingUtil::adcFlag = 0;
 
   int adcFramesRead = 0;
+  int dacLatchesObserved = 0;
+  int adcAveragesCollected = 0;
   bool dacTimerPending = false;
+  bool adcFrameActive = false;
   bool voltageOverflow = false;
 
   while (adcFramesRead < numSteps && !isWorkerStopRequested()) {
     __WFE();
 
-    if (dacStepsLoaded < numSteps && TimingUtil::consumeDacFlag()) {
+    if (TimingUtil::consumeDacFlag()) {
+      if (dacTimerPending || adcFrameActive) {
+        return OperationResult::Failure(
+            "ADC averaging exceeded the DAC interval");
+      }
       dacTimerPending = true;
+      dacLatchesObserved++;
+      if (dacLatchesObserved > numSteps) {
+        return OperationResult::Failure("Unexpected extra DAC timer event");
+      }
     }
     const bool adcConversionStarted =
         TimingUtil::consumeAdcConversionStartedFlag();
     const bool adcPending = TimingUtil::consumeAdcFlag(adcMask);
 
-    bool haveAdcPackets = false;
-    if (adcPending) {
-      adcFramesRead++;
-      for (int i = 0; i < numAdcChannels; i++) {
-        double total = 0.0;
-        for (int j = 0; j < numAdcAverages; j++) {
-          total += ADCController::getVoltageData(adcChannels[i]);
-        }
-        packets[i] = total * numAdcAveragesInv;
-      }
-      FastGpio::digitalWrite(adc_sync, false);
-      haveAdcPackets = true;
-    }
-
-    if (dacTimerPending && adcConversionStarted) {
-      if (!nextDacPacketsReady ||
-          !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
-        return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltageSet);
+    if (adcConversionStarted) {
+      if (!dacTimerPending || adcFrameActive) {
+        return OperationResult::Failure(
+            "ADC conversion started without a DAC latch");
       }
       dacTimerPending = false;
-      for (int i = 0; i < numDacChannels; i++) {
-        nextVoltageSet[i] += voltageStepSize[i];
+      adcFrameActive = true;
+      adcAveragesCollected = 0;
+      for (int i = 0; i < numAdcChannels; i++) {
+        packets[i] = 0.0;
       }
-      dacStepsLoaded++;
-      if (!prepareNextDacPackets()) {
-        return dacSetWriteFailure(numDacChannels, dacChannels, nextVoltageSet);
+
+      // The final DAC point is already in the input registers when its
+      // conversion starts. Only load another point when one remains.
+      if (dacStepsLoaded < numSteps) {
+        if (!nextDacPacketsReady ||
+            !writeDacPackets(numDacChannels, dacChannels, nextDacPackets)) {
+          return dacSetWriteFailure(numDacChannels, dacChannels,
+                                    nextVoltageSet);
+        }
+        for (int i = 0; i < numDacChannels; i++) {
+          nextVoltageSet[i] += voltageStepSize[i];
+        }
+        dacStepsLoaded++;
+        if (!prepareNextDacPackets()) {
+          return dacSetWriteFailure(numDacChannels, dacChannels,
+                                    nextVoltageSet);
+        }
+      }
+    }
+
+    bool haveAdcPackets = false;
+    if (adcPending) {
+      if (!adcFrameActive) {
+        return OperationResult::Failure(
+            "Unexpected ADC completion outside a DAC frame");
+      }
+
+      const bool finalAverage =
+          adcAveragesCollected + 1 == numAdcAverages;
+      if (finalAverage) {
+        // Stop continuous conversion before reading the final result. This
+        // prevents a later conversion from creating a stray DRDY event that
+        // could be mistaken for a new DAC frame.
+        FastGpio::digitalWrite(adc_sync, false);
+      }
+      for (int i = 0; i < numAdcChannels; i++) {
+        packets[i] += ADCController::getVoltageData(adcChannels[i]);
+      }
+      adcAveragesCollected++;
+
+      if (finalAverage) {
+        for (int i = 0; i < numAdcChannels; i++) {
+          packets[i] *= numAdcAveragesInv;
+        }
+        adcFramesRead++;
+        adcFrameActive = false;
+        haveAdcPackets = true;
       }
     }
 
@@ -138,6 +181,12 @@ OperationResult runPrepared(int numDacChannels, int numAdcChannels,
   }
   if (voltageOverflow) {
     return OperationResult::Failure("Voltage output buffer overflow");
+  }
+  if (adcFrameActive || dacTimerPending ||
+      adcAveragesCollected != numAdcAverages ||
+      adcFramesRead != numSteps || dacLatchesObserved != numSteps ||
+      dacStepsLoaded != numSteps) {
+    return OperationResult::Failure("Incomplete DAC-led ramp");
   }
 
   return OperationResult::Success();

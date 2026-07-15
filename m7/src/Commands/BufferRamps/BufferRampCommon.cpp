@@ -27,10 +27,9 @@ constexpr uint32_t kMinAdcConversionUs = 82;
 // conversion time from 82us to 5.2ms; the margin is fixed, not relative,
 // because the jitter does not grow with the conversion time.
 constexpr uint32_t kTimeSeriesConversionMarginUs = 15;
-// DAC-led: conversion start is timer-gated each cycle, so the buffers are
-// fixed. The LDAC/settle path needs settling + sum + latch buffer; the
-// readout path needs sum + per-register-read cost (reads overlap the next
-// settling window).
+// DAC-led: conversion start is timer-gated once per DAC point. ADC averaging
+// collects distinct continuous-conversion rounds while that DAC point remains
+// fixed, then reads the final round and stops conversion before the next point.
 constexpr uint32_t kDacLedLatchBufferUs = 12;
 constexpr uint32_t kAdcReadoutPerSampleUs = 15;
 constexpr uint32_t kAdcReadoutBaseUs = 15;
@@ -143,13 +142,26 @@ uint32_t timeSeriesConversionTermUs(float busiestBoardSumUs) {
 }
 
 uint32_t dacLedMinimumForSum(uint32_t dacSettlingTimeUs, uint32_t ceilSumUs,
-                             uint64_t readsPerCycle) {
+                             int numAdcChannels, int numAdcAverages) {
   if (ceilSumUs == 0) return kInvalidTiming;
-  const uint64_t latchPath = static_cast<uint64_t>(dacSettlingTimeUs) +
-                             ceilSumUs + kDacLedLatchBufferUs;
-  const uint64_t readoutPath =
-      ceilSumUs + kAdcReadoutPerSampleUs * readsPerCycle + kAdcReadoutBaseUs;
-  const uint64_t minimum = std::max(latchPath, readoutPath);
+  if (numAdcChannels < 1 || numAdcAverages < 1) return kInvalidTiming;
+
+  const uint64_t readoutPerRound =
+      kAdcReadoutPerSampleUs * static_cast<uint64_t>(numAdcChannels) +
+      kAdcReadoutBaseUs;
+  // Intermediate averaged conversions are still running continuously. Each
+  // result must be read before the next board scan completes; a longer DAC
+  // interval cannot make an impossible per-round readout safe.
+  if (numAdcAverages > 1 && readoutPerRound >= ceilSumUs) {
+    return kInvalidTiming;
+  }
+
+  const uint64_t conversionRounds =
+      static_cast<uint64_t>(ceilSumUs) *
+      static_cast<uint64_t>(numAdcAverages);
+  const uint64_t minimum = static_cast<uint64_t>(dacSettlingTimeUs) +
+                           conversionRounds + readoutPerRound +
+                           kDacLedLatchBufferUs;
   return minimum > 0xFFFFFFFFULL ? 0xFFFFFFFFUL
                                  : static_cast<uint32_t>(minimum);
 }
@@ -439,10 +451,8 @@ uint32_t minimumDacLedIntervalUs(uint32_t dacSettlingTimeUs,
                                  int numAdcAverages) {
   const uint32_t ceilSum = ceilConversionSumUs(
       maxAdcConversionTimePerBoard(adcChannels, numAdcChannels));
-  const uint64_t readsPerCycle =
-      static_cast<uint64_t>(numAdcChannels) *
-      static_cast<uint64_t>(numAdcAverages < 1 ? 1 : numAdcAverages);
-  return dacLedMinimumForSum(dacSettlingTimeUs, ceilSum, readsPerCycle);
+  return dacLedMinimumForSum(dacSettlingTimeUs, ceilSum, numAdcChannels,
+                             numAdcAverages);
 }
 
 uint32_t minimumAwgWithAdcIntervalUs(int numDacChannels,
@@ -493,7 +503,8 @@ OperationResult validateDacLedTiming(float dacIntervalArg,
   const uint32_t minimum = minimumDacLedIntervalUs(
       settlingUs, adcChannels, numAdcChannels, numAdcAverages);
   if (minimum == kInvalidTiming) {
-    return OperationResult::Failure("Invalid ADC channel timing split");
+    return OperationResult::Failure(
+        "ADC readout is too slow to collect distinct averaged conversions");
   }
   if (dacIntervalArg >= static_cast<float>(minimum)) {
     return OperationResult::Success();
@@ -501,22 +512,19 @@ OperationResult validateDacLedTiming(float dacIntervalArg,
 
   uint8_t boardDepth[NUM_ADC_BOARDS] = {};
   sortedAdcBoardDepths(adcChannels, numAdcChannels, boardDepth);
-  const uint64_t readsPerCycle =
-      static_cast<uint64_t>(numAdcChannels) *
-      static_cast<uint64_t>(numAdcAverages < 1 ? 1 : numAdcAverages);
   const BalancedDistribution balanced =
       balancedAdcDistribution(adcChannels, numAdcChannels);
   const uint32_t balancedMinimum =
       balanced.valid
-          ? dacLedMinimumForSum(settlingUs,
-                                ceilConversionSumUs(balanced.busiestSumUs),
-                                readsPerCycle)
+          ? dacLedMinimumForSum(
+                settlingUs, ceilConversionSumUs(balanced.busiestSumUs),
+                numAdcChannels, numAdcAverages)
           : kInvalidTiming;
 
   const String rule =
       "Minimum for the selected " + splitText(boardDepth) +
-      " ADC-board split is max(settling + busiest-board conversion sum + "
-      "12us, conversion sum + 15us*(numAdcChannels*numAdcAverages) + 15us).";
+      " ADC-board split is settling + numAdcAverages*busiest-board "
+      "conversion sum + 15us*numAdcChannels + 27us.";
   return timingTooShortFailure(
       "DAC interval", dacIntervalArg, minimum, rule,
       formatAdcTimingDetails(adcChannels, numAdcChannels),
