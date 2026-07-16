@@ -21,7 +21,7 @@ def _parse_float(value, label):
     return parsed
 
 
-def run_smoke_checks(send_command, expected_serial_number=None):
+def run_post_flash_health_checks(send_command, expected_serial_number=None):
     results = {}
 
     results["nop"] = send_command("NOP")

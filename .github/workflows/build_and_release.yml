@@ -70,7 +70,10 @@ jobs:
       - name: Package Firmware Uploader
         run: |
           mkdir -p release/firmware_uploader
-          rsync -a --delete --exclude __pycache__ firmware_uploader/ release/firmware_uploader/
+          rsync -a --delete \
+            --exclude __pycache__ \
+            --exclude patch_serial_number.py \
+            firmware_uploader/ release/firmware_uploader/
           mkdir -p release/firmware_uploader/firmware
           cp firmware/*.bin release/firmware_uploader/firmware/
 

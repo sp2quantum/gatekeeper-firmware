@@ -8,9 +8,12 @@ from unittest import mock
 
 
 UPLOADER_DIR = Path(__file__).resolve().parents[1] / "firmware_uploader"
+PLATFORMIO_TOOLS_DIR = Path(__file__).resolve().parents[1] / "platformio_tools"
 sys.path.insert(0, str(UPLOADER_DIR))
+sys.path.insert(0, str(PLATFORMIO_TOOLS_DIR))
 
-import gatekeeper_upload as upload  # noqa: E402
+import upload_persistence as persistence  # noqa: E402
+import util as upload  # noqa: E402
 
 
 def valid_calibration_state():
@@ -121,13 +124,13 @@ class CalibrationTests(unittest.TestCase):
 
     def test_timeout_context_is_safe_when_posix_signals_are_unavailable(self):
         with (
-            mock.patch.object(upload.signal, "SIGALRM", create=True) as sigalrm,
-            mock.patch.object(upload.signal, "setitimer", create=True) as setitimer,
-            mock.patch.object(upload.threading, "current_thread"),
+            mock.patch.object(persistence.signal, "SIGALRM", create=True) as sigalrm,
+            mock.patch.object(persistence.signal, "setitimer", create=True) as setitimer,
+            mock.patch.object(persistence.threading, "current_thread"),
         ):
             # A non-main thread deliberately takes the portable no-signal path.
-            upload.threading.current_thread.return_value = object()
-            with upload.operation_timeout(1, "test"):
+            persistence.threading.current_thread.return_value = object()
+            with persistence.operation_timeout(1, "test"):
                 pass
             sigalrm.assert_not_called()
             setitimer.assert_not_called()

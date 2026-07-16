@@ -65,23 +65,24 @@ python -m pytest
 ```
 
 Use `--port=COM8` to override automatic device detection. Firmware uploads run
-the read-only `upload_smoke` checks automatically; they do not assume loopback
-wiring or change DAC outputs. See `tests/README.md` for test safety and markers.
+the read-only `post_flash_health_checks` automatically; they do not assume
+loopback wiring or change DAC outputs. See `tests/README.md` for test safety and
+markers.
 
 ## Usage
 
-***Firmware docs are still in progress***
+For general GateKeeper usage / theory of operation docs, read the [GateKeeper Docs](https://sp2quantum.web.app/docs/). This README describes the firmware structure itself.
 
 Note for vim users: If you have any issues with linting/LSP with (neo)vim then try running `python3 platformio_tools/update_compile_commands.py` from the firmware root.
 
-**New features of this firmware include:**
+**Features of this firmware include:**
 
 - **Function Registry / user IO handling completely separate from all peripheral logic**
   - This means you can add/modify peripheral logic without regard for how the firmware processes commands. Simply write your logic and register commands with the Function Registry
 - **Precise timings**
-  - Framework to trigger events at a specified frequency, with error <300ns. We use this to communicate with the DAC/ADC at very precise intervals in buffer ramps
+  - Framework to trigger events at a specified frequency, with error ~100ns. We use this to communicate with the DAC/ADC at very precise intervals in buffer ramps
 - **Dual Core**
-  - Utilizes both M4 and M7 cores of the Arduino Giga, which allows parallel data collection and transmission to LabRAD, which saves a *substantial* amount of time during long buffer ramps (~25% faster).
+  - Utilizes both M4 and M7 cores of the Arduino Giga, which allows parallel data collection and transmission to a measurement computer, which saves a *substantial* amount of time during long buffer ramps (~25% faster).
 - **New native buffer ramp options**
   - DAC-led ramp now allows for precise control over DAC settling time
   - Time series buffer ramp allows for spectral analysis of data after collection with LabRAD
@@ -90,7 +91,7 @@ Note for vim users: If you have any issues with linting/LSP with (neo)vim then t
 
 ### Known Issues
 
-- There are currently no known issues! Please let me know if you find a bug.
+- There are currently no known issues! Please file an issue report if you find a bug.
 
 ### Extending Firmware
 
@@ -169,9 +170,9 @@ CALIBRATION_SECTION("DAC", DacCalibrationData, setDacCalibrationDefaults,
                     validateDacCalibration)
 ```
 
-### Precise Timings (Hardware Timer)
+### Precise Timings (Hardware Timers)
 
-Precise timings were achieved by using separate hardware timers for the DAC and ADC and configuring the Arduino Giga to trigger an interrupt service routine (ISR) when a timer's register exceeds a certain value. All timing-related things are handled in `TimingUtil.h`, which mostly contains register configurations to setup the hardware timers properly. TIM1 is used for the DAC and TIM8 is used for the ADC.
+Precise timings are achieved by using separate hardware timers for the DAC and ADC and configuring the Arduino Giga to trigger an interrupt service routine (ISR) when a timer's register exceeds a certain value. All timing-related things are handled in `TimingUtil.h`, which mostly contains register configurations to setup the hardware timers properly. TIM1 is used for the DAC and TIM8 is used for the ADC.
 
 After setting up a timer using TimingUtil (for example, by calling `setupTimersTimeSeries(dac_period_us, adc_period_us)`), `TimingUtil::dacFlag` and `TimingUtil::adcFlag` are set to true constantly after a given period. What's expected is a loop to constantly check if one of these flags is `true`, execute something, and set that flag to false.
 

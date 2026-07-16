@@ -3,7 +3,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from gatekeeper_upload import (
+from util import (
     DEFAULT_CALIBRATION_PATH,
     DFU_MANUAL_WAIT_S,
     M4_ADDRESS,
@@ -22,7 +22,6 @@ from gatekeeper_upload import (
     patch_binary_serial,
     restore_calibration,
     send_command,
-    serial_from_suffix,
     serial_with_current_year,
     trigger_dfu_mode,
     verify_calibration,
@@ -41,12 +40,37 @@ def log(message):
     print(f"[upload-firmware] {message}")
 
 
-def resolve_serial_number(port, serial_suffix):
-    if serial_suffix is not None:
-        return serial_from_suffix(serial_suffix)
+def confirm_override(prompt, cancel_message):
+    answer = input(f"{prompt} [y/N]: ").strip().lower()
+    if answer not in {"y", "yes"}:
+        raise SystemExit(cancel_message)
+
+
+def confirm_serial_override(reason, replacement_serial):
+    log(f"Could not read the existing GateKeeper serial number: {reason}")
+    confirm_override(
+        f"Override the serial number with {replacement_serial} and continue?",
+        "Upload cancelled; the serial number was not overridden.",
+    )
+
+
+def confirm_calibration_override(reason):
+    log(f"Could not back up the existing GateKeeper calibration data: {reason}")
+    confirm_override(
+        "Override the calibration data with the firmware defaults and continue?",
+        "Upload cancelled; the calibration data was not overridden.",
+    )
+
+
+def resolve_serial_number(port, calibration_state=None):
+    if calibration_state is not None:
+        return serial_with_current_year(calibration_state["serial_number"])
+
+    fallback_serial = default_serial_with_current_year()
 
     if port is None:
-        return default_serial_with_current_year()
+        confirm_serial_override("the device is already in DFU mode", fallback_serial)
+        return fallback_serial
 
     try:
         with open_command_port(port) as ser:
@@ -54,22 +78,26 @@ def resolve_serial_number(port, serial_suffix):
             existing_serial = send_command(ser, "SERIAL_NUMBER")
         return serial_with_current_year(existing_serial)
     except Exception as exc:  # noqa: BLE001
-        log(f"Could not read existing GateKeeper serial; using default: {exc}")
-        return default_serial_with_current_year()
+        confirm_serial_override(str(exc), fallback_serial)
+        return fallback_serial
 
 
 def backup_calibration_if_available(port):
     if port is None:
+        confirm_calibration_override("the device is already in DFU mode")
         return None
 
     try:
         state = backup_device_state(port)
     except Exception as exc:  # noqa: BLE001
-        log(f"Skipping calibration backup: {exc}")
+        confirm_calibration_override(str(exc))
         return None
 
     if state.get("skip"):
-        log(f"Skipping calibration backup: {state.get('skip_reason')}")
+        reason = state.get(
+            "skip_reason", "the firmware did not return calibration data"
+        )
+        confirm_calibration_override(reason.replace("_", " "))
         return None
     return state
 
@@ -105,9 +133,13 @@ def nop_test(port, expected_serial_number):
         serial_number = send_command(ser, "SERIAL_NUMBER")
         if serial_number != expected_serial_number:
             raise RuntimeError(
-                f"Serial number mismatch: expected {expected_serial_number}, got {serial_number}"
+                "Serial number mismatch: "
+                f"expected {expected_serial_number}, got {serial_number}"
             )
-        log(f"Firmware uploaded successfully. ID={device_id}, serial={serial_number}.")
+        log(
+            f"Firmware uploaded successfully. ID={device_id}, "
+            f"serial={serial_number}."
+        )
 
 
 def main():
@@ -115,20 +147,20 @@ def main():
         description="Upload compiled GateKeeper firmware to an Arduino GIGA."
     )
     parser.add_argument(
-        "serial_number",
-        nargs="?",
-        default=None,
-        help="Optional serial suffix, up to 3 characters. If omitted, reuse the current device suffix.",
-    )
-    parser.add_argument(
         "--port",
-        help="Serial port to use. If omitted, detected Arduino GIGA ports are listed for selection.",
+        help=(
+            "GateKeeper serial port to use. If omitted, the port is detected "
+            "automatically."
+        ),
     )
     parser.add_argument(
         "--calibration-backup",
         type=Path,
         default=DEFAULT_CALIBRATION_PATH,
-        help=f"Path for the pre-upload calibration backup JSON. Defaults to {DEFAULT_CALIBRATION_PATH}.",
+        help=(
+            "Path for the pre-upload calibration backup JSON. "
+            f"Defaults to {DEFAULT_CALIBRATION_PATH}."
+        ),
     )
     args = parser.parse_args()
 
@@ -152,8 +184,8 @@ def main():
         if not wait_for_dfu_device(dfu_util, DFU_MANUAL_WAIT_S):
             raise SystemExit("Arduino GIGA not found as serial or USB DFU.")
 
-    serial_number = resolve_serial_number(port, args.serial_number)
     calibration_state = backup_calibration_if_available(port)
+    serial_number = resolve_serial_number(port, calibration_state)
     if calibration_state:
         backup_path = get_available_path(args.calibration_backup)
         write_calibration_state_file(backup_path, calibration_state)

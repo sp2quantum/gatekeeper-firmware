@@ -58,20 +58,24 @@ class UploadEnv:
 
 
 def load_upload_persistence():
-    helper_path = ROOT_DIR / "firmware_uploader" / "gatekeeper_upload.py"
+    helper_path = ROOT_DIR / "platformio_tools" / "upload_persistence.py"
     spec = importlib.util.spec_from_file_location(
-        "gatekeeper_upload", helper_path
+        "upload_persistence", helper_path
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def load_smoke_checks():
-    module_path = ROOT_DIR / "firmware_uploader" / "gatekeeper_smoke.py"
-    spec = importlib.util.spec_from_file_location("gatekeeper_smoke", module_path)
+def load_post_flash_health_checks():
+    module_path = ROOT_DIR / "firmware_uploader" / "post_flash_health_checks.py"
+    spec = importlib.util.spec_from_file_location(
+        "post_flash_health_checks", module_path
+    )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"Could not load upload smoke checks from {module_path}")
+        raise RuntimeError(
+            f"Could not load post-flash health checks from {module_path}"
+        )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -224,15 +228,15 @@ def verify_basic_firmware(persistence, upload_env, expected_serial_number):
     ready_port = persistence.wait_for_device_ready(
         upload_env, expected_serial_number=expected_serial_number
     )
-    smoke = load_smoke_checks()
+    health_checks = load_post_flash_health_checks()
     with persistence.open_command_port(ready_port) as ser:
-        results = smoke.run_smoke_checks(
+        results = health_checks.run_post_flash_health_checks(
             lambda command: persistence.send_command(ser, command),
             expected_serial_number=expected_serial_number,
         )
 
     log(
-        "Read-only firmware smoke tests passed "
+        "Post-flash health checks passed "
         f"on {ready_port} (env={results['environment']}, "
         f"serial={results['serial_number']}, ADC revisions="
         f"{results['adc_revisions']})."
@@ -420,7 +424,7 @@ def main():
     persistence.restore_calibration(ready_port, state)
     persistence.verify_calibration(ready_port, state)
     verify_basic_firmware(persistence, upload_env, state["serial_number"])
-    log("USB bundle upload, calibration restore, and smoke verification complete.")
+    log("USB bundle upload, calibration restore, and health checks complete.")
 
 
 if __name__ == "__main__":

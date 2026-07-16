@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from gatekeeper_upload import (
+from util import (
     DEFAULT_CALIBRATION_PATH,
     choose_giga_port,
     get_dac_channel_count_for_environment,

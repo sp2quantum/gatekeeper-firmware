@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from gatekeeper_upload import (
+from util import (
     DEFAULT_CALIBRATION_PATH,
     backup_device_state,
     choose_giga_port,

@@ -1,6 +1,9 @@
 # GateKeeper Firmware Installation Guide
 
-This directory contains the user-facing uploader for compiled GateKeeper firmware releases. If there's no `firmware` directory present, download it from the [latest firmware release](https://github.com/sp2quantum/gatekeeper-firmware/releases).
+This directory has an easy-to-use uploader for compiled GateKeeper firmware releases. If there's no `firmware` directory present, download it from the [latest firmware release](https://github.com/sp2quantum/gatekeeper-firmware/releases).
+
+Run the task-specific scripts described below. `util.py` is their shared internal
+helper and is not an upload command.
 
 ## 1. Make sure you have `dfu-util` installed
 
@@ -15,14 +18,12 @@ This directory contains the user-facing uploader for compiled GateKeeper firmwar
 
 ## 3. Plug in Arduino Giga
 
-## 4. Run `python3 upload_firmware.py {serial suffix}`
+## 4. Run `python3 upload_firmware.py`
 
-The serial suffix is optional and can be up to 3 characters. If omitted, the uploader reuses the connected device suffix and updates the year dynamically.
+The uploader attempts to auto-detect the GateKeeper port; you can pass
+`--port <port>` if you would like to select one explicitly.
 
-## 5. To modify the serial number of an existing device, run `python3 patch_serial_number.py {serial suffix}`
+The uploader preserves the device's serial number and calibration data. If it
+cannot read either one, it asks for confirmation before replacing that data.
 
-If more than one Arduino GIGA is connected, the scripts list the detected serial
-ports and ask which board to use. You can also pass `--port <port>` to select a
-port explicitly.
-
-## 6. Feel free to email [markzakharyan@sp2quantum.com](mailto:markzakharyan@sp2quantum.com) if something isn't working
+## 5. Feel free to email [markzakharyan@sp2quantum.com](mailto:markzakharyan@sp2quantum.com) if something isn't working

@@ -10,23 +10,27 @@ from .protocol import NUM_CHANNELS
 pytestmark = pytest.mark.hardware
 
 
-def _load_upload_smoke():
-    path = Path(__file__).resolve().parents[2] / "firmware_uploader" / "gatekeeper_smoke.py"
-    spec = importlib.util.spec_from_file_location("gatekeeper_smoke", path)
+def _load_post_flash_health_checks():
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "firmware_uploader"
+        / "post_flash_health_checks.py"
+    )
+    spec = importlib.util.spec_from_file_location("post_flash_health_checks", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-@pytest.mark.upload_smoke
-def test_read_only_upload_smoke(gatekeeper):
-    smoke = _load_upload_smoke()
+@pytest.mark.post_flash_health_checks
+def test_read_only_post_flash_health_checks(gatekeeper):
+    health_checks = _load_post_flash_health_checks()
 
     def send(command):
         name, *args = command.split(",")
         return gatekeeper.query(name, *args)
 
-    results = smoke.run_smoke_checks(send)
+    results = health_checks.run_post_flash_health_checks(send)
     assert results["environment"] == "GATEKEEPER"
     assert results["serial_number"].startswith("DA_")
 

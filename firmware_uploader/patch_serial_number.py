@@ -3,7 +3,7 @@ import argparse
 import tempfile
 from pathlib import Path
 
-from gatekeeper_upload import (
+from util import (
     M4_LEAVE_ADDRESS,
     M4_READ_ADDRESS,
     M7_ADDRESS,
