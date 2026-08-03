@@ -47,6 +47,13 @@ float offset_error[NUM_DAC_CHANNELS];
 float voltage_upper_bound[NUM_DAC_CHANNELS];
 float voltage_lower_bound[NUM_DAC_CHANNELS];
 float full_scale_val[NUM_DAC_CHANNELS];
+double codes_per_volt_pos[NUM_DAC_CHANNELS];
+double codes_per_volt_neg[NUM_DAC_CHANNELS];
+
+void setCodesPerVolt(int ch, float fs) {
+  codes_per_volt_pos[ch] = kPositiveFullScaleCode / static_cast<double>(fs);
+  codes_per_volt_neg[ch] = kNegativeFullScaleCode / static_cast<double>(fs);
+}
 
 struct DacCalibrationData {
   float gain[NUM_DAC_CALIBRATION_CHANNELS];
@@ -88,16 +95,17 @@ void initChannelDefaults() {
     voltage_upper_bound[i] = 10.0f;
     voltage_lower_bound[i] = -10.0f;
     full_scale_val[i] = 10.0f;
+    setCodesPerVolt(i, full_scale_val[i]);
   }
 }
 
 void voltageToBytes(int ch, float v, byte* DB1, byte* DB2, byte* DB3) {
   int decimal;
   if (v >= 0) {
-    decimal = v * kPositiveFullScaleCode / full_scale_val[ch];
+    decimal = static_cast<int>(v * codes_per_volt_pos[ch]);
   } else {
     decimal =
-        v * kNegativeFullScaleCode / full_scale_val[ch] + kTwosComplementSpan;
+        static_cast<int>(v * codes_per_volt_neg[ch] + kTwosComplementSpan);
   }
   *DB1 = static_cast<byte>((decimal >> 16) | kWriteAndUpdateDacCommand);
   *DB2 = static_cast<byte>((decimal >> 8) & kDataByteMask);
@@ -215,6 +223,7 @@ OperationResult setFullScale(int channel, float fs) {
   if (!isFinite(fs) || fs <= 0.0f)
     return OperationResult::Failure("Invalid full scale");
   full_scale_val[channel] = fs;
+  setCodesPerVolt(channel, fs);
   voltage_upper_bound[channel] =
       fs * gain_error[channel] + offset_error[channel];
   voltage_lower_bound[channel] =

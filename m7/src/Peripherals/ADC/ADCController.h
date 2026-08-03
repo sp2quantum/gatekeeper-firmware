@@ -45,11 +45,13 @@ constexpr uint8_t kEnableContinuousConversion = 1u << 3;
 
 constexpr double kAdcResolution24 = 16777215.0;
 constexpr double kFullScaleRange = 20.0;
+constexpr double kAdcHalfScaleCode = kAdcResolution24 / 2.0;
+constexpr double kAdcResolution24Inverse = 1.0 / kAdcResolution24;
 
 inline double toDouble(uint32_t value) {
   return kFullScaleRange *
-         (static_cast<double>(value) - (kAdcResolution24 / 2.0)) /
-         kAdcResolution24;
+         (static_cast<double>(value) - kAdcHalfScaleCode) *
+         kAdcResolution24Inverse;
 }
 
 }  // namespace AdcRegister
