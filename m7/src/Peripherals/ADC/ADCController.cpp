@@ -512,8 +512,23 @@ OperationResult resetToPreviousConversionTimesSerial() {
 COMMAND("RESET_MAINTAIN", resetToPreviousConversionTimesSerial)
 
 OperationResult setChopping(bool chop) {
-  for (int b = 0; b < NUM_ADC_BOARDS; b++) chopEnabled[b] = chop;
-  return OperationResult::Success();
+  for (int b = 0; b < NUM_ADC_BOARDS; b++) {
+    chopEnabled[b] = chop;
+    bool moreThanOne = boardIsMoreThanOneChannelActive(b);
+    for (int i = 0; i < NUM_CHANNELS_PER_ADC_BOARD; i++) {
+      bool success = false;
+      byte fw = readRegister8(b, AdcRegister::channelConversionTime(i),
+                              &success) &
+                0b01111111;
+      if (!success) return OperationResult::Failure("ADC read failed");
+      byte minimumFW = chop ? 2 : 3;
+      if (fw < minimumFW) fw = minimumFW;
+      if (boardSetConversionTime(b, i, chop, fw, moreThanOne) < 0)
+        return OperationResult::Failure("ADC write failed");
+    }
+  }
+  String out = chop ? "true" : "false";
+  return OperationResult::Success("CHOP set to " + out);
 }
 COMMAND("SET_CHOP", setChopping)
 
